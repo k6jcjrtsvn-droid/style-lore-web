@@ -5291,50 +5291,84 @@ function App(){
 
   // Hardware/browser back button — see the useBackClose block near the top
   // of this file for the sheet/overlay side of this. App-level navigation
-  // has its own two-slot depth model instead of using that hook directly,
-  // because "viewingProfileId" and "viewingConversation" are ALTERNATIVES
-  // at the same depth (opening a conversation from a profile replaces the
-  // profile, it doesn't stack on top of it) — treating them as one combined
-  // "overlay" slot avoids ever needing to push and consume a history entry
-  // in the same React commit, which is where the ordering between
-  // history.back() (async) and history.pushState() (sync) gets unreliable.
-  //   depth 0 = home screen, no overlay
-  //   depth 1 = (non-home screen) OR (home screen + overlay)
-  //   depth 2 = non-home screen + overlay
-  const navDepthRef = useRef(0);
+  // keeps a real navigation STACK: every distinct (screen, viewingProfileId,
+  // viewingConversation) combination the user actually visits gets its own
+  // history entry, so the hardware/browser back button always returns to
+  // whatever was on screen before — not just Home. (An earlier version of
+  // this tracked only a flat "home vs. not home" depth, which is why back
+  // always landed on Home regardless of how many tabs had been visited —
+  // reported by Kenneth on 2026-09-14 and fixed here.)
+  //
+  // Each screen change or overlay open/close does AT MOST one
+  // history.pushState() or history.go() call per React commit, never both —
+  // mixing them in the same commit is what risks corrupting browser history,
+  // since history.go() resolves asynchronously while pushState() is
+  // synchronous, and React runs a commit's effect cleanups before any of its
+  // new effect setups.
+  const navStackRef = useRef([{ screen: "home", viewingProfileId: null, viewingConversation: null }]);
   const handlingPopRef = useRef(false);
+  const suppressNavPopRef = useRef(0);
+  function navFrameKey(f){
+    return f.screen + "|" + (f.viewingProfileId || "") + "|" + (f.viewingConversation ? f.viewingConversation.id : "");
+  }
   useEffect(() => {
     function onPopState(){
-      if(viewingConversation){ handlingPopRef.current = true; setViewingConversation(null); }
-      else if(viewingProfileId){ handlingPopRef.current = true; setViewingProfileId(null); }
-      else if(screen !== "home"){ handlingPopRef.current = true; setScreen("home"); }
-      // else: already at the root — let the normal browser/OS back action happen.
+      if(suppressNavPopRef.current > 0){ suppressNavPopRef.current--; return; }
+      const stack = navStackRef.current;
+      if(stack.length <= 1) return; // already at the root — let the normal browser/OS back action happen.
+      handlingPopRef.current = true;
+      const prevFrame = stack[stack.length - 2];
+      setScreen(prevFrame.screen);
+      setViewingProfileId(prevFrame.viewingProfileId);
+      setViewingConversation(prevFrame.viewingConversation);
     }
     window.addEventListener("popstate", onPopState);
     return () => window.removeEventListener("popstate", onPopState);
-  }, [screen, viewingProfileId, viewingConversation]);
+  }, []);
   useEffect(() => {
-    const depth = (screen !== "home" ? 1 : 0) + ((viewingProfileId || viewingConversation) ? 1 : 0);
-    const prevDepth = navDepthRef.current;
+    const stack = navStackRef.current;
+    const frame = { screen, viewingProfileId, viewingConversation };
+    const key = navFrameKey(frame);
+    const topKey = navFrameKey(stack[stack.length - 1]);
+
+    if(key === topKey){
+      // No real change in the tracked fields (e.g. initial mount, or some
+      // other state updated) — nothing to do.
+      handlingPopRef.current = false;
+      return;
+    }
+
+    if(handlingPopRef.current){
+      // The browser already moved back on its own (this is reacting to a
+      // real hardware/back-button press) — just drop our own top entry to
+      // match. No history call: the browser already navigated for us.
+      stack.pop();
+      handlingPopRef.current = false;
+      return;
+    }
+
+    // Does this state land on a frame already earlier in the stack? That
+    // means an in-app "← Back"/close control (not the hardware button)
+    // produced it — collapse our stack, and the real browser history, back
+    // to that point instead of pushing a new entry forward.
+    let matchIdx = -1;
+    for(let i = stack.length - 2; i >= 0; i--){
+      if(navFrameKey(stack[i]) === key){ matchIdx = i; break; }
+    }
+
     try{
-      if(depth === prevDepth){
-        window.history.replaceState({ navDepth: depth }, "");
-      } else if(depth > prevDepth){
-        window.history.pushState({ navDepth: depth }, "");
-      } else if(handlingPopRef.current){
-        // The browser already moved back on its own (this reconciliation is
-        // reacting to a real back-button press) — just resync our marker.
-        window.history.replaceState({ navDepth: depth }, "");
+      if(matchIdx !== -1){
+        const steps = (stack.length - 1) - matchIdx;
+        stack.length = matchIdx + 1;
+        // history.go() fires exactly ONE popstate no matter how many
+        // entries it skips over — suppress by 1, not by `steps`.
+        suppressNavPopRef.current += 1;
+        window.history.go(-steps);
       } else {
-        // Closed via an explicit in-app action (a "Back" button, a tab tap
-        // that clears an overlay, etc.) — consume the real history entries
-        // ourselves in one jump, and ignore the popstate(s) that produces.
-        _suppressPopEvents += (prevDepth - depth);
-        window.history.go(depth - prevDepth);
+        stack.push(frame);
+        window.history.pushState({ navDepth: stack.length - 1 }, "");
       }
     }catch(err){ /* history API unavailable — app still works, just no back-button integration */ }
-    handlingPopRef.current = false;
-    navDepthRef.current = depth;
   }, [screen, viewingProfileId, viewingConversation]);
 
   // A ?verify=<token> or ?reset=<token> link from an email takes over the
