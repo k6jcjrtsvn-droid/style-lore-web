@@ -74,7 +74,7 @@ CREATE TABLE IF NOT EXISTS profiles (
   -- Whether this account's Closet (see closet_items below) is visible on
   -- their public profile to other people. Hidden by default — closet items
   -- live only on this account's own device until they opt in.
-  closet_visibility VARCHAR(10) NOT NULL DEFAULT 'hidden',
+  closet_visibility VARCHAR(10) NOT NULL DEFAULT 'hidden', -- UNUSED: superseded by per-item closet_items.visibility; api/closet_visibility.php (which wrote this) was removed 2026-09-12. Left in place rather than dropped live; safe to drop in a future migration once confirmed nothing reads it.
   updated_at BIGINT NOT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
