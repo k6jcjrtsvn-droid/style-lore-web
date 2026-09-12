@@ -4,6 +4,16 @@
  * (optional string), topStyleWords (optional JSON array string),
  * visitorId, authToken.
  *
+ * NOT CALLED BY THE FRONTEND ANYMORE as of the on-device photo checker
+ * (see GarmentOnDeviceAnalyzer + photoStyleVerdict in index.html): the
+ * Checker's photo path now runs entirely client-side (edge/color/
+ * silhouette heuristics feeding the same STYLE_AXES rubric the text
+ * checker uses) so it works with no Anthropic key and no per-check API
+ * cost. This endpoint is left in place, working, and still gated behind
+ * ANTHROPIC_API_KEY being configured, in case a real vision-AI opinion
+ * is deliberately wired back in later — it just isn't reachable from the
+ * app's UI right now.
+ *
  * Real vision-AI version of the Checker: the on-device text checker
  * (styleCheckVerdict() in index.html) reads a typed description; this
  * endpoint instead looks at an actual uploaded photo — of a person, an

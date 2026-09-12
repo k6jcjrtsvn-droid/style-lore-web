@@ -1116,19 +1116,16 @@ function idealAxesForPerson(profile){
   return Object.keys(out).length ? out : null;
 }
 
-function styleCheckVerdict(description, profile){
+function verdictFromExtractedAxes(extracted, profile, opts){
+  opts = opts || {};
   const typeName = profile && profile.kibbeTypeName;
   const topStyleWords = (profile && profile.topStyleWords) || [];
-  const extracted = extractStyleAxes(description);
   const axesFound = Object.keys(extracted);
   if (axesFound.length === 0){
-    const against = typeName
-      ? ` against your ${typeName} blend` + (topStyleWords.length ? ` and the words you leaned into on the style quiz (${topStyleWords.slice(0, 3).join(", ")})` : "")
-      : " against your type";
     return {
       status:"unclear", score:null, verdictPill:"neutral",
-      headline:"Not enough style detail to judge",
-      detail:'Try naming the silhouette or fabric — words like "structured", "flowy", "embellished", "oversized", or "fitted" give the checker something concrete to compare' + against + '.',
+      headline: opts.noSignalHeadline || "Not enough detail to judge",
+      detail: opts.noSignalDetail || "Couldn't find enough to compare against your type.",
       axisNotes: [], personalWords: [],
     };
   }
@@ -1137,7 +1134,7 @@ function styleCheckVerdict(description, profile){
     return {
       status:"unclear", score:null, verdictPill:"neutral",
       headline:"Take the Kibbe quiz first",
-      detail:"Once your blend is set (the style quiz sharpens it further), the checker can compare this item's traits against it.",
+      detail: opts.noIdealDetail || "Once your blend is set (the style quiz sharpens it further), the checker can compare this against it.",
       axisNotes: [], personalWords: [],
     };
   }
@@ -1172,7 +1169,36 @@ function styleCheckVerdict(description, profile){
   if (score >= 70){ status = "match"; verdictPill = "match"; headline = "Reads as a solid match" + typeSuffix; }
   else if (score >= 45){ status = "caution"; verdictPill = "neutral"; headline = "Mixed signals" + typeSuffix + " — could work with tweaks"; }
   else { status = "mismatch"; verdictPill = "avoid"; headline = "Fights " + (typeName ? "your " + typeName + " blend's" : "your type's") + " natural lines"; }
-  return { status, score, verdictPill, headline, detail:null, axisNotes, personalWords };
+  const detail = typeof opts.scoredDetail === "function" ? opts.scoredDetail({ score, status }) : (opts.scoredDetail || null);
+  return { status, score, verdictPill, headline, detail, axisNotes, personalWords };
+}
+
+function styleCheckVerdict(description, profile){
+  const typeName = profile && profile.kibbeTypeName;
+  const topStyleWords = (profile && profile.topStyleWords) || [];
+  const extracted = extractStyleAxes(description);
+  const against = typeName
+    ? ` against your ${typeName} blend` + (topStyleWords.length ? ` and the words you leaned into on the style quiz (${topStyleWords.slice(0, 3).join(", ")})` : "")
+    : " against your type";
+  return verdictFromExtractedAxes(extracted, profile, {
+    noSignalHeadline: "Not enough style detail to judge",
+    noSignalDetail: 'Try naming the silhouette or fabric — words like "structured", "flowy", "embellished", "oversized", or "fitted" give the checker something concrete to compare' + against + '.',
+    noIdealDetail: "Once your blend is set (the style quiz sharpens it further), the checker can compare this item's traits against it.",
+  });
+}
+
+/* Photo-path counterpart to styleCheckVerdict() above — same shared
+   verdictFromExtractedAxes() engine, fed axis evidence read from image
+   pixels (see GarmentOnDeviceAnalyzer below) instead of typed words. */
+function photoStyleVerdict(extractedAxes, profile, usedBodyCrop){
+  return verdictFromExtractedAxes(extractedAxes, profile, {
+    noSignalHeadline: "Couldn't read enough from that photo",
+    noSignalDetail: "Try a clearer, well-lit photo with the outfit clearly visible against a plain background — that gives the on-device analyzer real edges and colors to read.",
+    noIdealDetail: "Once your blend is set (the style quiz sharpens it further), the checker can compare this photo against it.",
+    scoredDetail: usedBodyCrop
+      ? "Read from the photo's structure, color palette, and how the outfit sits against your silhouette — not a professional styling opinion."
+      : "Read from the photo's structure and color palette — not a professional styling opinion.",
+  });
 }
 
 function styleGapAnalysis(closet, profile){
@@ -2243,25 +2269,6 @@ const Api = {
     }
     return r.json();
   },
-  async checkPhoto({ photoBlob, kibbeTypeName, topStyleWords, visitorId, authToken }){
-    // Server-side vision AI check — see api/checker_photo.php. Returns a
-    // clean { unavailable:true, message } shape (not an exception) when
-    // the server doesn't have an AI key configured yet, so the UI can
-    // show a calm "not set up yet" state instead of an error.
-    const fd = new FormData();
-    fd.append("photo", photoBlob, "photo.jpg");
-    if (kibbeTypeName) fd.append("kibbeTypeName", kibbeTypeName);
-    if (topStyleWords && topStyleWords.length) fd.append("topStyleWords", JSON.stringify(topStyleWords));
-    fd.append("visitorId", visitorId || "");
-    fd.append("authToken", authToken || "");
-    const r = await fetch("/api/checker/photo", { method:"POST", body:fd });
-    const body = await r.json().catch(()=>({}));
-    if (r.status === 503 && body.code === "ai_unavailable"){
-      return { unavailable:true, message: body.error || "AI photo check isn't set up yet." };
-    }
-    if(!r.ok) throw new Error(body.error || "Couldn't run the photo check right now.");
-    return body;
-  },
   async deleteAccount(id, password){
     const r = await fetch("/api/account/delete", {
       method:"POST", headers:{ "Content-Type":"application/json" },
@@ -2657,6 +2664,259 @@ const KibbeOnDeviceAnalyzer = (function(){
   }
 
   return { analyzeKibbePhotoOnDevice };
+})();
+
+/* =====================================================================
+   ON-DEVICE GARMENT PHOTO ANALYZER (Checker's photo path)
+
+   Replaces the previous Anthropic-vision-backed /api/checker/photo call
+   (see api/checker_photo.php, now unused by the frontend — kept only in
+   case a real vision-AI opinion is wired back in later with a key).
+   Estimates the same four STYLE_AXES (structure, ornamentation, line,
+   scale) the text checker above reads from typed words — but reads them
+   from actual image pixels instead — so the photo checker reuses the
+   exact same verdictFromExtractedAxes() scoring the text checker uses.
+   Runs entirely in the browser on a small downscaled canvas; the photo
+   never leaves the device.
+
+   Three signals, each mapped onto axis evidence:
+    - Edge/gradient analysis (Sobel on luminance) -> structure (average
+      edge sharpness) and line (edge-orientation spread: edges clustered
+      into one or two directions reads angular/geometric — straight
+      seams, lapels, hard creases; edges spread broadly across
+      directions reads curved/flowing, since drape and curl scatter
+      gradient angles).
+    - Color-palette clustering (coarse 12-bucket hue histogram plus
+      average saturation) -> ornamentation (more distinct hue clusters
+      and finer edge texture reads as pattern/embellishment; one or two
+      flat clusters and sparse edges reads plain/minimal) and contributes
+      to scale (bold, saturated color reads as bold scale, same
+      correlation FAMILY_AXIS_PROFILE already encodes for the text path).
+    - When a full body is visible, reusing the same MediaPipe pose
+      landmarker the Kibbe quiz's photo-refine step already loads
+      (KibbeOnDeviceAnalyzer above) to crop to the torso/hip region and
+      compare the crop's width against the skeleton's own shoulder/hip
+      width — a coarse fitted-vs-loose proxy that sharpens structure and
+      scale. This is a bounding-box heuristic, not a real garment
+      segmentation (MediaPipe's pose model gives joints, not a garment
+      mask).
+
+   Like KibbeOnDeviceAnalyzer, this is a small rule-based heuristic, not
+   a trained garment classifier — it can't read fabric texture, and it
+   can't reliably tell a bold print from a busy background. See the
+   "on-device-kibbe-photo-analysis" project doc for the fuller design
+   writeup and known blind spots.
+===================================================================== */
+const GarmentOnDeviceAnalyzer = (function(){
+  const VISION_BUNDLE_URL = "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@1.0.1/vision_bundle.mjs";
+  const WASM_BASE = "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@1.0.1/wasm";
+  const MODEL_URL = "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task";
+  const MAX_DIM = 260; // small canvas keeps the Sobel/color passes fast even on low-end phones
+
+  function clamp01(x){ return Math.max(0, Math.min(1, x)); }
+
+  // ---- lazy pose-landmarker singleton, independent from
+  // KibbeOnDeviceAnalyzer's own so neither module depends on the other's
+  // internals; jsdelivr/browser caching keeps a second load cheap ----
+  let landmarkerPromise = null;
+  async function getLandmarker(){
+    if(!landmarkerPromise){
+      landmarkerPromise = (async () => {
+        const { FilesetResolver, PoseLandmarker } = await import(VISION_BUNDLE_URL);
+        const filesetResolver = await FilesetResolver.forVisionTasks(WASM_BASE);
+        return PoseLandmarker.createFromOptions(filesetResolver, {
+          baseOptions: { modelAssetPath: MODEL_URL },
+          runningMode: "IMAGE",
+          numPoses: 1,
+          outputSegmentationMasks: false,
+        });
+      })().catch(err => { landmarkerPromise = null; throw err; });
+    }
+    return landmarkerPromise;
+  }
+
+  function blobToImage(blob){
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => resolve(img);
+      img.onerror = () => reject(new Error("Couldn't read that photo — try another."));
+      img.src = URL.createObjectURL(blob);
+    });
+  }
+
+  function drawToCanvas(img, box){
+    const sx = box ? box.x : 0, sy = box ? box.y : 0;
+    const sw = box ? box.w : img.naturalWidth, sh = box ? box.h : img.naturalHeight;
+    const scale = Math.min(1, MAX_DIM / Math.max(sw, sh, 1));
+    const w = Math.max(1, Math.round(sw * scale)), h = Math.max(1, Math.round(sh * scale));
+    const canvas = document.createElement("canvas");
+    canvas.width = w; canvas.height = h;
+    const ctx = canvas.getContext("2d", { willReadFrequently:true });
+    ctx.drawImage(img, sx, sy, sw, sh, 0, 0, w, h);
+    return ctx.getImageData(0, 0, w, h);
+  }
+
+  // ---- edge / gradient pass (Sobel on luminance) ----
+  const SOBEL_X = [-1,0,1,-2,0,2,-1,0,1];
+  const SOBEL_Y = [-1,-2,-1,0,0,0,1,2,1];
+
+  function toLuminance(imageData){
+    const { data, width, height } = imageData;
+    const lum = new Float32Array(width*height);
+    for(let i=0, p=0; i<data.length; i+=4, p++){
+      lum[p] = 0.2126*data[i] + 0.7152*data[i+1] + 0.0722*data[i+2];
+    }
+    return { lum, width, height };
+  }
+
+  function edgeAnalysis(imageData){
+    const { lum, width, height } = toLuminance(imageData);
+    let count=0, magSum=0, strongCount=0;
+    const orientationBins = [0,0,0,0]; // folded 0..PI into 4 wedges
+    for(let y=1; y<height-1; y++){
+      for(let x=1; x<width-1; x++){
+        let gx=0, gy=0, k=0;
+        for(let dy=-1; dy<=1; dy++){
+          for(let dx=-1; dx<=1; dx++){
+            const v = lum[(y+dy)*width+(x+dx)];
+            gx += v*SOBEL_X[k]; gy += v*SOBEL_Y[k]; k++;
+          }
+        }
+        const mag = Math.sqrt(gx*gx+gy*gy);
+        count++; magSum += mag;
+        if(mag > 40){ // empirically-chosen "this is a real edge" threshold on 0..255 luminance gradients
+          strongCount++;
+          let angle = Math.atan2(gy, gx);
+          angle = ((angle % Math.PI) + Math.PI) % Math.PI; // fold to 0..PI
+          const bin = Math.min(3, Math.floor((angle / Math.PI) * 4));
+          orientationBins[bin]++;
+        }
+      }
+    }
+    const edgeDensity = count ? strongCount / count : 0;
+    const avgMag = count ? magSum / count : 0;
+    const total = orientationBins.reduce((a,b)=>a+b,0);
+    let peakiness = 0;
+    if(total > 0){
+      const maxBin = Math.max(...orientationBins);
+      const uniform = total/4;
+      peakiness = clamp01((maxBin - uniform) / (total - uniform || 1));
+    }
+    return { edgeDensity, avgMag, peakiness, sampleCount: total };
+  }
+
+  // ---- color-palette pass (coarse HSV histogram) ----
+  function rgbToHsv(r,g,b){
+    r/=255; g/=255; b/=255;
+    const max=Math.max(r,g,b), min=Math.min(r,g,b), d=max-min;
+    let h=0;
+    if(d!==0){
+      if(max===r) h=((g-b)/d)%6;
+      else if(max===g) h=(b-r)/d+2;
+      else h=(r-g)/d+4;
+      h*=60; if(h<0) h+=360;
+    }
+    const s = max===0?0:d/max;
+    const v = max;
+    return [h,s,v];
+  }
+
+  const HUE_BUCKETS = 12; // 30-degree wedges
+  function colorAnalysis(imageData){
+    const { data } = imageData;
+    const hist = new Array(HUE_BUCKETS).fill(0);
+    let satSum=0, valSum=0, n=0, grayCount=0;
+    for(let i=0;i<data.length;i+=4){
+      const hsv = rgbToHsv(data[i],data[i+1],data[i+2]);
+      const h=hsv[0], s=hsv[1], v=hsv[2];
+      n++; satSum+=s; valSum+=v;
+      if(s < 0.12){ grayCount++; continue; } // near-gray/white/black pixels don't vote a hue
+      hist[Math.min(HUE_BUCKETS-1, Math.floor(h/30))]++;
+    }
+    const colored = n - grayCount;
+    const significant = hist.filter(c => colored>0 && (c/colored) > 0.06).length; // buckets holding >6% of colored pixels
+    return {
+      distinctHues: significant,
+      avgSat: n ? satSum/n : 0,
+      avgVal: n ? valSum/n : 0,
+      grayFraction: n ? grayCount/n : 1,
+    };
+  }
+
+  // ---- map raw signals onto the shared STYLE_AXES vocabulary ----
+  function axesFromSignals(edge, color, silhouette){
+    const out = {};
+    {
+      let value = clamp01(edge.avgMag / 70);
+      let confidence = 0.5;
+      if(silhouette){
+        value = clamp01(value*0.5 + (1 - silhouette.looseness)*0.5);
+        confidence = 0.75;
+      }
+      out.structure = { value, confidence, matched:["photo: edge sharpness" + (silhouette ? " + silhouette fit" : "")] };
+    }
+    if(edge.sampleCount >= 40){
+      out.line = { value: edge.peakiness, confidence: clamp01(edge.sampleCount/400), matched:["photo: edge-orientation spread"] };
+    }
+    {
+      let value = clamp01(color.avgSat*0.7 + (1-color.grayFraction)*0.3);
+      if(silhouette) value = clamp01(value*0.6 + silhouette.looseness*0.4);
+      out.scale = { value, confidence:0.5, matched:["photo: color boldness" + (silhouette ? " + silhouette scale" : "")] };
+    }
+    {
+      const varietyScore = clamp01(color.distinctHues / 4);
+      const textureScore = clamp01((edge.edgeDensity - 0.03) / 0.12);
+      out.ornamentation = { value: clamp01(varietyScore*0.6 + textureScore*0.4), confidence:0.55, matched:["photo: color variety + fine detail"] };
+    }
+    return out;
+  }
+
+  // ---- optional person-silhouette pass ----
+  async function trySilhouette(img){
+    let landmarker;
+    try{ landmarker = await getLandmarker(); }catch(e){ return null; }
+    let result;
+    try{ result = landmarker.detect(img); }catch(e){ return null; }
+    const lm = result && result.landmarks && result.landmarks[0];
+    if(!lm) return null;
+    const need = [11,12,23,24]; // shoulders + hips
+    for(const i of need){ if(!lm[i] || (lm[i].visibility||0) < 0.5) return null; }
+    const xs = lm.map(p=>p.x*img.naturalWidth), ys = lm.map(p=>p.y*img.naturalHeight);
+    const shoulderW = Math.abs(lm[11].x - lm[12].x) * img.naturalWidth;
+    const hipW = Math.abs(lm[23].x - lm[24].x) * img.naturalWidth;
+    const top = Math.min(lm[11].y, lm[12].y) * img.naturalHeight;
+    const bottom = Math.max(...ys);
+    const minX = Math.min(...xs), maxX = Math.max(...xs);
+    const boxX = Math.max(0, minX - shoulderW*0.4);
+    const boxW = Math.min(img.naturalWidth - boxX, (maxX - minX) + shoulderW*0.8);
+    const boxY = Math.max(0, top - shoulderW*0.3);
+    const boxH = Math.min(img.naturalHeight - boxY, (bottom - top) + shoulderW*0.6);
+    if(boxW < 4 || boxH < 4) return null;
+    // Rough looseness proxy: how much wider the garment region reads than
+    // the skeleton's own shoulder/hip width — a bounding-box stand-in for
+    // a real garment mask, which MediaPipe's pose model doesn't provide.
+    const skeletonWidth = Math.max(shoulderW, hipW, 1);
+    const looseness = clamp01((boxW - skeletonWidth) / skeletonWidth / 1.5);
+    return { box:{ x:boxX, y:boxY, w:boxW, h:boxH }, looseness };
+  }
+
+  async function analyzePhotoAxes(photoBlob){
+    const img = await blobToImage(photoBlob);
+    let silhouette = null;
+    try{ silhouette = await trySilhouette(img); }catch(e){ silhouette = null; }
+    let imageData;
+    try{
+      imageData = drawToCanvas(img, silhouette ? silhouette.box : null);
+    }finally{
+      URL.revokeObjectURL(img.src);
+    }
+    const edge = edgeAnalysis(imageData);
+    const color = colorAnalysis(imageData);
+    const axes = axesFromSignals(edge, color, silhouette);
+    return { axes, usedBodyCrop: !!silhouette };
+  }
+
+  return { analyzePhotoAxes, _internal: { edgeAnalysis, colorAnalysis, axesFromSignals, toLuminance } };
 })();
 
 /* =====================================================================
@@ -3821,11 +4081,14 @@ function CheckerScreen({ blend, styleWordBlend, kibbeTypeName, topStyleWords, vi
   // addition can't interfere with the existing on-device text checker,
   // which keeps working exactly as it always has (with or without a
   // network connection, with or without an AI key configured).
+  //
+  // The photo path is on-device too now (see GarmentOnDeviceAnalyzer +
+  // photoStyleVerdict above) — it no longer calls out to Anthropic's API,
+  // so there's no "unavailable, no key configured" state to show anymore.
   const [photoPreview, setPhotoPreview] = useState(null);
   const [photoBlob, setPhotoBlob] = useState(null);
   const [photoBusy, setPhotoBusy] = useState(false);
-  const [photoResult, setPhotoResult] = useState(null); // { verdict, headline, detail }
-  const [photoUnavailable, setPhotoUnavailable] = useState(null); // message string | null
+  const [photoResult, setPhotoResult] = useState(null);
   const [photoError, setPhotoError] = useState(null);
 
   function runCheck(){
@@ -3838,7 +4101,6 @@ function CheckerScreen({ blend, styleWordBlend, kibbeTypeName, topStyleWords, vi
     if(!file) return;
     setPhotoResult(null);
     setPhotoError(null);
-    setPhotoUnavailable(null);
     downscaleImage(file, 900, 0.8).then(dataUrl => {
       setPhotoPreview(dataUrl);
       setPhotoBlob(dataUrlToBlob(dataUrl));
@@ -3850,11 +4112,9 @@ function CheckerScreen({ blend, styleWordBlend, kibbeTypeName, topStyleWords, vi
     setPhotoBusy(true);
     setPhotoResult(null);
     setPhotoError(null);
-    setPhotoUnavailable(null);
     try{
-      const result = await Api.checkPhoto({ photoBlob, kibbeTypeName, topStyleWords, visitorId, authToken });
-      if(result.unavailable) setPhotoUnavailable(result.message);
-      else setPhotoResult(result);
+      const { axes, usedBodyCrop } = await GarmentOnDeviceAnalyzer.analyzePhotoAxes(photoBlob);
+      setPhotoResult(photoStyleVerdict(axes, profile, usedBodyCrop));
     }catch(err){
       setPhotoError(err.message || "Couldn't run the photo check right now.");
     }finally{
@@ -3903,10 +4163,10 @@ function CheckerScreen({ blend, styleWordBlend, kibbeTypeName, topStyleWords, vi
 
     e("hr", { className:"rule", style:{ margin:"28px 0" } }),
 
-    e("div", { className:"eyebrow" }, "Or show it to the AI"),
+    e("div", { className:"eyebrow" }, "Or show it a photo"),
     e("h2", { className:"screen-title", style:{ fontSize:20 } }, "Photo checker"),
     e("p", { className:"screen-lede", style:{ marginBottom:16 } },
-      "Upload a photo of yourself, an outfit on its own, or yourself wearing it — a real AI vision model gives it a look and a verdict."
+      "Upload a photo of yourself, an outfit on its own, or yourself wearing it — the on-device analyzer reads its structure, color, and (if a full body is visible) silhouette for a fit verdict against your type."
     ),
 
     e("div", { className:"photo-frame", style:{ aspectRatio:"4/3", marginBottom:12 } },
@@ -3923,23 +4183,23 @@ function CheckerScreen({ blend, styleWordBlend, kibbeTypeName, topStyleWords, vi
 
     photoError ? e(Banner, { kind:"error" }, photoError) : null,
 
-    photoUnavailable ? e(Banner, { kind:"info" }, photoUnavailable) : null,
-
     photoResult ? e("div", { className:"card", style:{ padding:16, marginBottom:16 } },
       e("div", { style:{ display:"flex", alignItems:"center", gap:10, marginBottom:8 } },
-        e(VerdictPill, { verdict: photoResult.verdict === "match" ? "match" : photoResult.verdict === "mismatch" ? "avoid" : "neutral" })
+        photoResult.score !== null ? e(VerdictPill, { verdict: photoResult.verdictPill }) : null,
+        photoResult.score !== null ? e("span", { className:"mono", style:{ fontSize:13, color:"var(--ink-soft)" } }, photoResult.score + "%") : null
       ),
       e("div", { style:{ fontSize:15, fontWeight:600, marginBottom:6 } }, photoResult.headline),
-      photoResult.detail ? e("p", { style:{ fontSize:13.5, color:"var(--ink-soft)", marginBottom:0 } }, photoResult.detail) : null
+      photoResult.detail ? e("p", { style:{ fontSize:13.5, color:"var(--ink-soft)", marginBottom:0 } }, photoResult.detail) : null,
+      photoResult.axisNotes && photoResult.axisNotes.length > 0 ? e("div", { style:{ marginTop:10, display:"flex", flexDirection:"column", gap:6 } },
+        photoResult.axisNotes.map(n => e("div", { key:n.axis, style:{ fontSize:13, color: n.aligned ? "var(--ink-soft)" : "var(--ink)" } },
+          (n.aligned ? "Match — " : "Note — ") + "reads " + n.itemReads + (n.typeWants ? "; your type leans toward " + n.typeWants : "") + "."
+        ))
+      ) : null
     ) : null,
 
-    e(Banner, { kind:"info" }, "This one sends your photo to Anthropic's Claude API for a real vision-AI look — the only place in Style-LORE that leaves your device. Nothing else here (Kibbe quiz, style quiz, closet, or the text checker above) ever does.")
+    e(Banner, { kind:"info" }, "This one also runs entirely on your device — an on-device pose and image analyzer reads the photo's edges, colors, and (when a full body is visible) silhouette. No photo, key, or account ever leaves your device for either checker.")
   );
 }
-
-/* =====================================================================
-   COMMUNITY
-===================================================================== */
 
 function postsForSpace(visible, space, ctx){
   if(!space) return [];
