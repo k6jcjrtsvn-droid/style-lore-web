@@ -37,6 +37,7 @@ RewriteRule ^api/auth/verify/?$ api/auth_verify.php [L,QSA]
 RewriteRule ^api/auth/resend-verification/?$ api/auth_resend_verification.php [L,QSA]
 
 RewriteRule ^api/admin/moderation/?$ api/admin_moderation.php [L,QSA]
+RewriteRule ^api/admin/broadcast/?$ api/admin_broadcast.php [L,QSA]
 
 RewriteRule ^api/checker/photo/?$ api/checker_photo.php [L,QSA]
 
