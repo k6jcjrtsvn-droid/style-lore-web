@@ -42,10 +42,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     $visitorName = mb_substr(trim((string)($body['visitorName'] ?? '')), 0, 60);
 
+    // Free accounts are capped at CLOSET_FREE_LIMIT items; Style-LORE
+    // Premium (has_premium()) gets the full 300-item sync ceiling. This is
+    // a server-side backstop -- the frontend should also stop letting a
+    // free account add past the limit client-side, using the
+    // closetFreeLimit/isPremium this endpoint (and api/subscription_status.php)
+    // report back, rather than relying on a silent server-side truncation.
+    $isPremium = has_premium($pdo, $visitorId);
+    $maxItems = $isPremium ? 300 : CLOSET_FREE_LIMIT;
+
     $items = is_array($body['items'] ?? null) ? $body['items'] : [];
-    // Cap it — this is a mirror of a personal capsule wardrobe, not
-    // unbounded storage, and keeps one sync call bounded in size.
-    $items = array_slice($items, 0, 300);
+    $items = array_slice($items, 0, $maxItems);
 
     $pdo->beginTransaction();
     try {
@@ -67,7 +74,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         throw $e;
     }
 
-    json_response(['ok' => true, 'count' => count($items)]);
+    json_response(['ok' => true, 'count' => count($items), 'limit' => $maxItems, 'isPremium' => $isPremium]);
 }
 
 error_response('Method not allowed.', 405);

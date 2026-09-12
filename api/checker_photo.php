@@ -4,32 +4,26 @@
  * (optional string), topStyleWords (optional JSON array string),
  * visitorId, authToken.
  *
- * NOT CALLED BY THE FRONTEND ANYMORE as of the on-device photo checker
- * (see GarmentOnDeviceAnalyzer + photoStyleVerdict in index.html): the
- * Checker's photo path now runs entirely client-side (edge/color/
- * silhouette heuristics feeding the same STYLE_AXES rubric the text
- * checker uses) so it works with no Anthropic key and no per-check API
- * cost. This endpoint is left in place, working, and still gated behind
- * ANTHROPIC_API_KEY being configured, in case a real vision-AI opinion
- * is deliberately wired back in later — it just isn't reachable from the
- * app's UI right now.
+ * STYLE-LORE PREMIUM FEATURE ("AI Stylist"). The free on-device photo
+ * checker (GarmentOnDeviceAnalyzer + photoStyleVerdict in index.html)
+ * covers everyone with no server cost and no Anthropic key — this
+ * endpoint is the paid upgrade on top of that: a real Claude vision call
+ * that actually looks at the photo (colors, cut, fabric drape, fit) and
+ * gives specific, plain-language styling feedback the on-device heuristic
+ * fundamentally can't (it only estimates four coarse axes from edge/color
+ * pixel statistics, never anything close to genuine visual judgment).
  *
- * Real vision-AI version of the Checker: the on-device text checker
- * (styleCheckVerdict() in index.html) reads a typed description; this
- * endpoint instead looks at an actual uploaded photo — of a person, an
- * outfit, or a person wearing an outfit — using Anthropic's Claude API,
- * and returns a plain-language verdict the same way.
+ * Requires login (visitorId + authToken, checked via require_owner()) and
+ * an active Style-LORE Premium subscription (has_premium(), synced from
+ * RevenueCat's webhook — see api/revenuecat_webhook.php) before any API
+ * call is made — every call here spends real per-use money, unlike the
+ * free, on-device text/photo checker.
  *
- * Requires login (visitorId + authToken, checked via require_owner())
- * specifically so this can't be hit anonymously — every call here spends
- * real API cost, unlike the free, on-device text checker.
- *
- * Gracefully disabled rather than broken when ANTHROPIC_API_KEY isn't
- * configured yet: returns a 503 with code "ai_unavailable" that the
- * frontend already knows to render as a calm "not set up yet" message
- * (see Api.checkPhoto() in index.html) instead of a raw error. Once a
- * real key (starts with "sk-ant-api03-") is added to config.php, this
- * endpoint lights up with no other changes needed.
+ * Gracefully disabled with a clean 503 ("ai_unavailable") if Kenneth
+ * hasn't added a real ANTHROPIC_API_KEY to config.php yet — separate from
+ * the 402 "premium_required" a non-premium account gets, so the frontend
+ * can tell "you need to upgrade" apart from "this is temporarily down"
+ * and show the right message for each.
  */
 require_once __DIR__ . '/../includes/helpers.php';
 require_method('POST');
@@ -37,11 +31,15 @@ require_method('POST');
 $visitorId = (string)($_POST['visitorId'] ?? '');
 $authToken = (string)($_POST['authToken'] ?? '');
 if (!$visitorId || !$authToken) {
-    error_response('You need to be signed in to use the photo checker.', 401);
+    error_response('You need to be signed in to use the AI Stylist.', 401);
 }
 
 $pdo = db();
 require_owner($pdo, $visitorId, $authToken);
+
+if (!has_premium($pdo, $visitorId)) {
+    json_response(['error' => 'The AI Stylist is a Style-LORE Premium feature.', 'code' => 'premium_required'], 402);
+}
 
 // Defensive: config.sample.php doesn't (yet) declare these constants, and
 // an older deployed config.php might not either — check with defined()
@@ -49,9 +47,13 @@ require_owner($pdo, $visitorId, $authToken);
 // rather than a fatal PHP error.
 $apiKey = defined('ANTHROPIC_API_KEY') ? trim((string)ANTHROPIC_API_KEY) : '';
 if ($apiKey === '') {
-    json_response(['error' => "AI photo check isn't set up yet.", 'code' => 'ai_unavailable'], 503);
+    json_response(['error' => "The AI Stylist isn't set up yet.", 'code' => 'ai_unavailable'], 503);
 }
-$model = (defined('ANTHROPIC_MODEL') && ANTHROPIC_MODEL) ? ANTHROPIC_MODEL : 'claude-haiku-4-5-20251001';
+// claude-sonnet-5 by default — meaningfully stronger vision judgment than
+// the haiku tier this endpoint used before, worth the extra per-call cost
+// now that it's a paid feature people expect real quality from. Still
+// overridable via ANTHROPIC_MODEL in config.php.
+$model = (defined('ANTHROPIC_MODEL') && ANTHROPIC_MODEL) ? ANTHROPIC_MODEL : 'claude-sonnet-5';
 
 if (!isset($_FILES['photo']) || $_FILES['photo']['error'] === UPLOAD_ERR_NO_FILE) {
     error_response('Add a photo to check.', 400);
@@ -97,24 +99,34 @@ if ($kibbeTypeName || $topStyleWords) {
 }
 
 $instructions = <<<TXT
-You are a warm, direct personal styling assistant inside the Style-LORE app.
-The attached photo may show a person, an outfit on its own, or a person
-wearing an outfit. $context
+You are the AI Stylist inside the Style-LORE app — a warm, sharp-eyed
+personal stylist, not a generic image describer. The attached photo may
+show a person, an outfit on its own, or a person wearing an outfit. $context
 
-Judge how well what's shown works for this person — silhouette, fit,
-proportion, and (if relevant) how it lines up with their Kibbe type and
-style words above. Be specific about what you actually see (colors, cut,
-fit) rather than generic. Keep it encouraging but honest — call out real
-mismatches, don't just flatter.
+This is a paid feature — the person looking at your answer expects real,
+specific expertise, not vague encouragement. Actually look closely at what's
+in the photo: the exact colors and how they interact, the cut and
+silhouette, proportions, fabric weight/drape if you can tell, styling
+details (layering, accessories, hemlines, necklines), and how well all of
+that lines up with their Kibbe type and style words above. Name the actual
+colors and garment details you see rather than speaking generically — "the
+cropped denim jacket over a fitted rust midi dress" beats "your outfit."
+
+Be honest, not just flattering — if something works, say specifically why;
+if something's off (proportion, color clash, a silhouette that fights their
+type), say so plainly and say what would fix it. Every response must
+include one concrete, specific, actionable suggestion — a swap, an
+addition, or a styling tweak they could actually make — never a vague "try
+accessorizing more."
 
 Respond with ONLY a single JSON object, no other text, in exactly this
 shape:
-{"verdict": "match" | "caution" | "mismatch", "headline": "one short punchy line, under 12 words", "detail": "2-4 sentences of specific, plain-language reasoning a real person would say out loud"}
+{"verdict": "match" | "caution" | "mismatch", "headline": "one short punchy line, under 12 words, specific to this photo", "detail": "2-4 sentences of specific, plain-language reasoning naming actual colors/garments/proportions you observed", "suggestion": "one concrete, specific styling change or affirmation — a real swap, addition, or adjustment"}
 TXT;
 
 $payload = [
     'model' => $model,
-    'max_tokens' => 500,
+    'max_tokens' => 700,
     'messages' => [[
         'role' => 'user',
         'content' => [
@@ -163,7 +175,7 @@ try {
     if (!is_array($verdictData) || empty($verdictData['headline'])) {
         // The model didn't return clean JSON — fall back to showing its
         // raw text as the detail rather than failing outright.
-        $verdictData = ['verdict' => 'caution', 'headline' => 'Here\'s what the AI saw', 'detail' => $text ?: "Couldn't get a clear read on that photo — try a clearer, well-lit shot."];
+        $verdictData = ['verdict' => 'caution', 'headline' => 'Here\'s what the AI saw', 'detail' => $text ?: "Couldn't get a clear read on that photo — try a clearer, well-lit shot.", 'suggestion' => ''];
     }
     $verdict = in_array($verdictData['verdict'] ?? '', ['match', 'caution', 'mismatch'], true) ? $verdictData['verdict'] : 'caution';
 
@@ -171,8 +183,9 @@ try {
         'verdict' => $verdict,
         'headline' => mb_substr((string)($verdictData['headline'] ?? ''), 0, 140),
         'detail' => mb_substr((string)($verdictData['detail'] ?? ''), 0, 800),
+        'suggestion' => mb_substr((string)($verdictData['suggestion'] ?? ''), 0, 300),
     ]);
 } catch (Throwable $e) {
     error_log('Checker photo failed: ' . $e->getMessage());
-    error_response("Couldn't run the photo check right now — try again in a moment.", 500);
+    error_response("Couldn't run the AI Stylist right now — try again in a moment.", 500);
 }

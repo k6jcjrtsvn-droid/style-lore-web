@@ -312,6 +312,21 @@ CREATE TABLE IF NOT EXISTS closet_items (
   KEY idx_visibility_created (visibility, created_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
+-- Subscription entitlement (Style-LORE Premium), kept in sync by
+-- RevenueCat's webhook (see api/revenuecat_webhook.php). One row per
+-- account; account_id doubles as the RevenueCat "app user id" -- the
+-- mobile app configures the RevenueCat SDK with this account's own id as
+-- appUserID, so a webhook event's app_user_id always maps 1:1 back to
+-- accounts.id with no separate mapping table needed.
+CREATE TABLE IF NOT EXISTS subscriptions (
+  account_id CHAR(36) NOT NULL PRIMARY KEY,
+  is_premium TINYINT(1) NOT NULL DEFAULT 0,
+  product_id VARCHAR(120) DEFAULT NULL,
+  expires_at BIGINT DEFAULT NULL,
+  updated_at BIGINT NOT NULL,
+  KEY idx_is_premium (is_premium)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
 -- ---------------------------------------------------------------------
 -- Push notification device tokens (Firebase Cloud Messaging). One row per
 -- installed app instance; upserted on every register call (a token can

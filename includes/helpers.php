@@ -143,6 +143,31 @@ function send_app_email(string $to, string $subject, string $body): bool {
  *  see post_report.php and the `reports` table. */
 const REPORT_HIDE_THRESHOLD = 3;
 
+/** Free-tier cap on closet items (see api/closet.php) -- Style-LORE
+ *  Premium accounts (has_premium()) are unlimited. */
+const CLOSET_FREE_LIMIT = 20;
+
+/**
+ * Whether $accountId currently has an active Style-LORE Premium
+ * subscription, per the `subscriptions` table -- kept in sync by
+ * RevenueCat's webhook (api/revenuecat_webhook.php), not queried live
+ * against RevenueCat's API on every request, so this stays fast and keeps
+ * working even if RevenueCat is briefly unreachable. A missing row means
+ * "never subscribed" (the common case), not an error. expires_at is
+ * belt-and-suspenders: RevenueCat already sends an EXPIRATION webhook
+ * event that flips is_premium to 0, but checking the timestamp here too
+ * means a missed/delayed webhook can't leave someone premium forever.
+ */
+function has_premium(PDO $pdo, string $accountId): bool {
+    if ($accountId === '') return false;
+    $stmt = $pdo->prepare('SELECT is_premium, expires_at FROM subscriptions WHERE account_id = ?');
+    $stmt->execute([$accountId]);
+    $row = $stmt->fetch();
+    if (!$row || !$row['is_premium']) return false;
+    if ($row['expires_at'] !== null && (int)$row['expires_at'] < current_time_ms()) return false;
+    return true;
+}
+
 /**
  * Saves an uploaded file (one $_FILES entry) into web/uploads/$subdir with
  * a random filename, mirroring the local Node app's multer config (30MB

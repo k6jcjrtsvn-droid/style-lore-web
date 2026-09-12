@@ -37,10 +37,15 @@ define('MAIL_FROM', 'no-reply@style-lore.com');
 //   php -r "echo bin2hex(random_bytes(24));"
 define('ADMIN_KEY', '');
 
-// Powers the real photo-based AI Checker (api/checker_photo.php) — a
-// server-side call to Anthropic's Claude API that looks at an uploaded
-// photo (a person, an outfit, or both) and gives a fit verdict, as
-// opposed to the free on-device text checker that's always available.
+// Powers the "AI Stylist" (api/checker_photo.php) — Style-LORE Premium's
+// flagship paid feature: a real server-side call to Anthropic's Claude API
+// that actually looks at an uploaded photo (a person, an outfit, or both)
+// and gives specific, plain-language styling feedback, as opposed to the
+// free on-device checker (always available, everyone gets it, no key
+// needed) which only estimates coarse structure/color/scale axes from
+// pixel statistics. This is now gated behind has_premium() — only
+// Style-LORE Premium subscribers can call it — so real per-use API cost
+// is offset by subscription revenue (see RevenueCat settings below).
 //
 // Get a key at https://console.anthropic.com — Settings > API Keys >
 // Create Key. Copy the value shown at that moment (starts with
@@ -49,11 +54,31 @@ define('ADMIN_KEY', '');
 // a similar-looking but non-secret "Key ID" (starts with "apikey_") for
 // reference only — that is not usable here.
 //
-// Leave ANTHROPIC_API_KEY blank to keep the photo checker gracefully
-// disabled (it shows a clean "not set up yet" message instead of an
-// error) — everything else in the app works fine without it.
+// Leave ANTHROPIC_API_KEY blank to keep the AI Stylist gracefully disabled
+// (it shows a clean "not set up yet" message instead of an error) —
+// everything else in the app, including the free on-device checker, works
+// fine without it. ANTHROPIC_MODEL defaults to claude-sonnet-5 — a
+// meaningfully stronger vision model than the haiku tier used elsewhere in
+// this app, worth the extra per-call cost now that quality is what people
+// are paying for.
 define('ANTHROPIC_API_KEY', '');
-define('ANTHROPIC_MODEL', 'claude-haiku-4-5-20251001');
+define('ANTHROPIC_MODEL', 'claude-sonnet-5');
+
+// Powers Style-LORE Premium subscriptions (the AI Stylist above, unlimited
+// Closet items instead of the free 20-item cap) via RevenueCat, which
+// handles the actual Google Play Billing purchase flow from the mobile
+// app and tells this server about subscription changes through a webhook.
+//
+// REVENUECAT_WEBHOOK_SECRET — a long random string YOU choose (e.g.
+// `php -r "echo bin2hex(random_bytes(24));"`), entered in BOTH places:
+// here, and as the "Authorization header value" when you set up the
+// webhook in the RevenueCat dashboard (Project settings > Integrations >
+// Webhooks > Webhook URL: https://style-lore.com/api/revenuecat/webhook).
+// RevenueCat resends this exact value on every webhook call so
+// api/revenuecat_webhook.php can reject anything else. Leave blank to
+// keep the webhook endpoint refusing all requests (subscriptions just
+// won't sync — nothing else breaks).
+define('REVENUECAT_WEBHOOK_SECRET', '');
 
 // Powers real phone push notifications (likes, comments, follows,
 // messages, group-joins) via Firebase Cloud Messaging. Both values come

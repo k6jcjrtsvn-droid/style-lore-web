@@ -2117,6 +2117,21 @@ function parseVideoLink(raw){
    LOCAL API CLIENT — talks to this app's own Express server (server/index.js)
 ===================================================================== */
 
+// Style-LORE Premium — RevenueCat's public (client-safe) SDK key for
+// Android, from your RevenueCat project's dashboard (Project settings >
+// API keys > "Public app-specific key" — the "goog_..." one, NOT the
+// secret key). Safe to ship in this file the same way a Stripe
+// *publishable* key would be — it can only start a purchase, never move
+// money or read account data on its own. Leave blank to keep every
+// "Upgrade" button's native purchase flow disabled (the paywall still
+// opens and explains Premium, it just can't sell it yet) until this is
+// set. See claude/monetization-setup-checklist.md for where to get this.
+const REVENUECAT_PUBLIC_SDK_KEY_ANDROID = "";
+// Must exactly match the identifier of the entitlement you create in
+// RevenueCat (Project > Entitlements) and attach both subscription
+// products to.
+const REVENUECAT_ENTITLEMENT_ID = "premium";
+
 const Api = {
   async signup({ name, email, password }){
     const r = await fetch("/api/auth/signup", {
@@ -2416,6 +2431,35 @@ const Api = {
     });
     if(!r.ok) return null;
     return r.json();
+  },
+
+  // ---- Style-LORE Premium (RevenueCat-backed subscription) -------------
+  async getSubscriptionStatus(accountId){
+    const r = await fetch("/api/subscription/status?accountId=" + encodeURIComponent(accountId));
+    if(!r.ok) return { isPremium:false, closetFreeLimit:20 };
+    return r.json();
+  },
+  // The AI Stylist — Style-LORE Premium's flagship feature. A real Claude
+  // vision call (see api/checker_photo.php) that gives specific,
+  // plain-language styling feedback on an actual photo, well beyond what
+  // the free on-device photo checker (edge/color heuristics only) can do.
+  // A 402 here always means "show the paywall" (surfaced as err.code ===
+  // "premium_required"); a 503 means the feature isn't configured yet.
+  async checkPhoto({ visitorId, authToken, photoBlob, kibbeTypeName, topStyleWords }){
+    const fd = new FormData();
+    fd.append("visitorId", visitorId);
+    fd.append("authToken", authToken || "");
+    fd.append("photo", photoBlob, "photo.jpg");
+    if(kibbeTypeName) fd.append("kibbeTypeName", kibbeTypeName);
+    if(topStyleWords && topStyleWords.length) fd.append("topStyleWords", JSON.stringify(topStyleWords));
+    const r = await fetch("/api/checker/photo", { method:"POST", body:fd });
+    const body = await r.json().catch(()=>({}));
+    if(!r.ok){
+      const err = new Error(body.error || "Couldn't run the AI Stylist right now — try again.");
+      err.code = body.code || null;
+      throw err;
+    }
+    return body;
   },
 
   // ---- Groups -------------------------------------------------------------
@@ -3933,11 +3977,17 @@ function ColorScreen({ colorResult, onSaveColor }){
    already lived only in this browser's localStorage, no size cap)
 ===================================================================== */
 
-function ClosetScreen({ closet, setCloset, blend, styleWordBlend, kibbeTypeName, topStyleWords, profile:viewer }){
+function ClosetScreen({ closet, setCloset, blend, styleWordBlend, kibbeTypeName, topStyleWords, profile:viewer, isPremium, closetFreeLimit, onUpgrade }){
   const [showAdd, setShowAdd] = useState(false);
   const profile = { kibbeBlend: blend, styleWordBlend, kibbeTypeName, topStyleWords };
+  const atCap = !isPremium && closet.length >= closetFreeLimit;
 
   function addItem(item){
+    if(!isPremium && closet.length >= closetFreeLimit){
+      setShowAdd(false);
+      if(onUpgrade) onUpgrade("closet");
+      return;
+    }
     setCloset([{ ...item, id: uid(), createdAt: Date.now() }, ...closet]);
     setShowAdd(false);
   }
@@ -3946,6 +3996,10 @@ function ClosetScreen({ closet, setCloset, blend, styleWordBlend, kibbeTypeName,
   }
   function toggleItemVisibility(id){
     setCloset(closet.map(x => x.id === id ? Object.assign({}, x, { visibility: x.visibility === "public" ? "hidden" : "public" }) : x));
+  }
+  function handleAddClick(){
+    if(atCap){ if(onUpgrade) onUpgrade("closet"); return; }
+    setShowAdd(true);
   }
 
   const gapAnalysis = (blend || styleWordBlend) ? styleGapAnalysis(closet, profile) : null;
@@ -3960,17 +4014,35 @@ function ClosetScreen({ closet, setCloset, blend, styleWordBlend, kibbeTypeName,
     }
   }
 
+  // Free-plan usage banner — silent unless premium isn't active. Once
+  // there are 3 or fewer slots left it names the exact count; once the
+  // cap is actually hit it becomes the upgrade prompt itself (the "+ Add"
+  // button also opens the paywall directly at that point, via atCap).
+  let capBanner = null;
+  if (!isPremium){
+    if (atCap){
+      capBanner = e(Banner, { kind:"info" },
+        "You've used all " + closetFreeLimit + " free closet slots. ",
+        e("button", { className:"btn-text", style:{ padding:0, fontSize:"inherit", textDecoration:"underline" }, onClick:()=>onUpgrade && onUpgrade("closet") }, "Upgrade to Premium"),
+        " for up to 300."
+      );
+    } else if (closet.length >= closetFreeLimit - 3){
+      capBanner = e(Banner, { kind:"info" }, closet.length + " of " + closetFreeLimit + " free closet slots used.");
+    }
+  }
+
   return e("div", null,
     e("div", { style:{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:6 } },
       e("div", null,
         e("div", { className:"eyebrow" }, "Your closet"),
         e("h1", { className:"screen-title" }, "Closet")
       ),
-      e("button", { className:"btn btn-accent btn-sm", onClick:()=>setShowAdd(true) }, "+ Add")
+      e("button", { className:"btn btn-accent btn-sm", onClick:handleAddClick }, "+ Add")
     ),
     e("p", { className:"screen-lede", style:{ marginBottom:14 } }, "Log what you own — a running record of your capsule. Each item is Hidden by default; mark one Public to show it on your profile and in Community's Closets tab."),
 
     !blend ? e(Banner, { kind:"info" }, "Take the body & Kibbe quiz first to start building a picture of your capsule against it.") : null,
+    capBanner,
 
     closet.length === 0
       ? e(EmptyState, { icon:"closet" }, "Nothing logged yet. Add your first piece to get started.")
@@ -4085,11 +4157,106 @@ function ClosetFeedRow({ item, onOpenProfile }){
   );
 }
 
+function PaywallSheet({ reason, onClose, onPurchased }){
+  useBackClose(onClose);
+  const [offerings, setOfferings] = useState(null);
+  const [busy, setBusy] = useState(null); // a package identifier, "restore", or null
+  const [error, setError] = useState(null);
+  const isNative = window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform();
+  const Purchases = isNative && window.Capacitor.Plugins && window.Capacitor.Plugins.Purchases;
+
+  useEffect(() => {
+    if(!Purchases || !REVENUECAT_PUBLIC_SDK_KEY_ANDROID) return;
+    let cancelled = false;
+    Purchases.getOfferings().then(res => {
+      if(!cancelled) setOfferings(res && res.current ? res.current.availablePackages : []);
+    }).catch(() => { if(!cancelled) setError("Couldn't load subscription options — try again in a moment."); });
+    return () => { cancelled = true; };
+  }, []);
+
+  async function buy(pkg){
+    if(!Purchases || busy) return;
+    setBusy(pkg.identifier);
+    setError(null);
+    try{
+      await Purchases.purchasePackage({ aPackage: pkg });
+      onPurchased();
+    }catch(err){
+      // RevenueCat's SDK marks a user-cancelled purchase distinctly —
+      // not worth showing an error banner for.
+      if(!(err && (err.userCancelled || err.code === "1"))){
+        setError((err && err.message) || "That purchase didn't go through — try again.");
+      }
+    }finally{
+      setBusy(null);
+    }
+  }
+
+  async function restore(){
+    if(!Purchases || busy) return;
+    setBusy("restore");
+    setError(null);
+    try{
+      const { customerInfo } = await Purchases.restorePurchases();
+      const active = customerInfo && customerInfo.entitlements && customerInfo.entitlements.active;
+      if(active && active[REVENUECAT_ENTITLEMENT_ID]) onPurchased();
+      else setError("No previous Style-LORE Premium purchase found on this account.");
+    }catch(err){
+      setError((err && err.message) || "Couldn't restore purchases right now.");
+    }finally{
+      setBusy(null);
+    }
+  }
+
+  const reasonCopy = reason === "closet"
+    ? "You've hit the free plan's closet item limit."
+    : reason === "checker"
+      ? "The AI Stylist — a real, detailed style read on your photo from Claude — is a Premium feature."
+      : "Unlock everything Style-LORE Premium includes.";
+
+  let plansContent;
+  if (!isNative){
+    plansContent = e(Banner, { kind:"info" }, "Subscriptions are handled through the Style-LORE mobile app right now — open the app on your phone to upgrade.");
+  } else if (!REVENUECAT_PUBLIC_SDK_KEY_ANDROID){
+    plansContent = e(Banner, { kind:"info" }, "Premium isn't fully set up yet — check back soon.");
+  } else if (offerings === null){
+    plansContent = e("p", { style:{ fontSize:13, color:"var(--ink-soft)" } }, "Loading plans…");
+  } else if (offerings.length === 0){
+    plansContent = e(Banner, { kind:"info" }, "No plans are available right now — check back soon.");
+  } else {
+    plansContent = e("div", { style:{ display:"flex", flexDirection:"column", gap:10, marginBottom:12 } },
+      offerings.map(pkg => e("button", {
+        key: pkg.identifier, className:"btn btn-accent btn-block",
+        disabled: !!busy, onClick: ()=>buy(pkg),
+      }, busy === pkg.identifier ? "Processing…" : (pkg.product.title || pkg.product.identifier) + " — " + pkg.product.priceString)),
+      e("button", { className:"btn-text", style:{ fontSize:12.5 }, disabled:!!busy, onClick:restore }, busy === "restore" ? "Restoring…" : "Restore purchases")
+    );
+  }
+
+  return e("div", { className:"sheet-backdrop", onClick:onClose },
+    e("div", { className:"sheet", onClick: ev=>ev.stopPropagation() },
+      e("div", { className:"sheet-handle" }),
+      e("div", { className:"sheet-head" },
+        e("h2", { className:"display", style:{ fontSize:20, fontWeight:700 } }, "Style-LORE Premium"),
+        e("button", { className:"close-btn", onClick:onClose, "aria-label":"Close" }, Icon("x"))
+      ),
+      e("p", { style:{ fontSize:14, color:"var(--ink-soft)", marginBottom:16 } }, reasonCopy),
+      e("ul", { style:{ margin:"0 0 20px", paddingLeft:20, fontSize:13.5, color:"var(--ink-soft)", display:"flex", flexDirection:"column", gap:6 } },
+        e("li", null, "AI Stylist — real Claude-powered photo styling feedback, not just an on-device estimate"),
+        e("li", null, "Closet up to 300 items instead of 20"),
+        e("li", null, "Supports Style-LORE directly")
+      ),
+      plansContent,
+      error ? e(Banner, { kind:"error" }, error) : null
+    )
+  );
+}
+
 /* =====================================================================
    CHECKER — on-device fit verdicts, no API key or network call
 ===================================================================== */
 
-function CheckerScreen({ blend, styleWordBlend, kibbeTypeName, topStyleWords, visitorId, authToken }){
+function CheckerScreen({ blend, styleWordBlend, kibbeTypeName, topStyleWords, visitorId, authToken, isPremium, onUpgrade }){
   const [description, setDescription] = useState("");
   const [checked, setChecked] = useState(null);
   const profile = { kibbeBlend: blend, styleWordBlend, kibbeTypeName, topStyleWords };
@@ -4110,6 +4277,18 @@ function CheckerScreen({ blend, styleWordBlend, kibbeTypeName, topStyleWords, vi
   const [photoResult, setPhotoResult] = useState(null);
   const [photoError, setPhotoError] = useState(null);
 
+  // AI Stylist — Style-LORE Premium. Reuses whatever photo was just
+  // uploaded for the free on-device photo checker above (same photoBlob),
+  // so someone can get both the instant free read and, if they're
+  // Premium, a real Claude vision read from the exact same photo without
+  // uploading it twice. Its own busy/result/error state, and its own
+  // gating on isPremium — the server (has_premium() in checker_photo.php)
+  // enforces this independently either way, so onUpgrade here is purely
+  // about giving a good UI prompt, never the actual access control.
+  const [aiBusy, setAiBusy] = useState(false);
+  const [aiResult, setAiResult] = useState(null);
+  const [aiError, setAiError] = useState(null);
+
   function runCheck(){
     if (!description.trim()) return;
     setChecked(styleCheckVerdict(description.trim(), profile));
@@ -4120,6 +4299,8 @@ function CheckerScreen({ blend, styleWordBlend, kibbeTypeName, topStyleWords, vi
     if(!file) return;
     setPhotoResult(null);
     setPhotoError(null);
+    setAiResult(null);
+    setAiError(null);
     downscaleImage(file, 900, 0.8).then(dataUrl => {
       setPhotoPreview(dataUrl);
       setPhotoBlob(dataUrlToBlob(dataUrl));
@@ -4138,6 +4319,26 @@ function CheckerScreen({ blend, styleWordBlend, kibbeTypeName, topStyleWords, vi
       setPhotoError(err.message || "Couldn't run the photo check right now.");
     }finally{
       setPhotoBusy(false);
+    }
+  }
+
+  async function runAiStylist(){
+    if(!photoBlob || aiBusy) return;
+    if(!isPremium){ if(onUpgrade) onUpgrade("checker"); return; }
+    setAiBusy(true);
+    setAiResult(null);
+    setAiError(null);
+    try{
+      const result = await Api.checkPhoto({ visitorId, authToken, photoBlob, kibbeTypeName, topStyleWords });
+      setAiResult(result);
+    }catch(err){
+      if(err.code === "premium_required"){
+        if(onUpgrade) onUpgrade("checker");
+      } else {
+        setAiError(err.message || "Couldn't run the AI Stylist right now — try again.");
+      }
+    }finally{
+      setAiBusy(false);
     }
   }
 
@@ -4216,7 +4417,36 @@ function CheckerScreen({ blend, styleWordBlend, kibbeTypeName, topStyleWords, vi
       ) : null
     ) : null,
 
-    e(Banner, { kind:"info" }, "This one also runs entirely on your device — an on-device pose and image analyzer reads the photo's edges, colors, and (when a full body is visible) silhouette. No photo, key, or account ever leaves your device for either checker.")
+    e(Banner, { kind:"info" }, "This one also runs entirely on your device — an on-device pose and image analyzer reads the photo's edges, colors, and (when a full body is visible) silhouette. No photo, key, or account ever leaves your device for either checker."),
+
+    e("hr", { className:"rule", style:{ margin:"28px 0" } }),
+
+    e("div", { className:"eyebrow" }, "Want a real second opinion?"),
+    e("h2", { className:"screen-title", style:{ fontSize:20 } }, "AI Stylist" + (isPremium ? "" : " · Premium")),
+    e("p", { className:"screen-lede", style:{ marginBottom:16 } },
+      "Uses the same photo above — but this time an actual Claude vision call looks closely at the colors, cut, and fit and gives you specific, plain-language styling feedback well beyond what the on-device estimate above can do."
+    ),
+
+    !photoBlob ? e(Banner, { kind:"info" }, "Add a photo above first, then come back down here.") : null,
+
+    e("button", {
+      className:"btn btn-accent btn-block", style:{ marginBottom:16 },
+      disabled: !photoBlob || aiBusy,
+      onClick: runAiStylist
+    }, aiBusy ? "Asking the AI Stylist…" : isPremium ? "Get AI Stylist review" : "Unlock the AI Stylist — Upgrade to Premium"),
+
+    aiError ? e(Banner, { kind:"error" }, aiError) : null,
+
+    aiResult ? e("div", { className:"card", style:{ padding:16, marginBottom:16 } },
+      e("div", { style:{ display:"flex", alignItems:"center", gap:10, marginBottom:8 } },
+        e(VerdictPill, { verdict: aiResult.verdict === "mismatch" ? "avoid" : aiResult.verdict === "match" ? "match" : "neutral" })
+      ),
+      e("div", { style:{ fontSize:15, fontWeight:600, marginBottom:6 } }, aiResult.headline),
+      aiResult.detail ? e("p", { style:{ fontSize:13.5, color:"var(--ink-soft)", marginBottom: aiResult.suggestion ? 10 : 0 } }, aiResult.detail) : null,
+      aiResult.suggestion ? e("p", { style:{ fontSize:13.5, color:"var(--accent)", marginBottom:0, fontWeight:500 } }, "✦ " + aiResult.suggestion) : null
+    ) : null,
+
+    e(Banner, { kind:"info" }, "The AI Stylist sends your photo to Claude for analysis — the only checker feature that leaves your device. Style-LORE Premium.")
   );
 }
 
@@ -5663,6 +5893,22 @@ function App(){
   // synchronous "current token" getter, only the async registration event.
   const deviceTokenRef = useRef(null);
 
+  // Style-LORE Premium entitlement. The server (has_premium(), synced
+  // from RevenueCat's webhook — see api/revenuecat_webhook.php) is always
+  // the real source of truth for anything that spends money server-side
+  // (the AI Stylist, the closet's 300-item cap), but the client keeps its
+  // own copy too so screens can show/hide upgrade prompts instantly.
+  // closetFreeLimit mirrors includes/helpers.php's CLOSET_FREE_LIMIT so
+  // the UI's cap warning never drifts out of sync with what the server
+  // actually enforces.
+  const [isPremium, setIsPremium] = useState(false);
+  const [closetFreeLimit, setClosetFreeLimit] = useState(20);
+  // null, or a short string saying why the paywall was opened ("closet",
+  // "checker") purely for the paywall's own copy — never used for access
+  // control (the server checks that independently on every call).
+  const [paywallReason, setPaywallReason] = useState(null);
+  function openPaywall(reason){ setPaywallReason(reason || true); }
+
   // Hardware/browser back button — see the useBackClose block near the top
   // of this file for the sheet/overlay side of this. App-level navigation
   // keeps a real navigation STACK: every distinct (screen, viewingProfileId,
@@ -5867,6 +6113,73 @@ function App(){
     };
   }, [profile && profile.visitorId, profile && profile.token]);
 
+  // Style-LORE Premium status — refetched on sign-in, and again whenever
+  // the paywall closes (a purchase may have just gone through). This is
+  // the one source every screen reads isPremium/closetFreeLimit from;
+  // RevenueCat's webhook is what keeps has_premium() in sync server-side
+  // in the background, independent of whether this tab/app is even open.
+  useEffect(() => {
+    if(!profile || !profile.visitorId){ setIsPremium(false); return; }
+    let cancelled = false;
+    Api.getSubscriptionStatus(profile.visitorId).then(({ isPremium, closetFreeLimit }) => {
+      if(cancelled) return;
+      setIsPremium(!!isPremium);
+      if(closetFreeLimit) setClosetFreeLimit(closetFreeLimit);
+    }).catch(()=>{});
+    return () => { cancelled = true; };
+  }, [profile && profile.visitorId, paywallReason === null]);
+
+  // RevenueCat — native purchase flow for Style-LORE Premium. Configured
+  // with this account's own id as RevenueCat's "app user id" (rather than
+  // letting it generate an anonymous one) so a purchase always attaches
+  // to the same account this person is signed into everywhere else — see
+  // the appUserID note atop api/revenuecat_webhook.php for why that means
+  // no separate id-mapping table is needed server-side. Same isNative /
+  // profile.visitorId-gated useEffect shape as the push-notification setup
+  // above, for the same reason: both are native-only and both need a
+  // signed-in account id before they mean anything.
+  const purchasesConfiguredForRef = useRef(null);
+  useEffect(() => {
+    if(!profile || !profile.visitorId) return;
+    const Capacitor = window.Capacitor;
+    const isNative = Capacitor && Capacitor.isNativePlatform && Capacitor.isNativePlatform();
+    const Purchases = isNative && Capacitor.Plugins && Capacitor.Plugins.Purchases;
+    if(!Purchases || !REVENUECAT_PUBLIC_SDK_KEY_ANDROID) return;
+    if(purchasesConfiguredForRef.current === profile.visitorId) return;
+    purchasesConfiguredForRef.current = profile.visitorId;
+
+    let cancelled = false;
+    const listeners = [];
+
+    function applyCustomerInfo(info){
+      const active = info && info.entitlements && info.entitlements.active;
+      if(active && active[REVENUECAT_ENTITLEMENT_ID]) setIsPremium(true);
+    }
+
+    async function setUp(){
+      await Purchases.configure({ apiKey: REVENUECAT_PUBLIC_SDK_KEY_ANDROID, appUserID: profile.visitorId });
+      if(cancelled) return;
+      listeners.push(await Purchases.addListener("customerInfoUpdate", (event) => {
+        // Fires immediately after a purchase completes, well before
+        // RevenueCat's webhook reaches our own server — trust it right
+        // away so the UI unlocks instantly instead of waiting on a round
+        // trip. api/subscription/status stays the source of truth for
+        // every screen load after this session ends.
+        applyCustomerInfo(event && event.customerInfo);
+      }));
+      try{
+        const { customerInfo } = await Purchases.getCustomerInfo();
+        if(!cancelled) applyCustomerInfo(customerInfo);
+      }catch(err){ /* fine — the server status fetch above already covers this */ }
+    }
+    setUp().catch(()=>{});
+
+    return () => {
+      cancelled = true;
+      listeners.forEach(l => { try{ l.remove(); }catch(err){} });
+    };
+  }, [profile && profile.visitorId]);
+
   // Auto-populate this account's public profile with a style summary
   // derived from their own quiz results — "Style" per Kenneth's request,
   // not something anyone types in. Fires whenever either quiz's result
@@ -6000,8 +6313,8 @@ function App(){
   else if(screen === "home") body = e(HomeScreen, { profile, blend, styleBlend, onNavigate:goTo, onSignOut:signOut, onOpenProfile:openProfile, onAccountDeleted:handleAccountDeleted });
   else if(screen === "quiz") body = e(StyleQuizScreen, { kibbeResult, styleLanguageResult:styleBlend, onSaveKibbe:setKibbeResult, onSaveStyle:setStyleBlend });
   else if(screen === "color") body = e(ColorScreen, { colorResult, onSaveColor:setColorResult });
-  else if(screen === "closet") body = e(ClosetScreen, { closet, setCloset, blend, styleWordBlend:styleBlend, kibbeTypeName, topStyleWords, profile });
-  else if(screen === "checker") body = e(CheckerScreen, { blend, styleWordBlend:styleBlend, kibbeTypeName, topStyleWords, visitorId: profile.visitorId, authToken: profile.token });
+  else if(screen === "closet") body = e(ClosetScreen, { closet, setCloset, blend, styleWordBlend:styleBlend, kibbeTypeName, topStyleWords, profile, isPremium, closetFreeLimit, onUpgrade:openPaywall });
+  else if(screen === "checker") body = e(CheckerScreen, { blend, styleWordBlend:styleBlend, kibbeTypeName, topStyleWords, visitorId: profile.visitorId, authToken: profile.token, isPremium, onUpgrade:openPaywall });
   else if(screen === "community") body = e(CommunityScreen, { profile, blend, onOpenProfile:openProfile });
   else if(screen === "notifications") body = e(NotificationsScreen, { profile, onBack:()=>goTo("home"), onOpenProfile:openProfile, onOpenConversation:openConversation });
   else if(screen === "inbox") body = e(InboxScreen, { profile, onBack:()=>goTo("home"), onOpenConversation:openConversation });
@@ -6025,7 +6338,12 @@ function App(){
       )
     ),
     e("main", { className:"app-main" }, body),
-    e(BottomNav, { screen, onNavigate:goTo })
+    e(BottomNav, { screen, onNavigate:goTo }),
+    paywallReason ? e(PaywallSheet, {
+      reason: paywallReason,
+      onClose: () => setPaywallReason(null),
+      onPurchased: () => { setIsPremium(true); setPaywallReason(null); },
+    }) : null
   );
 }
 
