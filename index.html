@@ -4012,7 +4012,7 @@ function ColorScreen({ colorResult, onSaveColor }){
    already lived only in this browser's localStorage, no size cap)
 ===================================================================== */
 
-function ClosetScreen({ closet, setCloset, blend, styleWordBlend, kibbeTypeName, topStyleWords, profile:viewer, isPremium, closetFreeLimit, onUpgrade }){
+function ClosetScreen({ closet, setCloset, blend, styleWordBlend, kibbeTypeName, topStyleWords, profile:viewer, isPremium, closetFreeLimit, onUpgrade, syncStatus, onRetrySync }){
   const [showAdd, setShowAdd] = useState(false);
   const profile = { kibbeBlend: blend, styleWordBlend, kibbeTypeName, topStyleWords };
   const atCap = !isPremium && closet.length >= closetFreeLimit;
@@ -4066,6 +4066,18 @@ function ClosetScreen({ closet, setCloset, blend, styleWordBlend, kibbeTypeName,
     }
   }
 
+  // Surfaces a failed server sync instead of leaving it silently
+  // swallowed -- see the closetSyncStatus effect in App() for why this
+  // matters (it's exactly the failure mode behind the "public closet
+  // items not showing up" bug).
+  let syncBanner = null;
+  if (syncStatus === "error"){
+    syncBanner = e(Banner, { kind:"error" },
+      "Couldn't save your last closet change — retrying automatically. ",
+      e("button", { className:"btn-text", style:{ padding:0, fontSize:"inherit", textDecoration:"underline" }, onClick:onRetrySync }, "Retry now")
+    );
+  }
+
   return e("div", null,
     e("div", { style:{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:6 } },
       e("div", null,
@@ -4078,6 +4090,7 @@ function ClosetScreen({ closet, setCloset, blend, styleWordBlend, kibbeTypeName,
 
     !blend ? e(Banner, { kind:"info" }, "Take the body & Kibbe quiz first to start building a picture of your capsule against it.") : null,
     capBanner,
+    syncBanner,
 
     closet.length === 0
       ? e(EmptyState, { icon:"closet" }, "Nothing logged yet. Add your first piece to get started.")
@@ -6079,15 +6092,56 @@ function App(){
   // and each one reads closetRef.current at send time -- the true latest
   // state -- rather than whatever `closet` value was captured when it was
   // scheduled, so a slow request can no longer overwrite a newer one.
+  //
+  // A sync failure used to just vanish into a bare .catch(()=>{}) here --
+  // which is exactly how the "public closet items not showing up" bug
+  // (2026-09-12) went unnoticed for days: the server was rejecting every
+  // single sync (a missing `subscriptions` table -- see
+  // monetization-setup-checklist.md) and nothing, anywhere, ever showed
+  // that. closetSyncStatus below (read by ClosetScreen) plus the
+  // automatic retry-with-backoff make sure that failure mode can't hide
+  // silently again.
   const closetRef = useRef(closet);
   useEffect(() => { closetRef.current = closet; }, [closet]);
   const closetSyncChainRef = useRef(Promise.resolve());
+  const closetSyncAttemptRef = useRef(0);
+  const closetSyncRetryTimerRef = useRef(null);
+  // "idle" (signed out / nothing synced yet) | "saving" | "saved" | "error".
+  const [closetSyncStatus, setClosetSyncStatus] = useState("idle");
+
+  const runClosetSync = useCallback(() => {
+    if(!profile || !profile.visitorId) return;
+    setClosetSyncStatus("saving");
+    closetSyncChainRef.current = closetSyncChainRef.current.then(() =>
+      Api.syncCloset(profile.visitorId, profile.name, profile.token, closetRef.current)
+        .then(() => {
+          closetSyncAttemptRef.current = 0;
+          setClosetSyncStatus("saved");
+        })
+        .catch(() => {
+          setClosetSyncStatus("error");
+          // Auto-retry with backoff (2s/4s/8s/16s/30s) so a one-off blip
+          // clears itself without anyone having to notice or tap anything
+          // -- capped at 5 attempts so a genuinely broken server doesn't
+          // retry forever in the background. A real edit (below), or the
+          // "Retry now" button in ClosetScreen, resets this counter.
+          closetSyncAttemptRef.current = Math.min(closetSyncAttemptRef.current + 1, 5);
+          if(closetSyncAttemptRef.current >= 5) return;
+          const delay = Math.min(30000, 2000 * Math.pow(2, closetSyncAttemptRef.current - 1));
+          if(closetSyncRetryTimerRef.current) clearTimeout(closetSyncRetryTimerRef.current);
+          closetSyncRetryTimerRef.current = setTimeout(runClosetSync, delay);
+        })
+    );
+  }, [profile && profile.visitorId, profile && profile.name, profile && profile.token]);
+
   useEffect(() => {
     if(!profile || !profile.visitorId) return;
-    closetSyncChainRef.current = closetSyncChainRef.current.then(() =>
-      Api.syncCloset(profile.visitorId, profile.name, profile.token, closetRef.current).catch(()=>{})
-    );
+    closetSyncAttemptRef.current = 0;
+    if(closetSyncRetryTimerRef.current) clearTimeout(closetSyncRetryTimerRef.current);
+    runClosetSync();
   }, [profile && profile.visitorId, profile && profile.name, profile && profile.token, closet]);
+
+  useEffect(() => () => { if(closetSyncRetryTimerRef.current) clearTimeout(closetSyncRetryTimerRef.current); }, []);
 
   // Lightweight polling for the topbar's bell/mail unread badges — cheap
   // enough to run continuously since both endpoints are simple indexed
@@ -6370,7 +6424,7 @@ function App(){
   else if(screen === "home") body = e(HomeScreen, { profile, blend, styleBlend, onNavigate:goTo, onSignOut:signOut, onOpenProfile:openProfile, onAccountDeleted:handleAccountDeleted });
   else if(screen === "quiz") body = e(StyleQuizScreen, { kibbeResult, styleLanguageResult:styleBlend, onSaveKibbe:setKibbeResult, onSaveStyle:setStyleBlend });
   else if(screen === "color") body = e(ColorScreen, { colorResult, onSaveColor:setColorResult });
-  else if(screen === "closet") body = e(ClosetScreen, { closet, setCloset, blend, styleWordBlend:styleBlend, kibbeTypeName, topStyleWords, profile, isPremium, closetFreeLimit, onUpgrade:openPaywall });
+  else if(screen === "closet") body = e(ClosetScreen, { closet, setCloset, blend, styleWordBlend:styleBlend, kibbeTypeName, topStyleWords, profile, isPremium, closetFreeLimit, onUpgrade:openPaywall, syncStatus:closetSyncStatus, onRetrySync:runClosetSync });
   else if(screen === "checker") body = e(CheckerScreen, { blend, styleWordBlend:styleBlend, kibbeTypeName, topStyleWords, visitorId: profile.visitorId, authToken: profile.token, isPremium, onUpgrade:openPaywall });
   else if(screen === "community") body = e(CommunityScreen, { profile, blend, onOpenProfile:openProfile });
   else if(screen === "notifications") body = e(NotificationsScreen, { profile, onBack:()=>goTo("home"), onOpenProfile:openProfile, onOpenConversation:openConversation });

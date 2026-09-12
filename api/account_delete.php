@@ -6,7 +6,10 @@
  *
  * Deletes: the accounts row, the profiles row, all posts by this author
  * (plus their uploaded photo/video files on disk), all likes by this
- * visitor, and all follow edges in both directions.
+ * visitor, all follow edges in both directions, and all of this
+ * account's closet_items rows (added 2026-09-12 -- these used to be left
+ * behind as orphaned rows with no owning account, found while diagnosing
+ * an unrelated closet-sync bug).
  *
  * Known, disclosed limitation: the `comments` table only stores a
  * denormalized `author_name` string, not an author id (see schema.sql) —
@@ -66,6 +69,7 @@ try {
         $pdo->prepare('DELETE FROM likes WHERE visitor_id = ?')->execute([$id]);
         $pdo->prepare('DELETE FROM reports WHERE visitor_id = ?')->execute([$id]);
         $pdo->prepare('DELETE FROM follows WHERE follower_id = ? OR following_id = ?')->execute([$id, $id]);
+        $pdo->prepare('DELETE FROM closet_items WHERE account_id = ?')->execute([$id]);
         $pdo->prepare('DELETE FROM posts WHERE author_id = ?')->execute([$id]);
         $pdo->prepare('DELETE FROM profiles WHERE id = ?')->execute([$id]);
         $pdo->prepare('DELETE FROM accounts WHERE id = ?')->execute([$id]);
