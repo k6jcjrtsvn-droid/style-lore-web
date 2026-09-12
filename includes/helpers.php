@@ -262,6 +262,140 @@ function create_notification(PDO $pdo, string $recipientId, ?string $actorId, st
         uuidv4(), $recipientId, $actorId ?: null, mb_substr($actorName, 0, 60), $actorAvatarUrl,
         $type, mb_substr($message, 0, 200), $data ? json_encode($data) : null, current_time_ms(),
     ]);
+
+    // Also raise a real phone notification, if this account has any
+    // registered devices (api/device_tokens.php) and Firebase is
+    // configured (see send_push_notification() below) -- mirrors the same
+    // `type`/`data` shape the in-app NotificationsScreen already uses to
+    // decide what tapping a notification should open, so a push tap and an
+    // in-app tap land in the same place. Never lets a push failure affect
+    // the in-app notification already written above.
+    send_push_notification($pdo, $recipientId, 'Style-LORE', mb_substr($message, 0, 180), array_merge(['type' => $type], $data ?: []));
+}
+
+/**
+ * Sends a native push notification via Firebase Cloud Messaging's HTTP v1
+ * API to every device this account has registered (see
+ * api/device_tokens.php and the `device_tokens` table). Called from
+ * create_notification() right above, right after the in-app notification
+ * row is committed -- same "gracefully do nothing until configured" pattern
+ * as the Anthropic-backed photo checker: leave FIREBASE_PROJECT_ID or
+ * FIREBASE_SERVICE_ACCOUNT_PATH blank and this silently no-ops, no error
+ * surfaced anywhere.
+ *
+ * Uses a hand-rolled service-account OAuth2 exchange (see
+ * fcm_access_token() below) rather than the Firebase Admin SDK -- this
+ * codebase has no Composer/dependency setup anywhere else, so everything
+ * here is plain PHP + curl + openssl, matching every other integration in
+ * this file.
+ *
+ * A push-send failure NEVER throws or bubbles up -- the in-app notification
+ * is already committed to the database by the time this runs, and it must
+ * never be affected just because a phone notification didn't go out (no
+ * devices registered, Firebase not configured yet, a transient network
+ * error, etc.).
+ */
+function send_push_notification(PDO $pdo, string $recipientId, string $title, string $body, ?array $data = null): void {
+    if (!defined('FIREBASE_PROJECT_ID') || !FIREBASE_PROJECT_ID) return;
+    if (!defined('FIREBASE_SERVICE_ACCOUNT_PATH') || !FIREBASE_SERVICE_ACCOUNT_PATH || !is_readable(FIREBASE_SERVICE_ACCOUNT_PATH)) return;
+
+    try {
+        $tokensStmt = $pdo->prepare('SELECT token FROM device_tokens WHERE account_id = ?');
+        $tokensStmt->execute([$recipientId]);
+        $tokens = $tokensStmt->fetchAll(PDO::FETCH_COLUMN);
+        if (!$tokens) return;
+
+        $accessToken = fcm_access_token();
+        if (!$accessToken) return;
+
+        foreach ($tokens as $token) {
+            $payload = [
+                'message' => [
+                    'token' => $token,
+                    'notification' => ['title' => mb_substr($title, 0, 60), 'body' => mb_substr($body, 0, 180)],
+                    'data' => array_map('strval', $data ?: []),
+                    'android' => ['priority' => 'high'],
+                ],
+            ];
+            $ch = curl_init('https://fcm.googleapis.com/v1/projects/' . FIREBASE_PROJECT_ID . '/messages:send');
+            curl_setopt_array($ch, [
+                CURLOPT_POST => true,
+                CURLOPT_RETURNTRANSFER => true,
+                CURLOPT_HTTPHEADER => ['Authorization: Bearer ' . $accessToken, 'Content-Type: application/json'],
+                CURLOPT_POSTFIELDS => json_encode($payload),
+                CURLOPT_TIMEOUT => 8,
+            ]);
+            $response = curl_exec($ch);
+            $status = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+            curl_close($ch);
+            if ($status === 404) {
+                // Token no longer valid (app uninstalled, etc.) -- drop it so we
+                // stop trying every time this account gets a new notification.
+                $pdo->prepare('DELETE FROM device_tokens WHERE token = ?')->execute([$token]);
+            } elseif ($status >= 400) {
+                $decoded = json_decode((string)$response, true);
+                $errCode = $decoded['error']['details'][0]['errorCode'] ?? null;
+                if ($errCode === 'UNREGISTERED') {
+                    $pdo->prepare('DELETE FROM device_tokens WHERE token = ?')->execute([$token]);
+                } else {
+                    error_log('FCM send failed (' . $status . '): ' . $response);
+                }
+            }
+        }
+    } catch (Throwable $e) {
+        error_log('send_push_notification error: ' . $e->getMessage());
+    }
+}
+
+/**
+ * Exchanges the Firebase service-account key for a short-lived OAuth2
+ * access token -- a self-signed JWT (RS256, the standard service-account
+ * grant flow), traded for a bearer token at Google's token endpoint. No
+ * external library needed, just openssl_sign() + curl. Fetched fresh on
+ * every call rather than cached: this app's notification volume is low
+ * enough that the extra round trip isn't worth the complexity/staleness
+ * risk of a shared token cache across requests.
+ */
+function fcm_access_token(): ?string {
+    $json = json_decode((string)file_get_contents(FIREBASE_SERVICE_ACCOUNT_PATH), true);
+    if (!$json || empty($json['client_email']) || empty($json['private_key'])) return null;
+
+    $now = time();
+    $header = ['alg' => 'RS256', 'typ' => 'JWT'];
+    $claims = [
+        'iss' => $json['client_email'],
+        'scope' => 'https://www.googleapis.com/auth/firebase.messaging',
+        'aud' => 'https://oauth2.googleapis.com/token',
+        'iat' => $now,
+        'exp' => $now + 3600,
+    ];
+    $b64url = function (string $v): string {
+        return rtrim(strtr(base64_encode($v), '+/', '-_'), '=');
+    };
+    $segments = $b64url(json_encode($header)) . '.' . $b64url(json_encode($claims));
+    $signature = '';
+    if (!openssl_sign($segments, $signature, $json['private_key'], 'SHA256')) return null;
+    $jwt = $segments . '.' . $b64url($signature);
+
+    $ch = curl_init('https://oauth2.googleapis.com/token');
+    curl_setopt_array($ch, [
+        CURLOPT_POST => true,
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_POSTFIELDS => http_build_query([
+            'grant_type' => 'urn:ietf:params:oauth:grant-type:jwt-bearer',
+            'assertion' => $jwt,
+        ]),
+        CURLOPT_TIMEOUT => 8,
+    ]);
+    $response = curl_exec($ch);
+    $status = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+    if ($status !== 200) {
+        error_log('FCM token exchange failed (' . $status . '): ' . $response);
+        return null;
+    }
+    $decoded = json_decode((string)$response, true);
+    return $decoded['access_token'] ?? null;
 }
 
 function notification_to_public(array $row): array {

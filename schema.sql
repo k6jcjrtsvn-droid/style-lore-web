@@ -312,4 +312,21 @@ CREATE TABLE IF NOT EXISTS closet_items (
   KEY idx_visibility_created (visibility, created_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
+-- ---------------------------------------------------------------------
+-- Push notification device tokens (Firebase Cloud Messaging). One row per
+-- installed app instance; upserted on every register call (a token can
+-- rotate at any time per FCM's own docs), removed on sign-out or once FCM
+-- reports it as no longer valid. Used by send_push_notification() in
+-- helpers.php, called from create_notification() whenever an in-app
+-- notification is created, so a like/comment/follow/message/group-join
+-- also raises a real phone notification.
+-- ---------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS device_tokens (
+  token VARCHAR(255) NOT NULL PRIMARY KEY,
+  account_id CHAR(36) NOT NULL,
+  platform VARCHAR(20) NOT NULL DEFAULT 'android',
+  updated_at BIGINT NOT NULL,
+  KEY idx_account (account_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
 SET FOREIGN_KEY_CHECKS = 1;

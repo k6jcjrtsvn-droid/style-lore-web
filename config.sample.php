@@ -54,3 +54,31 @@ define('ADMIN_KEY', '');
 // error) — everything else in the app works fine without it.
 define('ANTHROPIC_API_KEY', '');
 define('ANTHROPIC_MODEL', 'claude-haiku-4-5-20251001');
+
+// Powers real phone push notifications (likes, comments, follows,
+// messages, group-joins) via Firebase Cloud Messaging. Both values come
+// from a Firebase project (free) at https://console.firebase.google.com:
+//
+// 1. Create a project (or reuse one), then add an Android app to it with
+//    package name "com.stylelore.app" (must match exactly). Download the
+//    google-services.json it gives you and save it at
+//    mobile/android/app/google-services.json in this repo (NOT under
+//    web/ — it's a mobile build input, never served by the website).
+//
+// 2. FIREBASE_PROJECT_ID — the project's ID, shown on the Firebase
+//    console's Project Settings page (General tab), e.g. "style-lore-app".
+//
+// 3. FIREBASE_SERVICE_ACCOUNT_PATH — an absolute server-side file path to
+//    a service-account JSON key: Firebase console > Project Settings >
+//    Service Accounts tab > "Generate new private key". This file is a
+//    real secret (it can send push to every device) — upload it
+//    somewhere OUTSIDE public_html (e.g. one level above it, alongside
+//    config.php) so it's never web-reachable, then point this constant at
+//    its absolute path on the server, e.g.
+//    '/home/yourcpaneluser/firebase-service-account.json'.
+//
+// Leave either value blank to keep push notifications gracefully
+// disabled — the in-app notification bell/inbox still work exactly as
+// before, this only skips the "also buzz their phone" step.
+define('FIREBASE_PROJECT_ID', '');
+define('FIREBASE_SERVICE_ACCOUNT_PATH', '');

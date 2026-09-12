@@ -43,6 +43,8 @@ RewriteRule ^api/checker/photo/?$ api/checker_photo.php [L,QSA]
 # --- Community/social features phase: Notifications, DMs, Stories, Groups
 RewriteRule ^api/notifications/?$ api/notifications.php [L,QSA]
 
+RewriteRule ^api/device-tokens/?$ api/device_tokens.php [L,QSA]
+
 RewriteRule ^api/conversations/?$ api/conversations.php [L,QSA]
 RewriteRule ^api/messages/?$ api/messages.php [L,QSA]
 

@@ -2333,6 +2333,25 @@ const Api = {
     return r.json();
   },
 
+  // ---- Push notification device tokens (see includes/helpers.php's
+  // send_push_notification(), hooked into create_notification()) --------
+  async registerDeviceToken(visitorId, authToken, token, platform){
+    const r = await fetch("/api/device-tokens", {
+      method:"POST", headers:{ "Content-Type":"application/json" },
+      body: JSON.stringify({ visitorId, authToken, token, platform }),
+    });
+    if(!r.ok) throw new Error("Couldn't register this device for notifications.");
+    return r.json();
+  },
+  async unregisterDeviceToken(visitorId, authToken, token){
+    const r = await fetch("/api/device-tokens", {
+      method:"DELETE", headers:{ "Content-Type":"application/json" },
+      body: JSON.stringify({ visitorId, authToken, token }),
+    });
+    if(!r.ok) throw new Error("Couldn't unregister this device.");
+    return r.json();
+  },
+
   // ---- Direct messages --------------------------------------------------
   async getConversations(visitorId, authToken){
     const params = new URLSearchParams({ visitorId, authToken: authToken || "" });
@@ -5638,6 +5657,11 @@ function App(){
   const [viewingConversation, setViewingConversation] = useState(null); // {id, otherId, otherName} | null
   const [unreadNotifCount, setUnreadNotifCount] = useState(0);
   const [unreadMsgCount, setUnreadMsgCount] = useState(0);
+  // Holds whatever FCM token this install last registered (set by the
+  // push-notification effect below), so signOut() can best-effort tell the
+  // server to drop it — Capacitor's PushNotifications plugin has no
+  // synchronous "current token" getter, only the async registration event.
+  const deviceTokenRef = useRef(null);
 
   // Hardware/browser back button — see the useBackClose block near the top
   // of this file for the sheet/overlay side of this. App-level navigation
@@ -5781,6 +5805,68 @@ function App(){
     return () => { cancelled = true; clearInterval(t); };
   }, [profile && profile.visitorId, profile && profile.token, screen, viewingConversation]);
 
+  // Push notifications (Android, via Capacitor + Firebase Cloud Messaging).
+  // window.Capacitor only exists when this page is running inside the
+  // native app shell (mobile/capacitor.config.json wraps this exact live
+  // site rather than a bundled copy) — a plain browser tab skips all of
+  // this. Capacitor auto-injects the bridge/plugin globals on every page
+  // load it controls, remote URL included, so no extra script tag is
+  // needed here beyond installing the native plugin (mobile/package.json)
+  // and syncing it into the Android project. Registers this device's push
+  // token with the server (api/device_tokens.php) so a like/comment/
+  // follow/message/group-join also raises a real phone notification (see
+  // send_push_notification() in includes/helpers.php); tapping one routes
+  // to the same place the in-app NotificationsScreen's handleTap() would
+  // (a message opens its conversation, anything else with an actor opens
+  // that profile, otherwise the Notifications screen).
+  useEffect(() => {
+    if(!profile || !profile.visitorId) return;
+    const Capacitor = window.Capacitor;
+    const isNative = Capacitor && Capacitor.isNativePlatform && Capacitor.isNativePlatform();
+    const Push = isNative && Capacitor.Plugins && Capacitor.Plugins.PushNotifications;
+    if(!Push) return;
+
+    let cancelled = false;
+    const listeners = [];
+
+    function routeFromNotificationData(data){
+      if(!data) { goTo("notifications"); return; }
+      if(data.type === "message" && data.conversationId){
+        openConversation({ id:data.conversationId, otherId:data.otherId || null, otherName:data.otherName || "" });
+      } else if(data.actorId){
+        openProfile(data.actorId);
+      } else {
+        goTo("notifications");
+      }
+    }
+
+    async function setUp(){
+      let perm = await Push.checkPermissions();
+      if(perm.receive !== "granted"){
+        perm = await Push.requestPermissions();
+      }
+      if(perm.receive !== "granted" || cancelled) return;
+
+      listeners.push(await Push.addListener("registration", (token) => {
+        if(cancelled || !token || !token.value) return;
+        deviceTokenRef.current = token.value;
+        Api.registerDeviceToken(profile.visitorId, profile.token, token.value, "android").catch(()=>{});
+      }));
+      listeners.push(await Push.addListener("registrationError", () => {}));
+      listeners.push(await Push.addListener("pushNotificationActionPerformed", (action) => {
+        routeFromNotificationData(action && action.notification && action.notification.data);
+      }));
+
+      if(!cancelled) await Push.register();
+    }
+    setUp().catch(()=>{});
+
+    return () => {
+      cancelled = true;
+      listeners.forEach(l => { try{ l.remove(); }catch(err){} });
+    };
+  }, [profile && profile.visitorId, profile && profile.token]);
+
   // Auto-populate this account's public profile with a style summary
   // derived from their own quiz results — "Style" per Kenneth's request,
   // not something anyone types in. Fires whenever either quiz's result
@@ -5832,6 +5918,9 @@ function App(){
     setPendingLinkAction(null);
   }
   function signOut(){
+    if(deviceTokenRef.current && profile && profile.visitorId){
+      Api.unregisterDeviceToken(profile.visitorId, profile.token, deviceTokenRef.current).catch(()=>{});
+    }
     setProfile(null);
     removeLocal("lore_profile"); // clear now that logging back in requires a real password
   }
