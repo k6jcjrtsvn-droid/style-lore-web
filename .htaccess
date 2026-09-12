@@ -1,0 +1,56 @@
+# Style-LORE — Apache routing + security for GoDaddy cPanel hosting.
+# This maps the exact API paths the frontend already calls (e.g.
+# /api/posts, /api/auth/signup) onto the matching PHP scripts in api/, so
+# the frontend's JavaScript needed zero changes when moving off the old
+# Node/Express server.
+
+RewriteEngine On
+
+# --- API routing -------------------------------------------------------
+RewriteRule ^api/auth/signup/?$ api/auth_signup.php [L,QSA]
+RewriteRule ^api/auth/login/?$ api/auth_login.php [L,QSA]
+RewriteRule ^api/account/delete/?$ api/account_delete.php [L,QSA]
+
+RewriteRule ^api/posts/([^/]+)/like/?$ api/post_like.php?id=$1 [L,QSA]
+RewriteRule ^api/posts/([^/]+)/comments/?$ api/post_comments.php?id=$1 [L,QSA]
+RewriteRule ^api/posts/([^/]+)/report/?$ api/post_report.php?id=$1 [L,QSA]
+RewriteRule ^api/posts/?$ api/posts.php [L,QSA]
+
+RewriteRule ^api/follows/([^/]+)/([^/]+)/?$ api/follow_delete.php?followerId=$1&followingId=$2 [L,QSA]
+RewriteRule ^api/follows/?$ api/follows.php [L,QSA]
+
+RewriteRule ^api/profiles/([^/]+)/?$ api/profile.php?id=$1 [L,QSA]
+RewriteRule ^api/profile-style/([^/]+)/?$ api/profile_style.php?id=$1 [L,QSA]
+
+RewriteRule ^api/auth/forgot/?$ api/auth_forgot.php [L,QSA]
+RewriteRule ^api/auth/reset/?$ api/auth_reset.php [L,QSA]
+RewriteRule ^api/auth/verify/?$ api/auth_verify.php [L,QSA]
+RewriteRule ^api/auth/resend-verification/?$ api/auth_resend_verification.php [L,QSA]
+
+RewriteRule ^api/admin/moderation/?$ api/admin_moderation.php [L,QSA]
+
+# --- Security ------------------------------------------------------------
+# config.php holds your database password — never let it be requested
+# directly, even though a correctly configured PHP host would execute it
+# rather than return its source either way. Defense in depth.
+<Files "config.php">
+    Require all denied
+</Files>
+<Files "config.sample.php">
+    Require all denied
+</Files>
+<Files "schema.sql">
+    Require all denied
+</Files>
+
+# Never let anything under includes/ be requested directly.
+RewriteRule ^includes/ - [F,L]
+
+# Sensible caching for static assets.
+<IfModule mod_expires.c>
+    ExpiresActive On
+    ExpiresByType image/jpeg "access plus 7 days"
+    ExpiresByType image/png "access plus 7 days"
+    ExpiresByType image/webp "access plus 7 days"
+    ExpiresByType video/mp4 "access plus 7 days"
+</IfModule>

@@ -1,0 +1,14 @@
+# Uploaded files are user-supplied — never let anything in this folder
+# execute as a script, no matter what extension it was saved with.
+<IfModule mod_php7.c>
+    php_flag engine off
+</IfModule>
+<IfModule mod_php8.c>
+    php_flag engine off
+</IfModule>
+<FilesMatch "\.(php|php\d|phtml|pl|py|cgi|sh)$">
+    Require all denied
+</FilesMatch>
+Options -ExecCGI
+AddHandler cgi-script .php .php3 .php4 .php5 .php7 .phtml .pl .py .cgi
+RemoveHandler .php .php3 .php4 .php5 .php7 .phtml

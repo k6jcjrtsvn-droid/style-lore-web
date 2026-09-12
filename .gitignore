@@ -1,0 +1,18 @@
+# Real secrets — never commit. Copy config.sample.php to config.php on the
+# server and fill in real values; config.sample.php (the template) is what
+# gets committed.
+config.php
+
+# User-uploaded content — not source, and could get large. The folder
+# structure itself (with its .keep files) is tracked so a fresh checkout
+# still has somewhere for uploads to land.
+uploads/*
+!uploads/.htaccess
+!uploads/avatars/
+!uploads/avatars/.keep
+!uploads/posts/
+!uploads/posts/.keep
+
+# OS/editor cruft
+.DS_Store
+Thumbs.db
