@@ -162,11 +162,16 @@
   <p><strong>Community content.</strong> Anything you choose to post in Community — photos, videos, captions, style tags, comments, likes, and follows — is stored on our server and shown to other members of Community. Treat anything you post there as public within the app.</p>
 
   <div class="callout">
-    <strong>Both photo features that analyze your body run entirely on your device:</strong>
+    <strong>Most of Style-LORE's photo-based features run entirely on your device:</strong>
     <ul style="margin-bottom:0;">
       <li><strong>Color quiz photo</strong> — the photo you use to check your color palette is processed entirely in your own browser (it samples colors from the image on your device). It is never uploaded to or stored on our servers.</li>
       <li><strong>Style-quiz photo refinement</strong> — the optional photo you can add after the body/proportions quiz is analyzed entirely in your own browser (it estimates body proportions from the image using an on-device pose-detection model) to refine your style-quiz result. The photo is never uploaded anywhere and is discarded from memory as soon as analysis finishes.</li>
+      <li><strong>Outfit Checker (free, photo mode)</strong> — the free "instant fit verdict" photo check is also analyzed entirely in your own browser (edge, color, and, when a full body is visible, silhouette signals sampled from the image on your device). It is never uploaded anywhere.</li>
     </ul>
+  </div>
+
+  <div class="callout">
+    <strong>AI Stylist (Premium) is the one feature that does send a photo off your device.</strong> If you're a Premium subscriber and choose to use the AI Stylist for a more detailed review, the photo you upload for that specific request is sent to Anthropic (maker of the Claude AI models) for analysis. Anthropic's own handling of that request is governed by <a href="https://www.anthropic.com/legal/privacy" target="_blank" rel="noopener">Anthropic's privacy policy</a>. This only happens when you actively choose to use the AI Stylist — it is a separate, clearly-labeled option from the free on-device checker above, and is never triggered automatically.
   </div>
 
   <h2>What we don't do</h2>
@@ -180,18 +185,19 @@
   <p>Style-LORE shows ads through Google AdSense and measures usage through Google Analytics (GA4). These let Google set cookies and use device/advertising identifiers to serve and measure ads and to report aggregate usage statistics back to us — Google, not us, controls how that data is used on its side; see <a href="https://policies.google.com/technologies/partner-sites" target="_blank" rel="noopener">Google's own policy on this</a> for details. If you're in the EEA, UK, or Switzerland, you'll see a consent prompt letting you choose whether to allow personalized ads. Ad and analytics data is tied to a pseudonymous identifier Google manages, not to your Style-LORE account.</p>
 
   <h2>How we use your information</h2>
-  <p>We use the information above only to operate the app's features: authenticating your account, running the style quiz and outfit checker, storing your closet, and powering the Community feed (posts, likes, comments, and follows). We don't use your account information for advertising or profiling — see "Advertising and analytics" above for what Google's own scripts do independently of that.</p>
+  <p>We use the information above only to operate the app's features: authenticating your account, running the style quiz and outfit checker, storing your closet, powering the Community feed (posts, likes, comments, and follows), and, for Premium subscribers who choose to use it, sending a photo to Anthropic for the AI Stylist feature. We don't use your account information for advertising or profiling — see "Advertising and analytics" above for what Google's own scripts do independently of that.</p>
 
   <h2>Where your information is stored</h2>
   <p>Style-LORE runs on standard web hosting infrastructure (GoDaddy) with a MySQL database. Uploaded photos and videos are stored on that same server's file storage. Anything you post to Community is retrievable by its own web address, the same way any public app content works.</p>
 
   <h2>Third parties</h2>
-  <p>We use two categories of outside services:</p>
+  <p>We use three categories of outside services:</p>
   <ul>
     <li><strong>Our hosting provider</strong> (GoDaddy), which stores the app's database and files as our infrastructure provider.</li>
     <li><strong>Google</strong> (AdSense and Analytics), as described under "Advertising and analytics" above.</li>
+    <li><strong>Anthropic</strong>, only if you're a Premium subscriber and you actively choose to use the AI Stylist feature — see the callout above. We don't send anything to Anthropic outside of that specific, opt-in request.</li>
   </ul>
-  <p>We don't otherwise share your information with third parties. Both photo-analysis features described above run on your device and are never sent to us or to anyone else.</p>
+  <p>We don't otherwise share your information with third parties. The free, on-device photo features described above run entirely on your device and are never sent to us or to anyone else.</p>
 
   <h2>Your choices</h2>
   <p>You can stop using Style-LORE and the Community feature at any time. You can delete your account yourself at any time from the app (Home → Delete my account) — this permanently removes your account, profile, posts, likes, and follows; see the in-app confirmation screen for the one disclosed limitation (comments you've made keep your display name attached, since they aren't linked to your account internally). If you'd rather we do it for you, or have any other request about your information, email us at <a href="mailto:kgasps2025@gmail.com">kgasps2025@gmail.com</a>. If you've forgotten your password, use "Forgot password?" on the log-in screen for an automated reset link, or email us if you'd like help directly.</p>
