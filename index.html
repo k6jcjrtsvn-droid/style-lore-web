@@ -190,6 +190,97 @@
     color:var(--ink-soft);
   }
 
+  .topbar-icons{ display:flex; align-items:center; gap:4px; }
+  .topbar-icon-btn{
+    position:relative;
+    display:flex; align-items:center; justify-content:center;
+    width:34px; height:34px;
+    border-radius:50%;
+    color:var(--ink);
+  }
+  .topbar-icon-btn:hover{ background:var(--paper-raised); }
+  .topbar-icon-btn svg{ width:19px; height:19px; stroke:currentColor; fill:none; stroke-width:1.6; }
+  .topbar-icon-badge{
+    position:absolute; top:2px; right:2px;
+    min-width:14px; height:14px; padding:0 3px;
+    border-radius:7px;
+    background:var(--accent);
+    color:#fff;
+    font-size:9.5px; font-weight:700; line-height:14px; text-align:center;
+  }
+  .unread-dot{
+    width:8px; height:8px; border-radius:50%;
+    background:var(--accent); flex-shrink:0; margin-top:4px;
+  }
+
+  .story-tray{
+    display:flex; gap:14px; overflow-x:auto;
+    padding:4px 2px 14px;
+    margin-bottom:6px;
+    -webkit-overflow-scrolling:touch;
+  }
+  .story-bubble{
+    display:flex; flex-direction:column; align-items:center; gap:5px;
+    flex-shrink:0; width:64px;
+  }
+  .story-ring{
+    display:flex; align-items:center; justify-content:center;
+    width:60px; height:60px; border-radius:50%;
+    padding:2.5px;
+  }
+  .story-ring-unseen{ background:linear-gradient(135deg, var(--accent), #f2b6c6); }
+  .story-ring-seen{ background:var(--line); }
+  .story-ring-add{ background:var(--paper-raised); border:1.5px dashed var(--line); }
+  .story-add-icon{ display:flex; align-items:center; justify-content:center; width:56px; height:56px; color:var(--ink-soft); }
+  .story-add-icon svg{ width:22px; height:22px; stroke:currentColor; fill:none; stroke-width:1.6; }
+  .story-bubble-label{ font-size:10.5px; color:var(--ink-soft); max-width:64px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+
+  .story-overlay{
+    position:fixed; inset:0; background:rgba(0,0,0,.85);
+    display:flex; align-items:center; justify-content:center;
+    z-index:80; padding:16px;
+  }
+  .story-overlay-inner{
+    position:relative;
+    width:100%; max-width:420px;
+    display:flex; flex-direction:column; align-items:center;
+  }
+  .story-progress-row{ display:flex; gap:4px; width:100%; margin-bottom:10px; }
+  .story-progress-seg{ flex:1; height:3px; border-radius:2px; background:rgba(255,255,255,.35); }
+  .story-progress-seg-filled{ background:#fff; }
+  .story-overlay-head{ display:flex; align-items:center; gap:8px; width:100%; margin-bottom:10px; color:#fff; }
+  .story-overlay-name{ font-size:13.5px; font-weight:600; }
+  .story-overlay-time{ font-size:11.5px; color:rgba(255,255,255,.7); }
+  .story-overlay-head .close-btn{ background:rgba(255,255,255,.15); border-color:transparent; }
+  .story-overlay-head .close-btn svg{ stroke:#fff; }
+  .story-media{ width:100%; max-height:70vh; border-radius:var(--radius-m); object-fit:contain; background:#000; }
+  .story-caption{ color:#fff; font-size:13.5px; margin-top:10px; text-align:center; }
+  .story-tap-zones{ position:absolute; inset:0 0 auto 0; top:0; height:calc(70vh + 20px); display:flex; }
+  .story-tap-zone{ flex:1; height:100%; }
+
+  .conversation-list{
+    flex:1; overflow-y:auto;
+    display:flex; flex-direction:column; gap:8px;
+    padding:4px 2px 12px;
+  }
+  .message-bubble{
+    max-width:78%;
+    padding:9px 13px;
+    border-radius:16px;
+    font-size:13.5px;
+    line-height:1.4;
+    word-wrap:break-word;
+  }
+  .message-bubble-mine{ align-self:flex-end; background:var(--accent); color:#fff; border-bottom-right-radius:4px; }
+  .message-bubble-theirs{ align-self:flex-start; background:var(--paper-raised); border:1px solid var(--line); border-bottom-left-radius:4px; }
+  .conversation-input-row{
+    display:flex; gap:8px; align-items:center;
+    padding:10px 2px calc(10px + env(safe-area-inset-bottom));
+    border-top:1px solid var(--line-soft);
+  }
+  .conversation-input-row input{ flex:1; }
+  .conversation-input-row .btn svg{ width:16px; height:16px; stroke:currentColor; fill:none; stroke-width:1.8; }
+
   .bottom-nav{
     position:sticky;
     bottom:0;
@@ -1976,6 +2067,7 @@ const Api = {
   async getPosts(opts){
     const params = new URLSearchParams({ limit:"100" });
     if(opts && opts.authorId) params.set("authorId", opts.authorId);
+    if(opts && opts.groupId) params.set("groupId", opts.groupId);
     const r = await fetch("/api/posts?" + params.toString());
     if(!r.ok) throw new Error("Couldn't load the feed.");
     return r.json();
@@ -2144,6 +2236,123 @@ const Api = {
     const body = await r.json().catch(()=>({}));
     if(!r.ok) throw new Error(body.error || "Couldn't resend that right now — try again.");
     return body;
+  },
+
+  // ---- Notifications --------------------------------------------------
+  async getNotifications(visitorId, authToken){
+    const params = new URLSearchParams({ visitorId, authToken: authToken || "" });
+    const r = await fetch("/api/notifications?" + params.toString());
+    if(!r.ok) throw new Error("Couldn't load notifications.");
+    return r.json(); // { notifications, unreadCount }
+  },
+  async markNotificationsRead(visitorId, authToken){
+    const r = await fetch("/api/notifications", {
+      method:"POST", headers:{ "Content-Type":"application/json" },
+      body: JSON.stringify({ visitorId, authToken, markAllRead:true }),
+    });
+    if(!r.ok) throw new Error("Couldn't update notifications.");
+    return r.json();
+  },
+
+  // ---- Direct messages --------------------------------------------------
+  async getConversations(visitorId, authToken){
+    const params = new URLSearchParams({ visitorId, authToken: authToken || "" });
+    const r = await fetch("/api/conversations?" + params.toString());
+    if(!r.ok) throw new Error("Couldn't load your messages.");
+    return r.json();
+  },
+  async startConversation({ visitorId, visitorName, authToken, otherId, otherName }){
+    const r = await fetch("/api/conversations", {
+      method:"POST", headers:{ "Content-Type":"application/json" },
+      body: JSON.stringify({ visitorId, visitorName, authToken, otherId, otherName }),
+    });
+    if(!r.ok){
+      const body = await r.json().catch(()=>({}));
+      throw new Error(body.error || "Couldn't start that conversation.");
+    }
+    return r.json(); // { id }
+  },
+  async getMessages(conversationId, visitorId, authToken){
+    const params = new URLSearchParams({ conversationId, visitorId, authToken: authToken || "" });
+    const r = await fetch("/api/messages?" + params.toString());
+    if(!r.ok) throw new Error("Couldn't load that conversation.");
+    return r.json();
+  },
+  async sendMessage({ conversationId, visitorId, authToken, text }){
+    const r = await fetch("/api/messages", {
+      method:"POST", headers:{ "Content-Type":"application/json" },
+      body: JSON.stringify({ conversationId, visitorId, authToken, text }),
+    });
+    if(!r.ok){
+      const body = await r.json().catch(()=>({}));
+      throw new Error(body.error || "Couldn't send that message.");
+    }
+    return r.json();
+  },
+
+  // ---- Stories ----------------------------------------------------------
+  async getStories(visitorId, authToken){
+    const params = new URLSearchParams({ visitorId, authToken: authToken || "" });
+    const r = await fetch("/api/stories?" + params.toString());
+    if(!r.ok) throw new Error("Couldn't load stories.");
+    return r.json();
+  },
+  async createStory({ authorId, authToken, photoBlob, videoFile, caption }){
+    const fd = new FormData();
+    fd.append("authorId", authorId);
+    fd.append("authToken", authToken || "");
+    if(caption) fd.append("caption", caption);
+    if(videoFile) fd.append("video", videoFile, videoFile.name || "story.mp4");
+    else if(photoBlob) fd.append("photo", photoBlob, "story.jpg");
+    const r = await fetch("/api/stories", { method:"POST", body:fd });
+    if(!r.ok){
+      const body = await r.json().catch(()=>({}));
+      throw new Error(body.error || "Couldn't share that story.");
+    }
+    return r.json();
+  },
+  async viewStory(storyId, visitorId, authToken){
+    const r = await fetch("/api/stories/"+encodeURIComponent(storyId)+"/view", {
+      method:"POST", headers:{ "Content-Type":"application/json" },
+      body: JSON.stringify({ visitorId, authToken }),
+    });
+    if(!r.ok) return null;
+    return r.json();
+  },
+
+  // ---- Groups -------------------------------------------------------------
+  async getGroups(visitorId){
+    const params = visitorId ? ("?visitorId="+encodeURIComponent(visitorId)) : "";
+    const r = await fetch("/api/groups"+params);
+    if(!r.ok) throw new Error("Couldn't load groups.");
+    return r.json();
+  },
+  async createGroup({ name, description, topicKibbe, topicStyle, creatorId, creatorName, authToken }){
+    const r = await fetch("/api/groups", {
+      method:"POST", headers:{ "Content-Type":"application/json" },
+      body: JSON.stringify({ name, description, topicKibbe, topicStyle, creatorId, creatorName, authToken }),
+    });
+    if(!r.ok){
+      const body = await r.json().catch(()=>({}));
+      throw new Error(body.error || "Couldn't create that group.");
+    }
+    return r.json();
+  },
+  async joinGroup(groupId, visitorId, visitorName, authToken){
+    const r = await fetch("/api/groups/"+encodeURIComponent(groupId)+"/join", {
+      method:"POST", headers:{ "Content-Type":"application/json" },
+      body: JSON.stringify({ visitorId, visitorName, authToken }),
+    });
+    if(!r.ok) throw new Error("Couldn't join that group.");
+    return r.json();
+  },
+  async leaveGroup(groupId, visitorId, authToken){
+    const r = await fetch("/api/groups/"+encodeURIComponent(groupId)+"/leave", {
+      method:"POST", headers:{ "Content-Type":"application/json" },
+      body: JSON.stringify({ visitorId, authToken }),
+    });
+    if(!r.ok) throw new Error("Couldn't leave that group.");
+    return r.json();
   },
 };
 
@@ -2375,6 +2584,11 @@ function Icon(name){
     user: "M12 12.5a4 4 0 1 0 0-8 4 4 0 0 0 0 8Zm-7.5 7c1-4 4-6 7.5-6s6.5 2 7.5 6",
     back: "M15 5 8 12l7 7",
     palette: "M12 4a8 8 0 1 0 3 15.4c1-.4 1-1.8-.1-2.1a1.8 1.8 0 0 1-.4-3.3 2 2 0 0 1 1-.2H18a3 3 0 0 0 3-3.2C20.6 6.6 16.7 4 12 4Z M7.5 12a1.2 1.2 0 1 0 0-2.4 1.2 1.2 0 0 0 0 2.4Z M9.8 8.3a1.2 1.2 0 1 0 0-2.4 1.2 1.2 0 0 0 0 2.4Z M14.6 7.6a1.2 1.2 0 1 0 0-2.4 1.2 1.2 0 0 0 0 2.4Z",
+    bell: "M6 10a6 6 0 1 1 12 0v4l1.5 3h-15L6 14v-4Z M10 20a2 2 0 0 0 4 0",
+    mail: "M4 6h16v12H4V6Zm0 0 8 7 8-7",
+    users: "M8 11a3 3 0 1 0 0-6 3 3 0 0 0 0 6Zm8.5.5a2.8 2.8 0 1 0 0-5.6 2.8 2.8 0 0 0 0 5.6ZM2 20c.5-3.5 3-5.5 6-5.5s5.5 2 6 5.5M15 14.8c2.4.3 4 2 4.4 5.2h2.1c-.3-2.7-1.6-4.6-3.5-5.4",
+    send: "M4 11 20 4l-7 16-2.5-7L4 11Z",
+    plus: "M12 5v14M5 12h14",
   };
   return e("svg", { viewBox:"0 0 24 24", "aria-hidden":"true" },
     e("path", { d: paths[name] || "", strokeLinecap:"round", strokeLinejoin:"round" })
@@ -3623,6 +3837,15 @@ function CommunityScreen({ profile, blend, onOpenProfile }){
   const [space, setSpace] = useState(null); // null = directory home, else {kind, id}
   const [showCompose, setShowCompose] = useState(false);
 
+  const [groups, setGroups] = useState(null);
+  const [groupFeed, setGroupFeed] = useState(null);
+  const [showCreateGroup, setShowCreateGroup] = useState(false);
+  const [groupBusy, setGroupBusy] = useState(false);
+
+  const [stories, setStories] = useState(null);
+  const [viewingStoryAuthor, setViewingStoryAuthor] = useState(null);
+  const [showAddStory, setShowAddStory] = useState(false);
+
   const refreshPosts = useCallback(() => {
     Api.getPosts().then(rows => { setPosts(rows); setLoadError(null); })
       .catch(() => setLoadError("Couldn't load the feed. It may come back on its own."));
@@ -3631,6 +3854,14 @@ function CommunityScreen({ profile, blend, onOpenProfile }){
     if(!profile) return;
     Api.getFollows(profile.visitorId).then(ids => setFollowingIds(new Set(ids))).catch(()=>{});
   }, [profile && profile.visitorId]);
+  const refreshGroups = useCallback(() => {
+    if(!profile) return;
+    Api.getGroups(profile.visitorId).then(setGroups).catch(()=>{});
+  }, [profile && profile.visitorId]);
+  const refreshStories = useCallback(() => {
+    if(!profile) return;
+    Api.getStories(profile.visitorId, profile.token).then(setStories).catch(()=>{});
+  }, [profile && profile.visitorId, profile && profile.token]);
 
   useEffect(() => {
     refreshPosts();
@@ -3643,6 +3874,48 @@ function CommunityScreen({ profile, blend, onOpenProfile }){
     const t = setInterval(refreshFollows, 6000);
     return () => clearInterval(t);
   }, [refreshFollows]);
+
+  useEffect(() => {
+    refreshGroups();
+    const t = setInterval(refreshGroups, 15000);
+    return () => clearInterval(t);
+  }, [refreshGroups]);
+
+  useEffect(() => {
+    refreshStories();
+    const t = setInterval(refreshStories, 15000);
+    return () => clearInterval(t);
+  }, [refreshStories]);
+
+  // Group feed — a separate, group-scoped list of posts (main-feed `posts`
+  // above deliberately excludes anything with a group_id, see posts.php),
+  // fetched fresh whenever the visitor opens a group space and polled the
+  // same way the main feed is.
+  useEffect(() => {
+    if(!space || space.kind !== "group") { setGroupFeed(null); return; }
+    const load = () => Api.getPosts({ groupId: space.id }).then(setGroupFeed).catch(()=>{});
+    load();
+    const t = setInterval(load, 4000);
+    return () => clearInterval(t);
+  }, [space && space.kind, space && space.id]);
+
+  const groupDetail = (space && space.kind === "group" && groups) ? groups.find(g => g.id === space.id) || null : null;
+  const groupIsMember = !!(groupDetail && groupDetail.isMember);
+
+  async function joinCurrentGroup(){
+    if(!groupDetail || groupBusy) return;
+    setGroupBusy(true);
+    try{ await Api.joinGroup(groupDetail.id, profile.visitorId, profile.name, profile.token); refreshGroups(); }
+    catch(err){ /* ignore — button just stays as-is */ }
+    finally{ setGroupBusy(false); }
+  }
+  async function leaveCurrentGroup(){
+    if(!groupDetail || groupBusy) return;
+    setGroupBusy(true);
+    try{ await Api.leaveGroup(groupDetail.id, profile.visitorId, profile.token); refreshGroups(); }
+    catch(err){ /* ignore */ }
+    finally{ setGroupBusy(false); }
+  }
 
   async function toggleFollow(authorId, authorName){
     if(!authorId || authorId === profile.visitorId) return;
@@ -3673,12 +3946,14 @@ function CommunityScreen({ profile, blend, onOpenProfile }){
 
   function openCompose(){ setShowCompose(true); }
   function composeDefaults(){
+    if(space && space.kind === "group") return { kibbe: myTop ? myTop.id : null, styles: [], groupId: space.id };
     if(space && space.kind === "kibbe") return { kibbe: space.id, styles: [] };
     if(space && space.kind === "style") return { kibbe: myTop ? myTop.id : null, styles: [space.id] };
     return { kibbe: myTop ? myTop.id : null, styles: [] };
   }
   function handlePosted(newPost){
-    setPosts(prev => prev ? [newPost, ...prev] : [newPost]);
+    if(newPost.groupId) setGroupFeed(prev => prev ? [newPost, ...prev] : [newPost]);
+    else setPosts(prev => prev ? [newPost, ...prev] : [newPost]);
   }
 
   if(space === null){
@@ -3690,7 +3965,13 @@ function CommunityScreen({ profile, blend, onOpenProfile }){
         ),
         e("button", { className:"btn btn-accent btn-sm", onClick:openCompose }, "+ Post")
       ),
-      e("p", { className:"screen-lede", style:{ marginBottom:20 } }, "Post into a space, or follow people whose style you like."),
+      e("p", { className:"screen-lede", style:{ marginBottom:12 } }, "Post into a space, or follow people whose style you like."),
+
+      e(StoryTray, {
+        stories, profile,
+        onOpenStory: authorId => setViewingStoryAuthor(authorId),
+        onAddStory: () => setShowAddStory(true),
+      }),
 
       loadError ? e(Banner, { kind:"error" }, loadError) : null,
 
@@ -3719,40 +4000,93 @@ function CommunityScreen({ profile, blend, onOpenProfile }){
         ))
       ),
 
-      showCompose ? e(ComposeSheet, { profile, defaults:composeDefaults(), onPosted:handlePosted, onClose:()=>setShowCompose(false) }) : null
+      e("div", { style:{ display:"flex", justifyContent:"space-between", alignItems:"center", marginTop:26, marginBottom:10 } },
+        e("div", { className:"eyebrow", style:{ margin:0 } }, "Groups"),
+        e("button", { className:"btn-text", style:{ padding:0, fontSize:12.5 }, onClick:()=>setShowCreateGroup(true) }, "+ New group")
+      ),
+      groups === null ? e("div", { style:{ padding:"10px 0" } }, e(Thinking, { label:"Loading groups…" }))
+        : groups.length === 0
+          ? e("p", { style:{ fontSize:13, color:"var(--ink-soft)", marginBottom:0 } }, "No groups yet — start one around a Kibbe type, a style word, or anything else.")
+          : e("div", { className:"row-list" },
+              groups.map(g => e("button", {
+                key:g.id, className:"row-list-item", style:{ width:"100%", textAlign:"left" },
+                onClick: () => setSpace({ kind:"group", id:g.id })
+              },
+                e("span", { style:{ color:"var(--accent)", flexShrink:0, width:22, height:22 } }, Icon("users")),
+                e("span", { style:{ flex:1, minWidth:0 } },
+                  e("div", { style:{ fontWeight:600, fontSize:14.5, marginBottom:2 } }, g.name),
+                  g.description ? e("div", { style:{ fontSize:12.5, color:"var(--ink-soft)" } }, g.description) : null
+                ),
+                e("span", { style:{ fontSize:11.5, color:"var(--ink-soft)", whiteSpace:"nowrap", flexShrink:0 } },
+                  g.memberCount + (g.memberCount === 1 ? " member" : " members") + (g.isMember ? " · Joined" : ""))
+              ))
+            ),
+
+      showCompose ? e(ComposeSheet, { profile, defaults:composeDefaults(), onPosted:handlePosted, onClose:()=>setShowCompose(false) }) : null,
+      showCreateGroup ? e(CreateGroupSheet, {
+        profile,
+        onCreated: g => { setGroups(prev => prev ? [g, ...prev] : [g]); setShowCreateGroup(false); setSpace({kind:"group", id:g.id}); },
+        onClose: () => setShowCreateGroup(false),
+      }) : null,
+      showAddStory ? e(AddStorySheet, {
+        profile,
+        onCreated: s => { setStories(prev => prev ? [...prev, s] : [s]); setShowAddStory(false); },
+        onClose: () => setShowAddStory(false),
+      }) : null,
+      viewingStoryAuthor ? e(StoryViewerOverlay, {
+        stories, authorId: viewingStoryAuthor, profile,
+        onClose: () => setViewingStoryAuthor(null),
+        onRequestAdd: () => setShowAddStory(true),
+      }) : null
     );
   }
 
-  const feedPosts = postsForSpace(visible, space, ctx);
+  const isGroupSpace = space.kind === "group";
+  const feedPosts = isGroupSpace ? (groupFeed || []) : postsForSpace(visible, space, ctx);
   const kibbeInfo = space.kind === "kibbe" ? KIBBE_BY_ID[space.id] : null;
+  const activeFeedSetter = isGroupSpace ? setGroupFeed : setPosts;
+  const feedLoading = isGroupSpace ? groupFeed === null : posts === null;
 
   let emptyMsg = "No posts here yet — be the first.";
   if(space.kind === "quick" && space.id === "foryou") emptyMsg = myTop ? "No " + myTop.name + " posts yet — be the first." : "Take the style quiz to see posts that match your type.";
   else if(space.kind === "quick" && space.id === "following") emptyMsg = followingIds.size ? "Nobody you follow has posted yet." : "Follow people from their posts to see them here.";
   else if(space.kind === "kibbe") emptyMsg = "No " + spaceLabel(space) + " posts yet — be the first to share one.";
   else if(space.kind === "style") emptyMsg = "No " + spaceLabel(space) + " posts yet — be the first to share one.";
+  else if(isGroupSpace) emptyMsg = groupIsMember ? "No posts here yet — be the first." : "Join the group to post — anyone can browse in the meantime.";
 
   return e("div", null,
     e("button", { className:"btn-text", style:{ padding:0, marginBottom:14 }, onClick:()=>setSpace(null) }, "← Communities"),
     e("div", { style:{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:6 } },
       e("div", null,
-        e("div", { className:"eyebrow" }, space.kind === "kibbe" ? "Kibbe community" : space.kind === "style" ? "Style community" : "Shared space"),
-        e("h1", { className:"screen-title" }, spaceLabel(space))
+        e("div", { className:"eyebrow" }, isGroupSpace ? "Group" : space.kind === "kibbe" ? "Kibbe community" : space.kind === "style" ? "Style community" : "Shared space"),
+        e("h1", { className:"screen-title" }, isGroupSpace ? (groupDetail ? groupDetail.name : "Group") : spaceLabel(space))
       ),
-      e("button", { className:"btn btn-accent btn-sm", onClick:openCompose }, "+ Post")
+      isGroupSpace
+        ? (groupIsMember
+            ? e("button", { className:"btn btn-accent btn-sm", onClick:openCompose }, "+ Post")
+            : e("button", { className:"btn btn-accent btn-sm", disabled:groupBusy || !groupDetail, onClick:joinCurrentGroup }, groupBusy ? "Joining…" : "Join"))
+        : e("button", { className:"btn btn-accent btn-sm", onClick:openCompose }, "+ Post")
     ),
-    kibbeInfo ? e("p", { className:"screen-lede", style:{ marginBottom:16 } }, kibbeInfo.desc) : e("div", { style:{ marginBottom:16 } }),
+    isGroupSpace
+      ? e("div", { style:{ marginBottom:16 } },
+          groupDetail && groupDetail.description ? e("p", { className:"screen-lede", style:{ marginBottom:8 } }, groupDetail.description) : null,
+          e("div", { style:{ display:"flex", alignItems:"center", gap:10, fontSize:12, color:"var(--ink-soft)" } },
+            e("span", null, groupDetail ? (groupDetail.memberCount + (groupDetail.memberCount === 1 ? " member" : " members")) : "…"),
+            groupIsMember ? e("button", { className:"btn-text", style:{ padding:0, fontSize:12, color:"var(--danger)" }, disabled:groupBusy, onClick:leaveCurrentGroup }, "Leave group") : null
+          )
+        )
+      : (kibbeInfo ? e("p", { className:"screen-lede", style:{ marginBottom:16 } }, kibbeInfo.desc) : e("div", { style:{ marginBottom:16 } })),
 
     loadError ? e(Banner, { kind:"error" }, loadError) : null,
     e(Banner, { kind:"info" }, "Keep it kind: no abusive language, photos, or videos. Report anything that breaks the guidelines."),
 
-    posts === null ? e("div", { style:{ padding:"20px 0" } }, e(Thinking, { label:"Loading feed…" }))
+    feedLoading ? e("div", { style:{ padding:"20px 0" } }, e(Thinking, { label:"Loading feed…" }))
       : feedPosts.length === 0
         ? e(EmptyState, { icon:"community" }, emptyMsg)
         : e("div", null, feedPosts.map(p => e(PostCard, {
             key:p.id, post:p, profile, followingIds, onToggleFollow:toggleFollow, onOpenProfile,
-            onPatch: patch => patchPostLocal(setPosts, p.id, patch),
-            onRemove: () => setPosts(prev => prev ? prev.filter(x => x.id !== p.id) : prev),
+            onPatch: patch => patchPostLocal(activeFeedSetter, p.id, patch),
+            onRemove: () => activeFeedSetter(prev => prev ? prev.filter(x => x.id !== p.id) : prev),
           })))
     ,
 
@@ -3845,6 +4179,7 @@ function ComposeSheet({ profile, defaults, onPosted, onClose }){
       if(photoFile) fd.append("photo", photoFile, "photo.jpg");
       if(videoFile) fd.append("video", videoFile, videoFile.name || "clip.mp4");
       if(trimmedLink && !videoFile) fd.append("videoUrl", trimmedLink);
+      if(defaults && defaults.groupId) fd.append("groupId", defaults.groupId);
       const created = await Api.createPost(fd);
       onPosted(created);
       onClose();
@@ -4020,7 +4355,7 @@ function PostCard({ post, profile, followingIds, onToggleFollow, onOpenProfile, 
    PROFILE
 ===================================================================== */
 
-function ProfileScreen({ id, viewer, onBack, onOpenProfile, onNameChange, viewerKibbeBlend, viewerStyleWordBlend, viewerKibbeTypeName, viewerTopStyleWords }){
+function ProfileScreen({ id, viewer, onBack, onOpenProfile, onNameChange, onMessage, viewerKibbeBlend, viewerStyleWordBlend, viewerKibbeTypeName, viewerTopStyleWords }){
   const [profileRow, setProfileRow] = useState(null); // null = still loading
   const [posts, setPosts] = useState(null);
   const [followerIds, setFollowerIds] = useState(null); // Set|null
@@ -4107,7 +4442,8 @@ function ProfileScreen({ id, viewer, onBack, onOpenProfile, onNameChange, viewer
           // call this screen already makes (profileRow.kibbeBlend /
           // .styleWordBlend), plus the viewer's own quiz data passed down
           // from App(). No extra network call to open it.
-          !isMe ? e("button", { className:"btn btn-ghost btn-sm", onClick:()=>setShowCompare(true) }, "Compare styles") : null
+          !isMe ? e("button", { className:"btn btn-ghost btn-sm", onClick:()=>setShowCompare(true) }, "Compare styles") : null,
+          (!isMe && onMessage) ? e("button", { className:"btn btn-ghost btn-sm", onClick:()=>onMessage(id, displayName) }, "Message") : null
         )
       )
     ),
@@ -4346,6 +4682,419 @@ function DeleteAccountSheet({ viewer, onDeleted, onClose }){
 }
 
 /* =====================================================================
+   STORIES
+===================================================================== */
+
+function groupStoriesByAuthor(stories){
+  const map = new Map();
+  (stories || []).forEach(s => {
+    if(!map.has(s.authorId)) map.set(s.authorId, []);
+    map.get(s.authorId).push(s);
+  });
+  return Array.from(map.values());
+}
+
+function StoryTray({ stories, profile, onOpenStory, onAddStory }){
+  const groups = groupStoriesByAuthor(stories);
+  const myGroup = groups.find(g => g[0].authorId === profile.visitorId);
+  const others = groups.filter(g => g[0].authorId !== profile.visitorId);
+  others.sort((a, b) => {
+    const aUnseen = a.some(s => !s.viewed);
+    const bUnseen = b.some(s => !s.viewed);
+    if(aUnseen !== bUnseen) return aUnseen ? -1 : 1;
+    return 0;
+  });
+
+  return e("div", { className:"story-tray" },
+    e("button", {
+      type:"button", className:"story-bubble",
+      onClick: myGroup ? () => onOpenStory(profile.visitorId) : onAddStory,
+    },
+      e("span", { className:"story-ring " + (myGroup ? "story-ring-seen" : "story-ring-add") },
+        myGroup
+          ? e(Avatar, { url:myGroup[0].authorAvatarUrl, name:profile.name, size:56 })
+          : e("span", { className:"story-add-icon" }, Icon("plus"))
+      ),
+      e("span", { className:"story-bubble-label" }, "Your story")
+    ),
+    others.map(g => {
+      const latest = g[0];
+      const hasUnseen = g.some(s => !s.viewed);
+      return e("button", { key:latest.authorId, type:"button", className:"story-bubble", onClick:()=>onOpenStory(latest.authorId) },
+        e("span", { className:"story-ring " + (hasUnseen ? "story-ring-unseen" : "story-ring-seen") },
+          e(Avatar, { url:latest.authorAvatarUrl, name:latest.authorName, size:56 })
+        ),
+        e("span", { className:"story-bubble-label" }, (latest.authorName || "").split(" ")[0] || "Someone")
+      );
+    })
+  );
+}
+
+function StoryViewerOverlay({ stories, authorId, profile, onClose, onRequestAdd }){
+  const authorStories = (stories || []).filter(s => s.authorId === authorId);
+  const [idx, setIdx] = useState(0);
+  const current = authorStories[idx];
+
+  useEffect(() => {
+    if(current && profile) Api.viewStory(current.id, profile.visitorId, profile.token).catch(()=>{});
+  }, [current && current.id]);
+
+  if(!current) return null;
+
+  function next(){
+    if(idx < authorStories.length - 1) setIdx(idx + 1);
+    else onClose();
+  }
+  function prev(){
+    if(idx > 0) setIdx(idx - 1);
+  }
+
+  const isMine = authorId === profile.visitorId;
+
+  return e("div", { className:"story-overlay", onClick:onClose },
+    e("div", { className:"story-overlay-inner", onClick: ev=>ev.stopPropagation() },
+      e("div", { className:"story-progress-row" },
+        authorStories.map((s, i) => e("div", { key:s.id, className:"story-progress-seg" + (i <= idx ? " story-progress-seg-filled" : "") }))
+      ),
+      e("div", { className:"story-overlay-head" },
+        e(Avatar, { url:current.authorAvatarUrl, name:current.authorName, size:32 }),
+        e("span", { className:"story-overlay-name" }, current.authorName),
+        e("span", { className:"story-overlay-time" }, timeAgo(current.createdAt)),
+        e("button", { className:"close-btn", style:{ marginLeft:"auto" }, onClick:onClose, "aria-label":"Close" }, Icon("x"))
+      ),
+      current.mediaType === "video"
+        ? e("video", { className:"story-media", src:current.mediaUrl, autoPlay:true, playsInline:true, controls:false, onEnded:next })
+        : e("img", { className:"story-media", src:current.mediaUrl, alt:"" }),
+      current.caption ? e("p", { className:"story-caption" }, current.caption) : null,
+      e("div", { className:"story-tap-zones" },
+        e("button", { className:"story-tap-zone", "aria-label":"Previous story", onClick:prev }),
+        e("button", { className:"story-tap-zone", "aria-label":"Next story", onClick:next })
+      ),
+      isMine ? e("button", { className:"btn btn-ghost btn-sm", style:{ marginTop:12 }, onClick: () => { onClose(); onRequestAdd && onRequestAdd(); } }, "+ Add another") : null
+    )
+  );
+}
+
+function AddStorySheet({ profile, onCreated, onClose }){
+  const [photoPreview, setPhotoPreview] = useState(null);
+  const [photoFile, setPhotoFile] = useState(null);
+  const [videoFile, setVideoFile] = useState(null);
+  const [videoPreviewUrl, setVideoPreviewUrl] = useState(null);
+  const [caption, setCaption] = useState("");
+  const [posting, setPosting] = useState(false);
+  const [error, setError] = useState(null);
+
+  function pickPhoto(ev){
+    const file = ev.target.files && ev.target.files[0];
+    if(!file) return;
+    downscaleImage(file, 1080, 0.78).then(dataUrl => {
+      setPhotoPreview(dataUrl);
+      setPhotoFile(dataUrlToBlob(dataUrl));
+      setVideoFile(null); setVideoPreviewUrl(null);
+    }).catch(()=>setError("Couldn't read that photo — try another."));
+  }
+
+  function pickVideo(ev){
+    const file = ev.target.files && ev.target.files[0];
+    if(!file) return;
+    setError(null);
+    const objectUrl = URL.createObjectURL(file);
+    const probe = document.createElement("video");
+    probe.preload = "metadata";
+    probe.onloadedmetadata = () => {
+      const dur = probe.duration;
+      if(!isFinite(dur) || dur < 1){
+        setError("Couldn't read that clip's length — try another file.");
+        URL.revokeObjectURL(objectUrl);
+        return;
+      }
+      if(dur > 20){
+        setError("Keep stories to about 15 seconds — this one's " + Math.round(dur) + "s long.");
+        URL.revokeObjectURL(objectUrl);
+        return;
+      }
+      setVideoFile(file);
+      setVideoPreviewUrl(objectUrl);
+      setPhotoFile(null); setPhotoPreview(null);
+    };
+    probe.onerror = () => {
+      setError("Couldn't read that video file — try another.");
+      URL.revokeObjectURL(objectUrl);
+    };
+    probe.src = objectUrl;
+  }
+
+  async function submit(){
+    if(!photoFile && !videoFile) return;
+    setPosting(true); setError(null);
+    try{
+      const created = await Api.createStory({
+        authorId: profile.visitorId, authToken: profile.token,
+        photoBlob: photoFile, videoFile, caption: caption.trim(),
+      });
+      onCreated(created);
+    }catch(err){
+      setError(err.message || "Couldn't share that story right now.");
+    }finally{
+      setPosting(false);
+    }
+  }
+
+  return e("div", { className:"sheet-backdrop", onClick:onClose },
+    e("div", { className:"sheet", onClick: ev=>ev.stopPropagation() },
+      e("div", { className:"sheet-handle" }),
+      e("div", { className:"sheet-head" },
+        e("h2", { className:"display", style:{ fontSize:20, fontWeight:700 } }, "Add to your story"),
+        e("button", { className:"close-btn", onClick:onClose, "aria-label":"Close" }, Icon("x"))
+      ),
+      e("p", { style:{ fontSize:12.5, color:"var(--ink-soft)", marginBottom:12 } }, "Visible to your followers for 24 hours, then it disappears."),
+      e("div", { className:"photo-frame", style:{ aspectRatio:"9/14", maxHeight:320 } },
+        photoPreview ? e("img", { src:photoPreview, alt:"" })
+          : videoPreviewUrl ? e("video", { src:videoPreviewUrl, controls:true, playsInline:true, style:{ width:"100%", height:"100%", objectFit:"cover" } })
+          : e("label", { className:"photo-frame-label", htmlFor:"story-photo-input" }, Icon("camera"), e("span", null, "Add a photo or clip"))
+      ),
+      e("input", { id:"story-photo-input", type:"file", accept:"image/*", className:"visually-hidden", onChange:pickPhoto }),
+      e("input", { id:"story-video-input", type:"file", accept:"video/*", className:"visually-hidden", onChange:pickVideo }),
+      e("div", { style:{ display:"flex", gap:8, margin:"10px 0" } },
+        e("label", { htmlFor:"story-photo-input", className:"btn btn-ghost btn-sm" }, "Photo"),
+        e("label", { htmlFor:"story-video-input", className:"btn btn-ghost btn-sm" }, "Short clip")
+      ),
+      e("div", { className:"field" },
+        e("label", { htmlFor:"story-caption" }, "Caption (optional)"),
+        e("input", { id:"story-caption", type:"text", value:caption, maxLength:200, onChange: ev=>setCaption(ev.target.value) })
+      ),
+      error ? e(Banner, { kind:"error" }, error) : null,
+      e("button", { className:"btn btn-accent btn-block", disabled:posting || (!photoFile && !videoFile), onClick:submit },
+        posting ? "Sharing…" : "Share to story")
+    )
+  );
+}
+
+/* =====================================================================
+   GROUPS
+===================================================================== */
+
+function CreateGroupSheet({ profile, onCreated, onClose }){
+  const [name, setName] = useState("");
+  const [description, setDescription] = useState("");
+  const [topicKibbe, setTopicKibbe] = useState("");
+  const [topicStyle, setTopicStyle] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+
+  async function submit(){
+    const trimmed = name.trim();
+    if(!trimmed){ setError("Give the group a name."); return; }
+    setBusy(true); setError(null);
+    try{
+      const created = await Api.createGroup({
+        name: trimmed, description: description.trim(),
+        topicKibbe: topicKibbe || null, topicStyle: topicStyle || null,
+        creatorId: profile.visitorId, creatorName: profile.name, authToken: profile.token,
+      });
+      onCreated(created);
+    }catch(err){
+      setError(err.message || "Couldn't create that group right now.");
+    }finally{
+      setBusy(false);
+    }
+  }
+
+  return e("div", { className:"sheet-backdrop", onClick:onClose },
+    e("div", { className:"sheet", onClick: ev=>ev.stopPropagation() },
+      e("div", { className:"sheet-handle" }),
+      e("div", { className:"sheet-head" },
+        e("h2", { className:"display", style:{ fontSize:20, fontWeight:700 } }, "New group"),
+        e("button", { className:"close-btn", onClick:onClose, "aria-label":"Close" }, Icon("x"))
+      ),
+      e("div", { className:"field" },
+        e("label", { htmlFor:"group-name" }, "Group name"),
+        e("input", { id:"group-name", type:"text", value:name, maxLength:60, onChange: ev=>setName(ev.target.value) })
+      ),
+      e("div", { className:"field" },
+        e("label", { htmlFor:"group-desc" }, "What's it about? (optional)"),
+        e("textarea", { id:"group-desc", value:description, maxLength:280, style:{ minHeight:64 },
+          onChange: ev=>setDescription(ev.target.value) })
+      ),
+      e("div", { className:"field" },
+        e("label", null, "Centered on a Kibbe type (optional)"),
+        e("div", { className:"tabs", style:{ marginBottom:0 } },
+          e("button", { type:"button", className:"tab-chip", "aria-pressed": topicKibbe === "", onClick:()=>setTopicKibbe("") }, "None"),
+          KIBBE_TYPES.map(x => e("button", { key:x.id, type:"button", className:"tab-chip", "aria-pressed": topicKibbe === x.id, onClick:()=>setTopicKibbe(x.id) }, x.name))
+        )
+      ),
+      e("div", { className:"field" },
+        e("label", null, "Centered on a style word (optional)"),
+        e("div", { className:"style-chip-row" },
+          e("button", { type:"button", className:"tab-chip tab-chip-accent", "aria-pressed": topicStyle === "", onClick:()=>setTopicStyle("") }, "None"),
+          STYLE_WORDS.map(x => e("button", { key:x.id, type:"button", className:"tab-chip tab-chip-accent", "aria-pressed": topicStyle === x.id, onClick:()=>setTopicStyle(x.id) }, x.name))
+        )
+      ),
+      error ? e(Banner, { kind:"error" }, error) : null,
+      e("button", { className:"btn btn-accent btn-block", disabled:busy || !name.trim(), onClick:submit },
+        busy ? "Creating…" : "Create group")
+    )
+  );
+}
+
+/* =====================================================================
+   NOTIFICATIONS
+===================================================================== */
+
+function NotificationsScreen({ profile, onBack, onOpenProfile, onOpenConversation }){
+  const [data, setData] = useState(null); // { notifications, unreadCount }
+  const [loadError, setLoadError] = useState(null);
+
+  const refresh = useCallback(() => {
+    Api.getNotifications(profile.visitorId, profile.token).then(d => { setData(d); setLoadError(null); })
+      .catch(() => setLoadError("Couldn't load notifications."));
+  }, [profile.visitorId, profile.token]);
+
+  useEffect(() => { refresh(); }, [refresh]);
+  useEffect(() => {
+    if(data && data.unreadCount > 0){
+      Api.markNotificationsRead(profile.visitorId, profile.token).catch(()=>{});
+    }
+  }, [data && data.unreadCount]);
+
+  function handleTap(n){
+    if(n.type === "message" && n.data && n.data.conversationId){
+      onOpenConversation({ id:n.data.conversationId, otherId:n.data.otherId, otherName:n.data.otherName });
+    } else if(n.actorId && onOpenProfile){
+      onOpenProfile(n.actorId);
+    }
+  }
+
+  const list = data ? data.notifications : null;
+
+  return e("div", null,
+    e("button", { className:"btn-text", style:{ padding:0, marginBottom:14 }, onClick:onBack }, "← Back"),
+    e("div", { className:"eyebrow" }, "Activity"),
+    e("h1", { className:"screen-title", style:{ marginBottom:16 } }, "Notifications"),
+    loadError ? e(Banner, { kind:"error" }, loadError) : null,
+    list === null ? e("div", { style:{ padding:"20px 0" } }, e(Thinking, { label:"Loading…" }))
+      : list.length === 0
+        ? e(EmptyState, { icon:"community" }, "Nothing yet — likes, comments, follows, and messages will show up here.")
+        : e("div", { className:"row-list" },
+            list.map(n => e("button", {
+              key:n.id, type:"button", className:"row-list-item", style:{ width:"100%", textAlign:"left", opacity: n.read ? 0.7 : 1 },
+              onClick: () => handleTap(n),
+            },
+              e(Avatar, { url:n.actorAvatarUrl, name:n.actorName || "Style-LORE", size:36 }),
+              e("span", { style:{ flex:1, minWidth:0 } },
+                e("div", { style:{ fontSize:13.5 } }, n.message),
+                e("div", { style:{ fontSize:11.5, color:"var(--ink-soft)", marginTop:2 } }, timeAgo(n.createdAt))
+              ),
+              !n.read ? e("span", { className:"unread-dot" }) : null
+            ))
+          )
+  );
+}
+
+/* =====================================================================
+   DIRECT MESSAGES
+===================================================================== */
+
+function InboxScreen({ profile, onBack, onOpenConversation }){
+  const [conversations, setConversations] = useState(null);
+  const [loadError, setLoadError] = useState(null);
+
+  const refresh = useCallback(() => {
+    Api.getConversations(profile.visitorId, profile.token).then(rows => { setConversations(rows); setLoadError(null); })
+      .catch(() => setLoadError("Couldn't load your messages."));
+  }, [profile.visitorId, profile.token]);
+
+  useEffect(() => {
+    refresh();
+    const t = setInterval(refresh, 6000);
+    return () => clearInterval(t);
+  }, [refresh]);
+
+  return e("div", null,
+    e("button", { className:"btn-text", style:{ padding:0, marginBottom:14 }, onClick:onBack }, "← Back"),
+    e("div", { className:"eyebrow" }, "Direct messages"),
+    e("h1", { className:"screen-title", style:{ marginBottom:16 } }, "Messages"),
+    loadError ? e(Banner, { kind:"error" }, loadError) : null,
+    conversations === null ? e("div", { style:{ padding:"20px 0" } }, e(Thinking, { label:"Loading…" }))
+      : conversations.length === 0
+        ? e(EmptyState, { icon:"community" }, "No conversations yet — message someone from their profile.")
+        : e("div", { className:"row-list" },
+            conversations.map(c => e("button", {
+              key:c.id, type:"button", className:"row-list-item", style:{ width:"100%", textAlign:"left" },
+              onClick: () => onOpenConversation({ id:c.id, otherId:c.otherId, otherName:c.otherName }),
+            },
+              e(Avatar, { url:c.otherAvatarUrl, name:c.otherName, size:40 }),
+              e("span", { style:{ flex:1, minWidth:0 } },
+                e("div", { style:{ fontSize:14, fontWeight: c.unread ? 700 : 600 } }, c.otherName),
+                e("div", { style:{ fontSize:12.5, color:"var(--ink-soft)", whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" } }, c.lastMessagePreview || "Say hello…")
+              ),
+              e("span", { style:{ display:"flex", flexDirection:"column", alignItems:"flex-end", gap:4, flexShrink:0 } },
+                e("span", { style:{ fontSize:11, color:"var(--ink-soft)" } }, timeAgo(c.lastMessageAt)),
+                c.unread ? e("span", { className:"unread-dot" }) : null
+              )
+            ))
+          )
+  );
+}
+
+function ConversationScreen({ profile, conversationId, otherName, onBack }){
+  const [messages, setMessages] = useState(null);
+  const [text, setText] = useState("");
+  const [sending, setSending] = useState(false);
+  const [error, setError] = useState(null);
+  const listRef = useRef(null);
+
+  const refresh = useCallback(() => {
+    Api.getMessages(conversationId, profile.visitorId, profile.token).then(setMessages).catch(()=>{});
+  }, [conversationId, profile.visitorId, profile.token]);
+
+  useEffect(() => {
+    refresh();
+    const t = setInterval(refresh, 3000);
+    return () => clearInterval(t);
+  }, [refresh]);
+
+  useEffect(() => {
+    if(listRef.current) listRef.current.scrollTop = listRef.current.scrollHeight;
+  }, [messages]);
+
+  async function send(){
+    const trimmed = text.trim();
+    if(!trimmed || sending) return;
+    setSending(true); setError(null);
+    try{
+      const msg = await Api.sendMessage({ conversationId, visitorId:profile.visitorId, authToken:profile.token, text:trimmed });
+      setMessages(prev => prev ? [...prev, msg] : [msg]);
+      setText("");
+    }catch(err){
+      setError(err.message || "Couldn't send that message.");
+    }finally{
+      setSending(false);
+    }
+  }
+
+  return e("div", { style:{ display:"flex", flexDirection:"column", height:"100%" } },
+    e("button", { className:"btn-text", style:{ padding:0, marginBottom:14 }, onClick:onBack }, "← Messages"),
+    e("h1", { className:"screen-title", style:{ marginBottom:14, fontSize:19 } }, otherName || "Conversation"),
+    error ? e(Banner, { kind:"error" }, error) : null,
+    e("div", { ref:listRef, className:"conversation-list" },
+      messages === null ? e(Thinking, { label:"Loading…" })
+        : messages.length === 0 ? e(EmptyState, { icon:"community" }, "Say hello — this is the start of your conversation.")
+        : messages.map(m => e("div", {
+            key:m.id,
+            className: "message-bubble " + (m.senderId === profile.visitorId ? "message-bubble-mine" : "message-bubble-theirs"),
+          }, m.text))
+    ),
+    e("div", { className:"conversation-input-row" },
+      e("input", { type:"text", value:text, maxLength:2000, placeholder:"Message " + (otherName || "") + "…",
+        onChange: ev=>setText(ev.target.value),
+        onKeyDown: ev => { if(ev.key === "Enter") send(); } }),
+      e("button", { className:"btn btn-accent btn-sm", disabled:sending || !text.trim(), onClick:send }, Icon("send"))
+    )
+  );
+}
+
+/* =====================================================================
    ROOT APP
 ===================================================================== */
 
@@ -4357,6 +5106,9 @@ function App(){
   const [closet, setCloset] = useState(() => loadLocal("lore_closet", []));
   const [screen, setScreen] = useState("home");
   const [viewingProfileId, setViewingProfileId] = useState(null);
+  const [viewingConversation, setViewingConversation] = useState(null); // {id, otherId, otherName} | null
+  const [unreadNotifCount, setUnreadNotifCount] = useState(0);
+  const [unreadMsgCount, setUnreadMsgCount] = useState(0);
 
   // A ?verify=<token> or ?reset=<token> link from an email takes over the
   // whole screen regardless of login state, then is stripped from the URL
@@ -4387,6 +5139,25 @@ function App(){
   useEffect(() => { if(styleBlend) saveLocal("lore_style_blend", styleBlend); }, [styleBlend]);
   useEffect(() => { if(colorResult) saveLocal("lore_colorseason", colorResult); }, [colorResult]);
   useEffect(() => { saveLocal("lore_closet", closet); }, [closet]);
+
+  // Lightweight polling for the topbar's bell/mail unread badges — cheap
+  // enough to run continuously since both endpoints are simple indexed
+  // queries. Skips entirely while signed out.
+  useEffect(() => {
+    if(!profile || !profile.visitorId) return;
+    let cancelled = false;
+    function poll(){
+      Api.getNotifications(profile.visitorId, profile.token).then(d => {
+        if(!cancelled) setUnreadNotifCount(d.unreadCount || 0);
+      }).catch(()=>{});
+      Api.getConversations(profile.visitorId, profile.token).then(rows => {
+        if(!cancelled) setUnreadMsgCount(rows.filter(c => c.unread).length);
+      }).catch(()=>{});
+    }
+    poll();
+    const t = setInterval(poll, 10000);
+    return () => { cancelled = true; clearInterval(t); };
+  }, [profile && profile.visitorId, profile && profile.token, screen, viewingConversation]);
 
   // Auto-populate this account's public profile with a style summary
   // derived from their own quiz results — "Style" per Kenneth's request,
@@ -4455,9 +5226,11 @@ function App(){
   }
   function goTo(nextScreen){
     setViewingProfileId(null);
+    setViewingConversation(null);
     setScreen(nextScreen);
   }
   function openProfile(id){
+    setViewingConversation(null);
     setViewingProfileId(id);
   }
   function closeProfile(){
@@ -4465,6 +5238,23 @@ function App(){
   }
   function renameLocalProfile(nextName){
     setProfile(prev => prev ? Object.assign({}, prev, { name: nextName }) : prev);
+  }
+  function openConversation(convo){
+    setViewingProfileId(null);
+    setViewingConversation(convo);
+  }
+  async function openConversationWith(otherId, otherName){
+    try{
+      const { id } = await Api.startConversation({
+        visitorId: profile.visitorId, visitorName: profile.name, authToken: profile.token,
+        otherId, otherName,
+      });
+      setViewingProfileId(null);
+      setViewingConversation({ id, otherId, otherName });
+    }catch(err){ /* rare — leave them on the profile */ }
+  }
+  function closeConversation(){
+    setViewingConversation(null);
   }
 
   if(pendingLinkAction && pendingLinkAction.kind === "verify"){
@@ -4483,10 +5273,16 @@ function App(){
   }
 
   let body;
-  if(viewingProfileId){
+  if(viewingConversation){
+    body = e(ConversationScreen, {
+      profile, conversationId: viewingConversation.id, otherName: viewingConversation.otherName,
+      onBack: closeConversation,
+    });
+  }
+  else if(viewingProfileId){
     body = e(ProfileScreen, {
       id: viewingProfileId, viewer: profile,
-      onBack: closeProfile, onOpenProfile: openProfile, onNameChange: renameLocalProfile,
+      onBack: closeProfile, onOpenProfile: openProfile, onNameChange: renameLocalProfile, onMessage: openConversationWith,
       viewerKibbeBlend: blend, viewerStyleWordBlend: styleBlend, viewerKibbeTypeName: kibbeTypeName, viewerTopStyleWords: topStyleWords
     });
   }
@@ -4496,12 +5292,26 @@ function App(){
   else if(screen === "closet") body = e(ClosetScreen, { closet, setCloset, blend, styleWordBlend:styleBlend, kibbeTypeName, topStyleWords });
   else if(screen === "checker") body = e(CheckerScreen, { blend, styleWordBlend:styleBlend, kibbeTypeName, topStyleWords, visitorId: profile.visitorId, authToken: profile.token });
   else if(screen === "community") body = e(CommunityScreen, { profile, blend, onOpenProfile:openProfile });
+  else if(screen === "notifications") body = e(NotificationsScreen, { profile, onBack:()=>goTo("home"), onOpenProfile:openProfile, onOpenConversation:openConversation });
+  else if(screen === "inbox") body = e(InboxScreen, { profile, onBack:()=>goTo("home"), onOpenConversation:openConversation });
 
   return e("div", { className:"app" },
     e("header", { className:"topbar" },
       e("span", { className:"wordmark", style:{ display:"inline-flex", alignItems:"center", gap:"0.12em" } },
         e(LogoMark, { size:"0.85em" }), "Style-LORE"),
-      e("span", { className:"topbar-sub" }, viewingProfileId ? "profile" : screen)
+      e("div", { style:{ display:"flex", alignItems:"center", gap:8 } },
+        e("span", { className:"topbar-sub" }, viewingConversation ? "messages" : viewingProfileId ? "profile" : screen),
+        e("div", { className:"topbar-icons" },
+          e("button", { className:"topbar-icon-btn", "aria-label":"Notifications", onClick:()=>goTo("notifications") },
+            Icon("bell"),
+            unreadNotifCount > 0 ? e("span", { className:"topbar-icon-badge" }, unreadNotifCount > 9 ? "9+" : unreadNotifCount) : null
+          ),
+          e("button", { className:"topbar-icon-btn", "aria-label":"Messages", onClick:()=>goTo("inbox") },
+            Icon("mail"),
+            unreadMsgCount > 0 ? e("span", { className:"topbar-icon-badge" }, unreadMsgCount > 9 ? "9+" : unreadMsgCount) : null
+          )
+        )
+      )
     ),
     e("main", { className:"app-main" }, body),
     e(BottomNav, { screen, onNavigate:goTo })

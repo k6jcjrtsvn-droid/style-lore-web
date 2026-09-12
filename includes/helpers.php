@@ -231,5 +231,96 @@ function post_to_public(PDO $pdo, array $row): array {
         'createdAt' => (int)$row['created_at'],
         'likes' => $likes,
         'comments' => $comments,
+        'groupId' => $row['group_id'] ?? null,
     ];
+}
+
+/* =========================================================================
+ * Community/social features phase — Notifications, Direct Messages,
+ * Stories, Groups. Shared helpers used by more than one api/*.php file
+ * live here, same as post_to_public() above.
+ * ========================================================================= */
+
+/**
+ * Records one notification for $recipientId. Never notifies someone
+ * about their own action (e.g. liking your own post) — every call site
+ * should still avoid calling this for self-actions, but this is a last
+ * line of defense. $actorId is nullable: api/post_comments.php has no
+ * verified account id for the commenter (see its own comments), so a
+ * comment notification shows actor_name but can't be tapped through to a
+ * profile. $data is a small associative array JSON-encoded for the
+ * frontend to decide what tapping this notification should do (e.g.
+ * ['conversationId' => ..., 'otherId' => ...] for a message).
+ */
+function create_notification(PDO $pdo, string $recipientId, ?string $actorId, string $actorName, ?string $actorAvatarUrl, string $type, string $message, ?array $data = null): void {
+    if ($recipientId === '' || $recipientId === $actorId) return;
+    $stmt = $pdo->prepare(
+        'INSERT INTO notifications (id, recipient_id, actor_id, actor_name, actor_avatar_url, type, message, data, created_at, is_read)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0)'
+    );
+    $stmt->execute([
+        uuidv4(), $recipientId, $actorId ?: null, mb_substr($actorName, 0, 60), $actorAvatarUrl,
+        $type, mb_substr($message, 0, 200), $data ? json_encode($data) : null, current_time_ms(),
+    ]);
+}
+
+function notification_to_public(array $row): array {
+    $data = null;
+    if (!empty($row['data'])) {
+        $decoded = json_decode($row['data'], true);
+        if (is_array($decoded)) $data = $decoded;
+    }
+    return [
+        'id' => $row['id'],
+        'actorId' => $row['actor_id'],
+        'actorName' => $row['actor_name'],
+        'actorAvatarUrl' => $row['actor_avatar_url'],
+        'type' => $row['type'],
+        'message' => $row['message'],
+        'data' => $data,
+        'createdAt' => (int)$row['created_at'],
+        'read' => (bool)$row['is_read'],
+    ];
+}
+
+function message_to_public(array $row): array {
+    return [
+        'id' => $row['id'],
+        'conversationId' => $row['conversation_id'],
+        'senderId' => $row['sender_id'],
+        'senderName' => $row['sender_name'],
+        'text' => $row['text'],
+        'createdAt' => (int)$row['created_at'],
+    ];
+}
+
+function story_to_public(array $row, bool $viewed): array {
+    return [
+        'id' => $row['id'],
+        'authorId' => $row['author_id'],
+        'authorName' => $row['author_name'],
+        'authorAvatarUrl' => $row['author_avatar_url'],
+        'mediaUrl' => $row['media_url'],
+        'mediaType' => $row['media_type'],
+        'caption' => $row['caption'],
+        'createdAt' => (int)$row['created_at'],
+        'expiresAt' => (int)$row['expires_at'],
+        'viewed' => $viewed,
+    ];
+}
+
+function group_to_public(array $row, ?bool $isMember = null): array {
+    $out = [
+        'id' => $row['id'],
+        'name' => $row['name'],
+        'description' => $row['description'],
+        'topicKibbe' => $row['topic_kibbe'],
+        'topicStyle' => $row['topic_style'],
+        'creatorId' => $row['creator_id'],
+        'creatorName' => $row['creator_name'],
+        'memberCount' => (int)$row['member_count'],
+        'createdAt' => (int)$row['created_at'],
+    ];
+    if ($isMember !== null) $out['isMember'] = $isMember;
+    return $out;
 }

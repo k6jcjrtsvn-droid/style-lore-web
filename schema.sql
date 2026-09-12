@@ -94,9 +94,15 @@ CREATE TABLE IF NOT EXISTS posts (
   created_at BIGINT NOT NULL,
   hidden TINYINT(1) NOT NULL DEFAULT 0,
   report_count INT NOT NULL DEFAULT 0,
+  -- NULL for the main Community feed; set when this post was made inside
+  -- a Group (see interest_groups below) — group posts are deliberately
+  -- excluded from the main feed/profile listings and only ever returned
+  -- when a caller explicitly asks for that group's posts (api/posts.php).
+  group_id CHAR(36) DEFAULT NULL,
   KEY idx_author (author_id),
   KEY idx_created (created_at),
-  KEY idx_hidden (hidden)
+  KEY idx_hidden (hidden),
+  KEY idx_group (group_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- ---------------------------------------------------------------------
@@ -152,6 +158,127 @@ CREATE TABLE IF NOT EXISTS reports (
   created_at BIGINT NOT NULL,
   PRIMARY KEY (post_id, visitor_id),
   KEY idx_post (post_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- ---------------------------------------------------------------------
+-- notifications — one row per event a person should be told about
+-- (someone followed them, liked or commented on their post, sent them a
+-- message, or joined a group they created). `actor_id` is nullable
+-- because comments don't carry a verified account id yet (see
+-- api/post_comments.php) — the notification still shows `actor_name`,
+-- it just can't be tapped through to that person's profile. `data` is a
+-- small JSON blob (e.g. {"conversationId":"...","otherId":"..."}) that
+-- tells the frontend where a tap on this notification should go, without
+-- needing a different column per notification type.
+-- ---------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS notifications (
+  id CHAR(36) NOT NULL PRIMARY KEY,
+  recipient_id CHAR(36) NOT NULL,
+  actor_id CHAR(36) DEFAULT NULL,
+  actor_name VARCHAR(60) NOT NULL DEFAULT '',
+  actor_avatar_url VARCHAR(255) DEFAULT NULL,
+  type VARCHAR(20) NOT NULL,
+  message VARCHAR(200) NOT NULL,
+  data TEXT DEFAULT NULL,
+  created_at BIGINT NOT NULL,
+  is_read TINYINT(1) NOT NULL DEFAULT 0,
+  KEY idx_recipient_created (recipient_id, created_at),
+  KEY idx_recipient_unread (recipient_id, is_read)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- ---------------------------------------------------------------------
+-- Direct messages — 1:1 only for now (not group DMs, despite
+-- conversation_members allowing more than 2 rows per conversation — the
+-- API only ever creates/looks up 2-member conversations today). A
+-- conversation's own row just tracks the last message for the inbox list;
+-- the actual text lives in `messages`.
+-- ---------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS conversations (
+  id CHAR(36) NOT NULL PRIMARY KEY,
+  created_at BIGINT NOT NULL,
+  last_message_at BIGINT NOT NULL,
+  last_message_preview VARCHAR(180) NOT NULL DEFAULT ''
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS conversation_members (
+  conversation_id CHAR(36) NOT NULL,
+  account_id CHAR(36) NOT NULL,
+  account_name VARCHAR(60) NOT NULL DEFAULT '',
+  -- Used purely to compute "unread" in the inbox list (last_message_at >
+  -- last_read_at for this member) — not a message-level read receipt.
+  last_read_at BIGINT NOT NULL DEFAULT 0,
+  PRIMARY KEY (conversation_id, account_id),
+  KEY idx_account (account_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS messages (
+  id CHAR(36) NOT NULL PRIMARY KEY,
+  conversation_id CHAR(36) NOT NULL,
+  sender_id CHAR(36) NOT NULL,
+  sender_name VARCHAR(60) NOT NULL DEFAULT '',
+  text VARCHAR(2000) NOT NULL,
+  created_at BIGINT NOT NULL,
+  KEY idx_conversation_created (conversation_id, created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- ---------------------------------------------------------------------
+-- Stories — 24-hour ephemeral photo/video posts. `expires_at` is computed
+-- once at creation (created_at + 24h in the same millisecond epoch every
+-- other timestamp in this app uses) rather than derived on every read, so
+-- a listing query is a plain index range scan.
+-- ---------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS stories (
+  id CHAR(36) NOT NULL PRIMARY KEY,
+  author_id CHAR(36) NOT NULL,
+  author_name VARCHAR(60) NOT NULL DEFAULT '',
+  author_avatar_url VARCHAR(255) DEFAULT NULL,
+  media_url VARCHAR(255) NOT NULL,
+  media_type VARCHAR(10) NOT NULL DEFAULT 'image',
+  caption VARCHAR(200) NOT NULL DEFAULT '',
+  created_at BIGINT NOT NULL,
+  expires_at BIGINT NOT NULL,
+  KEY idx_author (author_id),
+  KEY idx_expires (expires_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS story_views (
+  story_id CHAR(36) NOT NULL,
+  visitor_id VARCHAR(100) NOT NULL,
+  viewed_at BIGINT NOT NULL,
+  PRIMARY KEY (story_id, visitor_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- ---------------------------------------------------------------------
+-- Groups / interest communities. Named "interest_groups" rather than
+-- "groups" — GROUPS is a reserved word in MySQL 8 (window-frame syntax),
+-- so a table literally named `groups` needs backtick-escaping everywhere
+-- it's used; simplest to just avoid the collision.
+-- ---------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS interest_groups (
+  id CHAR(36) NOT NULL PRIMARY KEY,
+  name VARCHAR(60) NOT NULL,
+  description VARCHAR(280) NOT NULL DEFAULT '',
+  -- Optional tie-in to an existing Kibbe type or style word, so a group
+  -- can show the same color swatch/chip the rest of the app already uses
+  -- for that type/word — purely decorative, never required.
+  topic_kibbe VARCHAR(40) DEFAULT NULL,
+  topic_style VARCHAR(40) DEFAULT NULL,
+  creator_id CHAR(36) NOT NULL,
+  creator_name VARCHAR(60) NOT NULL DEFAULT '',
+  -- Denormalized count, kept in sync by group_join.php/group_leave.php —
+  -- avoids a COUNT(*) subquery on every group listed in the directory.
+  member_count INT NOT NULL DEFAULT 1,
+  created_at BIGINT NOT NULL,
+  KEY idx_created (created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS interest_group_members (
+  group_id CHAR(36) NOT NULL,
+  account_id CHAR(36) NOT NULL,
+  account_name VARCHAR(60) NOT NULL DEFAULT '',
+  joined_at BIGINT NOT NULL,
+  PRIMARY KEY (group_id, account_id),
+  KEY idx_account (account_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 SET FOREIGN_KEY_CHECKS = 1;

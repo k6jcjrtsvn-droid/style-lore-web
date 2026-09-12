@@ -31,6 +31,20 @@ RewriteRule ^api/admin/moderation/?$ api/admin_moderation.php [L,QSA]
 
 RewriteRule ^api/checker/photo/?$ api/checker_photo.php [L,QSA]
 
+# --- Community/social features phase: Notifications, DMs, Stories, Groups
+RewriteRule ^api/notifications/?$ api/notifications.php [L,QSA]
+
+RewriteRule ^api/conversations/?$ api/conversations.php [L,QSA]
+RewriteRule ^api/messages/?$ api/messages.php [L,QSA]
+
+RewriteRule ^api/stories/([^/]+)/view/?$ api/story_view.php?id=$1 [L,QSA]
+RewriteRule ^api/stories/?$ api/stories.php [L,QSA]
+
+RewriteRule ^api/groups/([^/]+)/join/?$ api/group_join.php?id=$1 [L,QSA]
+RewriteRule ^api/groups/([^/]+)/leave/?$ api/group_leave.php?id=$1 [L,QSA]
+RewriteRule ^api/groups/([^/]+)/?$ api/groups.php?id=$1 [L,QSA]
+RewriteRule ^api/groups/?$ api/groups.php [L,QSA]
+
 # --- Security ------------------------------------------------------------
 # config.php holds your database password — never let it be requested
 # directly, even though a correctly configured PHP host would execute it

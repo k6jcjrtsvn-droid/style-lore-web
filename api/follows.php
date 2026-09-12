@@ -45,6 +45,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         'INSERT INTO follows (id, follower_id, follower_name, following_id, following_name, created_at) VALUES (?, ?, ?, ?, ?, ?)'
     );
     $ins->execute([$id, $followerId, $followerName, $followingId, $followingName, current_time_ms()]);
+
+    $avatarStmt = $pdo->prepare('SELECT avatar_url FROM profiles WHERE id = ?');
+    $avatarStmt->execute([$followerId]);
+    $followerAvatar = ($row = $avatarStmt->fetch()) ? $row['avatar_url'] : null;
+    create_notification($pdo, $followingId, $followerId, $followerName ?: 'Someone', $followerAvatar, 'follow', ($followerName ?: 'Someone') . ' started following you.', ['actorId' => $followerId]);
+
     json_response(['ok' => true], 201);
 }
 
