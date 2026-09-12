@@ -828,6 +828,53 @@ const e = React.createElement;
 const { useState, useEffect, useRef, useCallback } = React;
 
 /* =====================================================================
+   BACK BUTTON — makes the phone/tablet's hardware or browser back button
+   close whatever's on top (a sheet, the story viewer, a profile, a DM
+   thread) instead of leaving the app.
+
+   Two pieces:
+   1. useBackClose() — for any modal/sheet that's simply mounted while
+      open and unmounted while closed (ComposeSheet, EditProfileSheet,
+      CreateGroupSheet, AddStorySheet, StoryViewerOverlay). Call it with
+      no arguments at the top of the component; it pushes one history
+      entry on mount and consumes it on unmount, wiring itself into the
+      shared stack below.
+   2. The shared stack + a single popstate listener. Only one listener
+      for the whole app — whichever layer is on top gets the back press.
+      A "suppress" counter avoids double-handling: when a layer is
+      closed by an explicit tap (not the back button), we consume its
+      history entry ourselves via history.go(), and that entry's own
+      popstate event needs to be ignored rather than closing whatever
+      layer happens to be on top by then.
+===================================================================== */
+const _backStack = [];
+let _backSeq = 0;
+let _suppressPopEvents = 0;
+window.addEventListener("popstate", () => {
+  if(_suppressPopEvents > 0){ _suppressPopEvents--; return; }
+  const top = _backStack.pop();
+  if(top) top.close();
+});
+function useBackClose(onClose){
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
+  useEffect(() => {
+    const token = ++_backSeq;
+    _backStack.push({ token, close: () => onCloseRef.current() });
+    try{ window.history.pushState({ backToken: token }, ""); }catch(err){}
+    return () => {
+      const idx = _backStack.findIndex(x => x.token === token);
+      if(idx !== -1){
+        _backStack.splice(idx, 1);
+        _suppressPopEvents++;
+        try{ window.history.back(); }
+        catch(err){ _suppressPopEvents--; }
+      }
+    };
+  }, []);
+}
+
+/* =====================================================================
    DATA
 ===================================================================== */
 
@@ -2354,6 +2401,33 @@ const Api = {
     if(!r.ok) throw new Error("Couldn't leave that group.");
     return r.json();
   },
+
+  // ---- Closet (optional public sharing) ------------------------------------
+  // The closet itself stays local-first (see App()'s "closet" state) — these
+  // just mirror it server-side so it can show up on a public profile.
+  async getCloset(ownerId, viewerId){
+    const params = new URLSearchParams({ ownerId });
+    if(viewerId) params.set("viewerId", viewerId);
+    const r = await fetch("/api/closet?" + params.toString());
+    if(!r.ok) return { visibility:"hidden", items:[] };
+    return r.json();
+  },
+  async syncCloset(visitorId, authToken, items){
+    const r = await fetch("/api/closet", {
+      method:"POST", headers:{ "Content-Type":"application/json" },
+      body: JSON.stringify({ visitorId, authToken, items }),
+    });
+    if(!r.ok) throw new Error("Couldn't sync your closet.");
+    return r.json();
+  },
+  async setClosetVisibility(visitorId, authToken, visibility){
+    const r = await fetch("/api/closet/visibility", {
+      method:"POST", headers:{ "Content-Type":"application/json" },
+      body: JSON.stringify({ visitorId, authToken, visibility }),
+    });
+    if(!r.ok) throw new Error("Couldn't update closet visibility.");
+    return r.json();
+  },
 };
 
 /* =====================================================================
@@ -3554,9 +3628,31 @@ function ColorScreen({ colorResult, onSaveColor }){
    already lived only in this browser's localStorage, no size cap)
 ===================================================================== */
 
-function ClosetScreen({ closet, setCloset, blend, styleWordBlend, kibbeTypeName, topStyleWords }){
+function ClosetScreen({ closet, setCloset, blend, styleWordBlend, kibbeTypeName, topStyleWords, profile:viewer }){
   const [showAdd, setShowAdd] = useState(false);
+  const [visibility, setVisibilityState] = useState("hidden");
+  const [visBusy, setVisBusy] = useState(false);
   const profile = { kibbeBlend: blend, styleWordBlend, kibbeTypeName, topStyleWords };
+
+  // Visibility is stored server-side (profiles.closet_visibility), not
+  // locally — read the account's current setting on mount so the toggle
+  // below starts in the right state instead of always defaulting to Hidden.
+  useEffect(() => {
+    if(!viewer || !viewer.visitorId) return;
+    Api.getCloset(viewer.visitorId, viewer.visitorId).then(d => {
+      if(d && d.visibility) setVisibilityState(d.visibility);
+    }).catch(()=>{});
+  }, [viewer && viewer.visitorId]);
+
+  async function changeVisibility(next){
+    if(!viewer || visBusy || next === visibility) return;
+    const prev = visibility;
+    setVisBusy(true);
+    setVisibilityState(next); // optimistic
+    try{ await Api.setClosetVisibility(viewer.visitorId, viewer.token, next); }
+    catch(err){ setVisibilityState(prev); }
+    finally{ setVisBusy(false); }
+  }
 
   function addItem(item){
     setCloset([{ ...item, id: uid(), createdAt: Date.now() }, ...closet]);
@@ -3586,7 +3682,16 @@ function ClosetScreen({ closet, setCloset, blend, styleWordBlend, kibbeTypeName,
       ),
       e("button", { className:"btn btn-accent btn-sm", onClick:()=>setShowAdd(true) }, "+ Add")
     ),
-    e("p", { className:"screen-lede", style:{ marginBottom:20 } }, "Log what you own — a running record of your capsule."),
+    e("p", { className:"screen-lede", style:{ marginBottom:14 } }, "Log what you own — a running record of your capsule."),
+
+    viewer ? e("div", { style:{ marginBottom:20 } },
+      e("div", { className:"tabs", style:{ marginBottom:6 } },
+        e("button", { className:"tab-chip", "aria-pressed": visibility==="hidden", disabled:visBusy, onClick:()=>changeVisibility("hidden") }, "Hidden"),
+        e("button", { className:"tab-chip tab-chip-accent", "aria-pressed": visibility==="public", disabled:visBusy, onClick:()=>changeVisibility("public") }, "Public")
+      ),
+      e("p", { style:{ fontSize:12, color:"var(--ink-soft)", margin:0 } },
+        visibility === "public" ? "Anyone can see your closet on your profile." : "Only you can see your closet.")
+    ) : null,
 
     !blend ? e(Banner, { kind:"info" }, "Take the body & Kibbe quiz first to start building a picture of your capsule against it.") : null,
 
@@ -4095,6 +4200,7 @@ function CommunityScreen({ profile, blend, onOpenProfile }){
 }
 
 function ComposeSheet({ profile, defaults, onPosted, onClose }){
+  useBackClose(onClose);
   const [caption, setCaption] = useState("");
   const [photoFile, setPhotoFile] = useState(null);
   const [photoPreview, setPhotoPreview] = useState(null);
@@ -4364,6 +4470,7 @@ function ProfileScreen({ id, viewer, onBack, onOpenProfile, onNameChange, onMess
   const [showEdit, setShowEdit] = useState(false);
   const [showCompare, setShowCompare] = useState(false);
   const [loadError, setLoadError] = useState(null);
+  const [closetData, setClosetData] = useState(null); // { visibility, items } | null while loading
 
   const isMe = id === viewer.visitorId;
 
@@ -4372,7 +4479,8 @@ function ProfileScreen({ id, viewer, onBack, onOpenProfile, onNameChange, onMess
     Api.getPosts({ authorId:id }).then(setPosts).catch(() => setPosts([]));
     Api.getFollowers(id).then(ids => setFollowerIds(new Set(ids))).catch(() => setFollowerIds(new Set()));
     Api.getFollows(id).then(ids => setFollowingCount(ids.length)).catch(() => setFollowingCount(0));
-  }, [id]);
+    Api.getCloset(id, viewer.visitorId).then(setClosetData).catch(() => setClosetData({ visibility:"hidden", items:[] }));
+  }, [id, viewer.visitorId]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -4451,6 +4559,19 @@ function ProfileScreen({ id, viewer, onBack, onOpenProfile, onNameChange, onMess
     hasStyleSummary ? e("div", { className:"profile-style-summary", style:{ margin:"14px 0" } },
       (profileRow && profileRow.kibbeTypeName) ? e("span", { className:"tab-chip", style:{ marginRight:6, marginBottom:6, display:"inline-block" } }, profileRow.kibbeTypeName) : null,
       styleWordNames.map(name => e("span", { key:name, className:"tab-chip tab-chip-accent", "aria-pressed":"true", style:{ marginRight:6, marginBottom:6, display:"inline-block" } }, name))
+    ) : null,
+
+    (closetData && closetData.items.length > 0) ? e("div", { style:{ margin:"14px 0" } },
+      e("div", { className:"eyebrow", style:{ marginBottom:8 } }, isMe ? "Your closet" : displayName + "’s closet"),
+      e("div", { className:"row-list" },
+        closetData.items.slice(0, 6).map(item => e("div", { key:item.id, className:"row-list-item" },
+          item.photo ? e("img", { src:item.photo, alt:"", style:{ width:44, height:44, borderRadius:8, objectFit:"cover", flexShrink:0 } })
+            : e("span", { style:{ width:44, height:44, borderRadius:8, background:"var(--paper-raised)", border:"1px solid var(--line)", display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0, color:"var(--ink-soft)" } }, Icon("shirt")),
+          e("span", { style:{ flex:1, minWidth:0, fontSize:13.5 } }, item.description)
+        ))
+      )
+    ) : (isMe && closetData && closetData.visibility === "hidden") ? e("p", { style:{ fontSize:12, color:"var(--ink-soft)", margin:"14px 0" } },
+      "Your closet is hidden — only you can see it. Change that from the Closet tab."
     ) : null,
 
     e("hr", { className:"rule" }),
@@ -4567,6 +4688,7 @@ function CompareSheet({ myName, theirName, me, them, onClose }){
 }
 
 function EditProfileSheet({ viewer, currentProfile, onSaved, onClose }){
+  useBackClose(onClose);
   const [name, setName] = useState((currentProfile && currentProfile.name) || viewer.name || "");
   const [bio, setBio] = useState((currentProfile && currentProfile.bio) || "");
   const [avatarPreview, setAvatarPreview] = useState((currentProfile && currentProfile.avatarUrl) || null);
@@ -4731,6 +4853,7 @@ function StoryTray({ stories, profile, onOpenStory, onAddStory }){
 }
 
 function StoryViewerOverlay({ stories, authorId, profile, onClose, onRequestAdd }){
+  useBackClose(onClose);
   const authorStories = (stories || []).filter(s => s.authorId === authorId);
   const [idx, setIdx] = useState(0);
   const current = authorStories[idx];
@@ -4776,6 +4899,7 @@ function StoryViewerOverlay({ stories, authorId, profile, onClose, onRequestAdd 
 }
 
 function AddStorySheet({ profile, onCreated, onClose }){
+  useBackClose(onClose);
   const [photoPreview, setPhotoPreview] = useState(null);
   const [photoFile, setPhotoFile] = useState(null);
   const [videoFile, setVideoFile] = useState(null);
@@ -4875,6 +4999,7 @@ function AddStorySheet({ profile, onCreated, onClose }){
 ===================================================================== */
 
 function CreateGroupSheet({ profile, onCreated, onClose }){
+  useBackClose(onClose);
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [topicKibbe, setTopicKibbe] = useState("");
@@ -5110,6 +5235,54 @@ function App(){
   const [unreadNotifCount, setUnreadNotifCount] = useState(0);
   const [unreadMsgCount, setUnreadMsgCount] = useState(0);
 
+  // Hardware/browser back button — see the useBackClose block near the top
+  // of this file for the sheet/overlay side of this. App-level navigation
+  // has its own two-slot depth model instead of using that hook directly,
+  // because "viewingProfileId" and "viewingConversation" are ALTERNATIVES
+  // at the same depth (opening a conversation from a profile replaces the
+  // profile, it doesn't stack on top of it) — treating them as one combined
+  // "overlay" slot avoids ever needing to push and consume a history entry
+  // in the same React commit, which is where the ordering between
+  // history.back() (async) and history.pushState() (sync) gets unreliable.
+  //   depth 0 = home screen, no overlay
+  //   depth 1 = (non-home screen) OR (home screen + overlay)
+  //   depth 2 = non-home screen + overlay
+  const navDepthRef = useRef(0);
+  const handlingPopRef = useRef(false);
+  useEffect(() => {
+    function onPopState(){
+      if(viewingConversation){ handlingPopRef.current = true; setViewingConversation(null); }
+      else if(viewingProfileId){ handlingPopRef.current = true; setViewingProfileId(null); }
+      else if(screen !== "home"){ handlingPopRef.current = true; setScreen("home"); }
+      // else: already at the root — let the normal browser/OS back action happen.
+    }
+    window.addEventListener("popstate", onPopState);
+    return () => window.removeEventListener("popstate", onPopState);
+  }, [screen, viewingProfileId, viewingConversation]);
+  useEffect(() => {
+    const depth = (screen !== "home" ? 1 : 0) + ((viewingProfileId || viewingConversation) ? 1 : 0);
+    const prevDepth = navDepthRef.current;
+    try{
+      if(depth === prevDepth){
+        window.history.replaceState({ navDepth: depth }, "");
+      } else if(depth > prevDepth){
+        window.history.pushState({ navDepth: depth }, "");
+      } else if(handlingPopRef.current){
+        // The browser already moved back on its own (this reconciliation is
+        // reacting to a real back-button press) — just resync our marker.
+        window.history.replaceState({ navDepth: depth }, "");
+      } else {
+        // Closed via an explicit in-app action (a "Back" button, a tab tap
+        // that clears an overlay, etc.) — consume the real history entries
+        // ourselves in one jump, and ignore the popstate(s) that produces.
+        _suppressPopEvents += (prevDepth - depth);
+        window.history.go(depth - prevDepth);
+      }
+    }catch(err){ /* history API unavailable — app still works, just no back-button integration */ }
+    handlingPopRef.current = false;
+    navDepthRef.current = depth;
+  }, [screen, viewingProfileId, viewingConversation]);
+
   // A ?verify=<token> or ?reset=<token> link from an email takes over the
   // whole screen regardless of login state, then is stripped from the URL
   // so a refresh doesn't re-trigger it.
@@ -5139,6 +5312,16 @@ function App(){
   useEffect(() => { if(styleBlend) saveLocal("lore_style_blend", styleBlend); }, [styleBlend]);
   useEffect(() => { if(colorResult) saveLocal("lore_colorseason", colorResult); }, [colorResult]);
   useEffect(() => { saveLocal("lore_closet", closet); }, [closet]);
+
+  // Mirrors the local closet up to the server (see api/closet.php) so it
+  // can be shown on the public profile when closetVisibility is "public".
+  // The device's local array stays the source of truth for editing; this
+  // is a fire-and-forget background sync, same spirit as the style-summary
+  // sync above.
+  useEffect(() => {
+    if(!profile || !profile.visitorId) return;
+    Api.syncCloset(profile.visitorId, profile.token, closet).catch(()=>{});
+  }, [profile && profile.visitorId, profile && profile.token, closet]);
 
   // Lightweight polling for the topbar's bell/mail unread badges — cheap
   // enough to run continuously since both endpoints are simple indexed
@@ -5289,7 +5472,7 @@ function App(){
   else if(screen === "home") body = e(HomeScreen, { profile, blend, styleBlend, onNavigate:goTo, onSignOut:signOut, onOpenProfile:openProfile, onAccountDeleted:handleAccountDeleted });
   else if(screen === "quiz") body = e(StyleQuizScreen, { kibbeResult, styleLanguageResult:styleBlend, onSaveKibbe:setKibbeResult, onSaveStyle:setStyleBlend });
   else if(screen === "color") body = e(ColorScreen, { colorResult, onSaveColor:setColorResult });
-  else if(screen === "closet") body = e(ClosetScreen, { closet, setCloset, blend, styleWordBlend:styleBlend, kibbeTypeName, topStyleWords });
+  else if(screen === "closet") body = e(ClosetScreen, { closet, setCloset, blend, styleWordBlend:styleBlend, kibbeTypeName, topStyleWords, profile });
   else if(screen === "checker") body = e(CheckerScreen, { blend, styleWordBlend:styleBlend, kibbeTypeName, topStyleWords, visitorId: profile.visitorId, authToken: profile.token });
   else if(screen === "community") body = e(CommunityScreen, { profile, blend, onOpenProfile:openProfile });
   else if(screen === "notifications") body = e(NotificationsScreen, { profile, onBack:()=>goTo("home"), onOpenProfile:openProfile, onOpenConversation:openConversation });

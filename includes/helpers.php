@@ -309,6 +309,23 @@ function story_to_public(array $row, bool $viewed): array {
     ];
 }
 
+/**
+ * One closet item as returned to the frontend. photo_data is the same
+ * downscaled base64 data: URL the client already renders directly via
+ * <img src>, stored as-is (no server-side re-encoding, no separate file on
+ * disk) — see api/closet.php for why this table is a wholesale
+ * replace-on-save mirror of the client's local closet array rather than a
+ * normal CRUD resource.
+ */
+function closet_item_to_public(array $row): array {
+    return [
+        'id' => $row['id'],
+        'description' => $row['description'],
+        'photo' => $row['photo_data'],
+        'createdAt' => (int)$row['created_at'],
+    ];
+}
+
 function group_to_public(array $row, ?bool $isMember = null): array {
     $out = [
         'id' => $row['id'],

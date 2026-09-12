@@ -45,6 +45,10 @@ RewriteRule ^api/groups/([^/]+)/leave/?$ api/group_leave.php?id=$1 [L,QSA]
 RewriteRule ^api/groups/([^/]+)/?$ api/groups.php?id=$1 [L,QSA]
 RewriteRule ^api/groups/?$ api/groups.php [L,QSA]
 
+# --- Closet public/hidden visibility --------------------------------------
+RewriteRule ^api/closet/visibility/?$ api/closet_visibility.php [L,QSA]
+RewriteRule ^api/closet/?$ api/closet.php [L,QSA]
+
 # --- Security ------------------------------------------------------------
 # config.php holds your database password — never let it be requested
 # directly, even though a correctly configured PHP host would execute it

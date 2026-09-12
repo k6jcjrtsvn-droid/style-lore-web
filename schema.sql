@@ -71,6 +71,10 @@ CREATE TABLE IF NOT EXISTS profiles (
   -- quiz yet.
   kibbe_result_json TEXT DEFAULT NULL,
   style_blend_json TEXT DEFAULT NULL,
+  -- Whether this account's Closet (see closet_items below) is visible on
+  -- their public profile to other people. Hidden by default — closet items
+  -- live only on this account's own device until they opt in.
+  closet_visibility VARCHAR(10) NOT NULL DEFAULT 'hidden',
   updated_at BIGINT NOT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
@@ -279,6 +283,24 @@ CREATE TABLE IF NOT EXISTS interest_group_members (
   joined_at BIGINT NOT NULL,
   PRIMARY KEY (group_id, account_id),
   KEY idx_account (account_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- ---------------------------------------------------------------------
+-- Closet — a wholesale mirror of each account's local closet array (see
+-- api/closet.php), synced up so it can be shown on their public profile
+-- when they opt in via profiles.closet_visibility above. The client is
+-- still the source of truth for editing (each closet item's own device
+-- adds/removes it locally); the server side is a read replica for other
+-- people's viewing, replaced in full on every sync rather than
+-- individually added-to/removed-from.
+-- ---------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS closet_items (
+  id CHAR(36) NOT NULL PRIMARY KEY,
+  account_id CHAR(36) NOT NULL,
+  description VARCHAR(200) NOT NULL DEFAULT '',
+  photo_data MEDIUMTEXT DEFAULT NULL,
+  created_at BIGINT NOT NULL,
+  KEY idx_account_created (account_id, created_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 SET FOREIGN_KEY_CHECKS = 1;
