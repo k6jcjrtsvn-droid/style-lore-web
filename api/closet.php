@@ -1,19 +1,23 @@
 <?php
 /**
- * GET  /api/closet?ownerId=X&viewerId=Y — returns { visibility, items }.
- *   items is only populated when the owner's closet is public, OR the
- *   requester is asking about their own closet (viewerId === ownerId).
- *   viewerId is not proof of identity (no authToken here) — it doesn't
- *   need to be: ownerId === viewerId is only ever true when someone is
- *   asking about themselves, and that's not privileged information.
+ * GET  /api/closet?ownerId=X — returns a bare array of this account's
+ *   Public closet items (newest first). Hidden items are never returned
+ *   here, even to the owner themself — the owner manages their full closet
+ *   (Public and Hidden) entirely client-side in local storage; this
+ *   endpoint only mirrors what's visible to other people, so it stays
+ *   consistent whether the caller is the owner's own profile page or
+ *   someone else's.
  *
- * POST /api/closet {visitorId, authToken, items:[{id, description, photo,
- *   createdAt}, ...]} — wholesale replace of this account's closet mirror.
- *   The client's local closet array (see App()'s "closet" state) is the
- *   source of truth; this endpoint just mirrors it server-side so it can
- *   be shown on the profile when closet_visibility is 'public'. Simpler
- *   and more robust than per-item add/remove endpoints given the client
- *   already keeps the authoritative array locally.
+ * POST /api/closet {visitorId, visitorName, authToken, items:[{id,
+ *   description, photo, createdAt, visibility}, ...]} — wholesale replace
+ *   of this account's closet mirror. The client's local closet array (see
+ *   App()'s "closet" state) is the source of truth, including each item's
+ *   own visibility flag; this endpoint just mirrors it server-side,
+ *   per-item, so Public items can be shown on the owner's profile and in
+ *   Community's Closets feed. visitorName is denormalized onto every row
+ *   (author_name) so the community-wide feed (api/closet_feed.php) can
+ *   show who an item belongs to without joining back to profiles for
+ *   every account that's ever synced a closet.
  */
 require_once __DIR__ . '/../includes/helpers.php';
 
@@ -21,28 +25,22 @@ $pdo = db();
 
 if ($_SERVER['REQUEST_METHOD'] === 'GET') {
     $ownerId = (string)($_GET['ownerId'] ?? '');
-    $viewerId = (string)($_GET['viewerId'] ?? '');
     if ($ownerId === '') error_response('Missing ownerId.', 400);
 
-    $visStmt = $pdo->prepare('SELECT closet_visibility FROM profiles WHERE id = ?');
-    $visStmt->execute([$ownerId]);
-    $visRow = $visStmt->fetch();
-    $visibility = $visRow ? $visRow['closet_visibility'] : 'hidden';
-
-    $isOwner = $viewerId !== '' && $viewerId === $ownerId;
-    if ($visibility !== 'public' && !$isOwner) {
-        json_response(['visibility' => $visibility, 'items' => []]);
-    }
-
-    $stmt = $pdo->prepare('SELECT id, description, photo_data, created_at FROM closet_items WHERE account_id = ? ORDER BY created_at DESC');
+    $stmt = $pdo->prepare(
+        "SELECT id, account_id, description, photo_data, created_at, visibility, author_name
+         FROM closet_items WHERE account_id = ? AND visibility = 'public' ORDER BY created_at DESC"
+    );
     $stmt->execute([$ownerId]);
-    json_response(['visibility' => $visibility, 'items' => array_map('closet_item_to_public', $stmt->fetchAll())]);
+    json_response(array_map('closet_item_to_public', $stmt->fetchAll()));
 }
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $body = request_json();
     $visitorId = (string)($body['visitorId'] ?? '');
     require_owner($pdo, $visitorId, (string)($body['authToken'] ?? ''));
+
+    $visitorName = mb_substr(trim((string)($body['visitorName'] ?? '')), 0, 60);
 
     $items = is_array($body['items'] ?? null) ? $body['items'] : [];
     // Cap it — this is a mirror of a personal capsule wardrobe, not
@@ -53,14 +51,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     try {
         $pdo->prepare('DELETE FROM closet_items WHERE account_id = ?')->execute([$visitorId]);
         $ins = $pdo->prepare(
-            'INSERT INTO closet_items (id, account_id, description, photo_data, created_at) VALUES (?, ?, ?, ?, ?)'
+            'INSERT INTO closet_items (id, account_id, description, photo_data, created_at, visibility, author_name) VALUES (?, ?, ?, ?, ?, ?, ?)'
         );
         foreach ($items as $item) {
             if (!is_array($item)) continue;
             $description = mb_substr(trim((string)($item['description'] ?? '')), 0, 200);
             $photo = isset($item['photo']) && is_string($item['photo']) ? $item['photo'] : null;
             $createdAt = isset($item['createdAt']) ? (int)$item['createdAt'] : current_time_ms();
-            $ins->execute([uuidv4(), $visitorId, $description, $photo, $createdAt]);
+            $visibility = ($item['visibility'] ?? '') === 'public' ? 'public' : 'hidden';
+            $ins->execute([uuidv4(), $visitorId, $description, $photo, $createdAt, $visibility, $visitorName]);
         }
         $pdo->commit();
     } catch (Throwable $e) {

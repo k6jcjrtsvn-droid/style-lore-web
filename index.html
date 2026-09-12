@@ -2402,30 +2402,29 @@ const Api = {
     return r.json();
   },
 
-  // ---- Closet (optional public sharing) ------------------------------------
-  // The closet itself stays local-first (see App()'s "closet" state) — these
-  // just mirror it server-side so it can show up on a public profile.
-  async getCloset(ownerId, viewerId){
-    const params = new URLSearchParams({ ownerId });
-    if(viewerId) params.set("viewerId", viewerId);
-    const r = await fetch("/api/closet?" + params.toString());
-    if(!r.ok) return { visibility:"hidden", items:[] };
+  // ---- Closet (optional public sharing, per item) ---------------------------
+  // The closet itself stays local-first (see App()'s "closet" state, where
+  // each item carries its own visibility:"public"|"hidden") — these just
+  // mirror it server-side so Public items can show up on a profile and in
+  // Community's Closets tab.
+  async getCloset(ownerId){
+    // Public items only — used to show what's visible on a given profile,
+    // including your own (matches what everyone else would see there).
+    const r = await fetch("/api/closet?ownerId=" + encodeURIComponent(ownerId));
+    if(!r.ok) return [];
     return r.json();
   },
-  async syncCloset(visitorId, authToken, items){
+  async getClosetFeed(limit){
+    const r = await fetch("/api/closet/feed?limit=" + encodeURIComponent(limit || 50));
+    if(!r.ok) return [];
+    return r.json();
+  },
+  async syncCloset(visitorId, visitorName, authToken, items){
     const r = await fetch("/api/closet", {
       method:"POST", headers:{ "Content-Type":"application/json" },
-      body: JSON.stringify({ visitorId, authToken, items }),
+      body: JSON.stringify({ visitorId, visitorName, authToken, items }),
     });
     if(!r.ok) throw new Error("Couldn't sync your closet.");
-    return r.json();
-  },
-  async setClosetVisibility(visitorId, authToken, visibility){
-    const r = await fetch("/api/closet/visibility", {
-      method:"POST", headers:{ "Content-Type":"application/json" },
-      body: JSON.stringify({ visitorId, authToken, visibility }),
-    });
-    if(!r.ok) throw new Error("Couldn't update closet visibility.");
     return r.json();
   },
 };
@@ -3630,29 +3629,7 @@ function ColorScreen({ colorResult, onSaveColor }){
 
 function ClosetScreen({ closet, setCloset, blend, styleWordBlend, kibbeTypeName, topStyleWords, profile:viewer }){
   const [showAdd, setShowAdd] = useState(false);
-  const [visibility, setVisibilityState] = useState("hidden");
-  const [visBusy, setVisBusy] = useState(false);
   const profile = { kibbeBlend: blend, styleWordBlend, kibbeTypeName, topStyleWords };
-
-  // Visibility is stored server-side (profiles.closet_visibility), not
-  // locally — read the account's current setting on mount so the toggle
-  // below starts in the right state instead of always defaulting to Hidden.
-  useEffect(() => {
-    if(!viewer || !viewer.visitorId) return;
-    Api.getCloset(viewer.visitorId, viewer.visitorId).then(d => {
-      if(d && d.visibility) setVisibilityState(d.visibility);
-    }).catch(()=>{});
-  }, [viewer && viewer.visitorId]);
-
-  async function changeVisibility(next){
-    if(!viewer || visBusy || next === visibility) return;
-    const prev = visibility;
-    setVisBusy(true);
-    setVisibilityState(next); // optimistic
-    try{ await Api.setClosetVisibility(viewer.visitorId, viewer.token, next); }
-    catch(err){ setVisibilityState(prev); }
-    finally{ setVisBusy(false); }
-  }
 
   function addItem(item){
     setCloset([{ ...item, id: uid(), createdAt: Date.now() }, ...closet]);
@@ -3660,6 +3637,9 @@ function ClosetScreen({ closet, setCloset, blend, styleWordBlend, kibbeTypeName,
   }
   function removeItem(id){
     setCloset(closet.filter(x => x.id !== id));
+  }
+  function toggleItemVisibility(id){
+    setCloset(closet.map(x => x.id === id ? Object.assign({}, x, { visibility: x.visibility === "public" ? "hidden" : "public" }) : x));
   }
 
   const gapAnalysis = (blend || styleWordBlend) ? styleGapAnalysis(closet, profile) : null;
@@ -3682,23 +3662,17 @@ function ClosetScreen({ closet, setCloset, blend, styleWordBlend, kibbeTypeName,
       ),
       e("button", { className:"btn btn-accent btn-sm", onClick:()=>setShowAdd(true) }, "+ Add")
     ),
-    e("p", { className:"screen-lede", style:{ marginBottom:14 } }, "Log what you own — a running record of your capsule."),
-
-    viewer ? e("div", { style:{ marginBottom:20 } },
-      e("div", { className:"tabs", style:{ marginBottom:6 } },
-        e("button", { className:"tab-chip", "aria-pressed": visibility==="hidden", disabled:visBusy, onClick:()=>changeVisibility("hidden") }, "Hidden"),
-        e("button", { className:"tab-chip tab-chip-accent", "aria-pressed": visibility==="public", disabled:visBusy, onClick:()=>changeVisibility("public") }, "Public")
-      ),
-      e("p", { style:{ fontSize:12, color:"var(--ink-soft)", margin:0 } },
-        visibility === "public" ? "Anyone can see your closet on your profile." : "Only you can see your closet.")
-    ) : null,
+    e("p", { className:"screen-lede", style:{ marginBottom:14 } }, "Log what you own — a running record of your capsule. Each item is Hidden by default; mark one Public to show it on your profile and in Community's Closets tab."),
 
     !blend ? e(Banner, { kind:"info" }, "Take the body & Kibbe quiz first to start building a picture of your capsule against it.") : null,
 
     closet.length === 0
       ? e(EmptyState, { icon:"closet" }, "Nothing logged yet. Add your first piece to get started.")
       : e("div", { className:"row-list" },
-          closet.map(item => e(ClosetRow, { key:item.id, item, profile, onRemove:()=>removeItem(item.id) }))
+          closet.map(item => e(ClosetRow, {
+            key:item.id, item, profile, onRemove:()=>removeItem(item.id),
+            onToggleVisibility: viewer ? ()=>toggleItemVisibility(item.id) : null,
+          }))
         ),
 
     gapBanner,
@@ -3710,8 +3684,10 @@ function ClosetScreen({ closet, setCloset, blend, styleWordBlend, kibbeTypeName,
 }
 
 function AddItemSheet({ onAdd, onClose }){
+  useBackClose(onClose);
   const [description, setDescription] = useState("");
   const [photoPreview, setPhotoPreview] = useState(null);
+  const [visibility, setVisibility] = useState("hidden");
 
   function pickPhoto(ev){
     const file = ev.target.files && ev.target.files[0];
@@ -3721,7 +3697,7 @@ function AddItemSheet({ onAdd, onClose }){
 
   function submit(){
     if(!description.trim()) return;
-    onAdd({ description: description.trim(), photo: photoPreview || null });
+    onAdd({ description: description.trim(), photo: photoPreview || null, visibility });
   }
 
   return e("div", { className:"sheet-backdrop", onClick:onClose },
@@ -3742,14 +3718,24 @@ function AddItemSheet({ onAdd, onClose }){
           placeholder:"e.g. Camel wool coat, straight cut, knee length",
           onChange: ev=>setDescription(ev.target.value) })
       ),
+      e("div", { className:"field" },
+        e("label", null, "Visibility"),
+        e("div", { className:"tabs", style:{ marginBottom:0 } },
+          e("button", { type:"button", className:"tab-chip", "aria-pressed": visibility==="hidden", onClick:()=>setVisibility("hidden") }, "Hidden"),
+          e("button", { type:"button", className:"tab-chip tab-chip-accent", "aria-pressed": visibility==="public", onClick:()=>setVisibility("public") }, "Public")
+        ),
+        e("div", { className:"field-hint" },
+          visibility === "public" ? "Shows on your profile and in Community's Closets tab." : "Only you can see this item.")
+      ),
       e("button", { className:"btn btn-accent btn-block", disabled:!description.trim(), onClick:submit }, "Add item")
     )
   );
 }
 
-function ClosetRow({ item, profile, onRemove }){
+function ClosetRow({ item, profile, onRemove, onToggleVisibility }){
   const [confirmDelete, setConfirmDelete] = useState(false);
   const verdict = profile && (profile.kibbeBlend || profile.styleWordBlend) ? styleCheckVerdict(item.description, profile) : null;
+  const isPublic = item.visibility === "public";
   return e("div", { className:"row-list-item" },
     item.photo ? e("img", { src:item.photo, alt:"", style:{ width:52, height:52, borderRadius:8, objectFit:"cover", flexShrink:0 } })
       : e("span", { style:{ width:52, height:52, borderRadius:8, background:"var(--paper-raised)", border:"1px solid var(--line)", display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0, color:"var(--ink-soft)" } }, Icon("shirt")),
@@ -3763,11 +3749,32 @@ function ClosetRow({ item, profile, onRemove }){
               : null
           )
         : null,
-      !confirmDelete ? e("button", { className:"btn-text", style:{ padding:0, fontSize:12.5, color:"var(--ink-soft)" }, onClick:()=>setConfirmDelete(true) }, "Remove")
-        : e("div", { style:{ display:"flex", gap:10 } },
-            e("button", { className:"btn-text", style:{ padding:0, fontSize:12, color:"var(--danger)" }, onClick:onRemove }, "Confirm remove"),
-            e("button", { className:"btn-text", style:{ padding:0, fontSize:12 }, onClick:()=>setConfirmDelete(false) }, "Cancel")
-          )
+      e("div", { style:{ display:"flex", alignItems:"center", gap:12, flexWrap:"wrap" } },
+        onToggleVisibility ? e("button", {
+          className:"btn-text", style:{ padding:0, fontSize:12, color: isPublic ? "var(--accent)" : "var(--ink-soft)" },
+          onClick: onToggleVisibility,
+        }, isPublic ? "🌐 Public" : "🔒 Hidden — tap to make public") : null,
+        !confirmDelete ? e("button", { className:"btn-text", style:{ padding:0, fontSize:12.5, color:"var(--ink-soft)" }, onClick:()=>setConfirmDelete(true) }, "Remove")
+          : e("div", { style:{ display:"flex", gap:10 } },
+              e("button", { className:"btn-text", style:{ padding:0, fontSize:12, color:"var(--danger)" }, onClick:onRemove }, "Confirm remove"),
+              e("button", { className:"btn-text", style:{ padding:0, fontSize:12 }, onClick:()=>setConfirmDelete(false) }, "Cancel")
+            )
+      )
+    )
+  );
+}
+
+function ClosetFeedRow({ item, onOpenProfile }){
+  const authorName = item.authorName || "Someone";
+  return e("button", {
+    type:"button", className:"row-list-item", style:{ width:"100%", textAlign:"left" },
+    onClick: () => { if(item.authorId && onOpenProfile) onOpenProfile(item.authorId); }
+  },
+    item.photo ? e("img", { src:item.photo, alt:"", style:{ width:52, height:52, borderRadius:8, objectFit:"cover", flexShrink:0 } })
+      : e("span", { style:{ width:52, height:52, borderRadius:8, background:"var(--paper-raised)", border:"1px solid var(--line)", display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0, color:"var(--ink-soft)" } }, Icon("shirt")),
+    e("div", { style:{ flex:1, minWidth:0 } },
+      e("div", { style:{ fontSize:14, fontWeight:500, marginBottom:4 } }, item.description),
+      e("div", { style:{ fontSize:12, color:"var(--ink-soft)" } }, authorName)
     )
   );
 }
@@ -3951,6 +3958,13 @@ function CommunityScreen({ profile, blend, onOpenProfile }){
   const [viewingStoryAuthor, setViewingStoryAuthor] = useState(null);
   const [showAddStory, setShowAddStory] = useState(false);
 
+  // Closets — a community-wide feed of everyone's Public closet items (see
+  // Api.getClosetFeed / api/closet_feed.php). Kept separate from the
+  // posts-based feed state above since it's a different shape entirely
+  // (closet items, not posts) and only loads when that space is open.
+  const [closetFeed, setClosetFeed] = useState(null);
+  const [closetFeedError, setClosetFeedError] = useState(null);
+
   const refreshPosts = useCallback(() => {
     Api.getPosts().then(rows => { setPosts(rows); setLoadError(null); })
       .catch(() => setLoadError("Couldn't load the feed. It may come back on its own."));
@@ -4003,6 +4017,16 @@ function CommunityScreen({ profile, blend, onOpenProfile }){
     const t = setInterval(load, 4000);
     return () => clearInterval(t);
   }, [space && space.kind, space && space.id]);
+
+  useEffect(() => {
+    if(!space || space.kind !== "closets") { setClosetFeed(null); setClosetFeedError(null); return; }
+    let cancelled = false;
+    setClosetFeed(null);
+    setClosetFeedError(null);
+    Api.getClosetFeed(60).then(rows => { if(!cancelled) setClosetFeed(rows); })
+      .catch(() => { if(!cancelled) setClosetFeedError("Couldn't load the closets feed. It may come back on its own."); });
+    return () => { cancelled = true; };
+  }, [space && space.kind]);
 
   const groupDetail = (space && space.kind === "group" && groups) ? groups.find(g => g.id === space.id) || null : null;
   const groupIsMember = !!(groupDetail && groupDetail.isMember);
@@ -4127,6 +4151,18 @@ function CommunityScreen({ profile, blend, onOpenProfile }){
               ))
             ),
 
+      e("div", { className:"eyebrow", style:{ marginTop:26, marginBottom:10 } }, "Closets"),
+      e("button", {
+        type:"button", className:"row-list-item", style:{ width:"100%", textAlign:"left", marginBottom:8 },
+        onClick: () => setSpace({ kind:"closets" })
+      },
+        e("span", { style:{ color:"var(--accent)", flexShrink:0, width:22, height:22 } }, Icon("shirt")),
+        e("span", { style:{ flex:1, minWidth:0 } },
+          e("div", { style:{ fontWeight:600, fontSize:14.5, marginBottom:2 } }, "Browse public closets"),
+          e("div", { style:{ fontSize:12.5, color:"var(--ink-soft)" } }, "See items everyone's marked Public, newest first.")
+        )
+      ),
+
       showCompose ? e(ComposeSheet, { profile, defaults:composeDefaults(), onPosted:handlePosted, onClose:()=>setShowCompose(false) }) : null,
       showCreateGroup ? e(CreateGroupSheet, {
         profile,
@@ -4143,6 +4179,24 @@ function CommunityScreen({ profile, blend, onOpenProfile }){
         onClose: () => setViewingStoryAuthor(null),
         onRequestAdd: () => setShowAddStory(true),
       }) : null
+    );
+  }
+
+  if(space.kind === "closets"){
+    return e("div", null,
+      e("button", { className:"btn-text", style:{ padding:0, marginBottom:14 }, onClick:()=>setSpace(null) }, "← Communities"),
+      e("div", { style:{ marginBottom:6 } },
+        e("div", { className:"eyebrow" }, "Shared space"),
+        e("h1", { className:"screen-title" }, "Closets")
+      ),
+      e("p", { className:"screen-lede", style:{ marginBottom:16 } }, "Everyone's Public closet items, newest first. Mark an item Public from your own Closet to show it here."),
+      closetFeedError ? e(Banner, { kind:"error" }, closetFeedError) : null,
+      closetFeed === null ? e("div", { style:{ padding:"20px 0" } }, e(Thinking, { label:"Loading closets…" }))
+        : closetFeed.length === 0
+          ? e(EmptyState, { icon:"closet" }, "No public closet items yet — be the first to mark one Public.")
+          : e("div", { className:"row-list" },
+              closetFeed.map(item => e(ClosetFeedRow, { key:item.id, item, onOpenProfile }))
+            )
     );
   }
 
@@ -4470,7 +4524,7 @@ function ProfileScreen({ id, viewer, onBack, onOpenProfile, onNameChange, onMess
   const [showEdit, setShowEdit] = useState(false);
   const [showCompare, setShowCompare] = useState(false);
   const [loadError, setLoadError] = useState(null);
-  const [closetData, setClosetData] = useState(null); // { visibility, items } | null while loading
+  const [closetItems, setClosetItems] = useState(null); // this account's Public closet items, null while loading
 
   const isMe = id === viewer.visitorId;
 
@@ -4479,8 +4533,8 @@ function ProfileScreen({ id, viewer, onBack, onOpenProfile, onNameChange, onMess
     Api.getPosts({ authorId:id }).then(setPosts).catch(() => setPosts([]));
     Api.getFollowers(id).then(ids => setFollowerIds(new Set(ids))).catch(() => setFollowerIds(new Set()));
     Api.getFollows(id).then(ids => setFollowingCount(ids.length)).catch(() => setFollowingCount(0));
-    Api.getCloset(id, viewer.visitorId).then(setClosetData).catch(() => setClosetData({ visibility:"hidden", items:[] }));
-  }, [id, viewer.visitorId]);
+    Api.getCloset(id).then(setClosetItems).catch(() => setClosetItems([]));
+  }, [id]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -4561,17 +4615,17 @@ function ProfileScreen({ id, viewer, onBack, onOpenProfile, onNameChange, onMess
       styleWordNames.map(name => e("span", { key:name, className:"tab-chip tab-chip-accent", "aria-pressed":"true", style:{ marginRight:6, marginBottom:6, display:"inline-block" } }, name))
     ) : null,
 
-    (closetData && closetData.items.length > 0) ? e("div", { style:{ margin:"14px 0" } },
-      e("div", { className:"eyebrow", style:{ marginBottom:8 } }, isMe ? "Your closet" : displayName + "’s closet"),
+    (closetItems && closetItems.length > 0) ? e("div", { style:{ margin:"14px 0" } },
+      e("div", { className:"eyebrow", style:{ marginBottom:8 } }, isMe ? "Your public closet items" : displayName + "’s closet"),
       e("div", { className:"row-list" },
-        closetData.items.slice(0, 6).map(item => e("div", { key:item.id, className:"row-list-item" },
+        closetItems.slice(0, 6).map(item => e("div", { key:item.id, className:"row-list-item" },
           item.photo ? e("img", { src:item.photo, alt:"", style:{ width:44, height:44, borderRadius:8, objectFit:"cover", flexShrink:0 } })
             : e("span", { style:{ width:44, height:44, borderRadius:8, background:"var(--paper-raised)", border:"1px solid var(--line)", display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0, color:"var(--ink-soft)" } }, Icon("shirt")),
           e("span", { style:{ flex:1, minWidth:0, fontSize:13.5 } }, item.description)
         ))
       )
-    ) : (isMe && closetData && closetData.visibility === "hidden") ? e("p", { style:{ fontSize:12, color:"var(--ink-soft)", margin:"14px 0" } },
-      "Your closet is hidden — only you can see it. Change that from the Closet tab."
+    ) : (isMe && closetItems && closetItems.length === 0) ? e("p", { style:{ fontSize:12, color:"var(--ink-soft)", margin:"14px 0" } },
+      "None of your closet items are Public yet — mark one Public from the Closet tab to show it here."
     ) : null,
 
     e("hr", { className:"rule" }),
@@ -5313,15 +5367,16 @@ function App(){
   useEffect(() => { if(colorResult) saveLocal("lore_colorseason", colorResult); }, [colorResult]);
   useEffect(() => { saveLocal("lore_closet", closet); }, [closet]);
 
-  // Mirrors the local closet up to the server (see api/closet.php) so it
-  // can be shown on the public profile when closetVisibility is "public".
-  // The device's local array stays the source of truth for editing; this
-  // is a fire-and-forget background sync, same spirit as the style-summary
-  // sync above.
+  // Mirrors the local closet up to the server (see api/closet.php) so
+  // whichever items are marked Public can be shown on the profile and in
+  // Community's Closets tab. The device's local array stays the source of
+  // truth for editing (including each item's own visibility); this is a
+  // fire-and-forget background sync, same spirit as the style-summary sync
+  // above.
   useEffect(() => {
     if(!profile || !profile.visitorId) return;
-    Api.syncCloset(profile.visitorId, profile.token, closet).catch(()=>{});
-  }, [profile && profile.visitorId, profile && profile.token, closet]);
+    Api.syncCloset(profile.visitorId, profile.name, profile.token, closet).catch(()=>{});
+  }, [profile && profile.visitorId, profile && profile.name, profile && profile.token, closet]);
 
   // Lightweight polling for the topbar's bell/mail unread badges — cheap
   // enough to run continuously since both endpoints are simple indexed

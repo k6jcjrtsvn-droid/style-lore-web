@@ -315,7 +315,9 @@ function story_to_public(array $row, bool $viewed): array {
  * <img src>, stored as-is (no server-side re-encoding, no separate file on
  * disk) — see api/closet.php for why this table is a wholesale
  * replace-on-save mirror of the client's local closet array rather than a
- * normal CRUD resource.
+ * normal CRUD resource. visibility/authorName are per-item (each closet
+ * item is individually Hidden or Public — see Kenneth's 2026-09-14
+ * feedback that a single account-wide toggle wasn't granular enough).
  */
 function closet_item_to_public(array $row): array {
     return [
@@ -323,6 +325,9 @@ function closet_item_to_public(array $row): array {
         'description' => $row['description'],
         'photo' => $row['photo_data'],
         'createdAt' => (int)$row['created_at'],
+        'visibility' => $row['visibility'] ?? 'hidden',
+        'authorName' => $row['author_name'] ?? '',
+        'authorId' => $row['account_id'] ?? null,
     ];
 }
 

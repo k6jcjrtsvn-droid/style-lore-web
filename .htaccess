@@ -45,7 +45,8 @@ RewriteRule ^api/groups/([^/]+)/leave/?$ api/group_leave.php?id=$1 [L,QSA]
 RewriteRule ^api/groups/([^/]+)/?$ api/groups.php?id=$1 [L,QSA]
 RewriteRule ^api/groups/?$ api/groups.php [L,QSA]
 
-# --- Closet public/hidden visibility --------------------------------------
+# --- Closet public/hidden visibility (per-item) ---------------------------
+RewriteRule ^api/closet/feed/?$ api/closet_feed.php [L,QSA]
 RewriteRule ^api/closet/visibility/?$ api/closet_visibility.php [L,QSA]
 RewriteRule ^api/closet/?$ api/closet.php [L,QSA]
 

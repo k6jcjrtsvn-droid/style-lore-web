@@ -287,12 +287,18 @@ CREATE TABLE IF NOT EXISTS interest_group_members (
 
 -- ---------------------------------------------------------------------
 -- Closet — a wholesale mirror of each account's local closet array (see
--- api/closet.php), synced up so it can be shown on their public profile
--- when they opt in via profiles.closet_visibility above. The client is
--- still the source of truth for editing (each closet item's own device
--- adds/removes it locally); the server side is a read replica for other
--- people's viewing, replaced in full on every sync rather than
--- individually added-to/removed-from.
+-- api/closet.php), synced up so each item can be shown according to its
+-- OWN visibility flag: Public items appear on the owner's profile and in
+-- Community's Closets feed (api/closet_feed.php); Hidden items never leave
+-- the owner's device via this mirror. (profiles.closet_visibility above is
+-- an earlier, account-wide toggle superseded by this per-item column —
+-- left in place unused rather than migrated away, to avoid extra risk.)
+-- The client is still the source of truth for editing (each closet item's
+-- own device adds/removes/re-labels it locally); the server side is a read
+-- replica for other people's viewing, replaced in full on every sync
+-- rather than individually added-to/removed-from. author_name is
+-- denormalized from the account's display name at sync time so the
+-- community-wide feed can show attribution without an extra join.
 -- ---------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS closet_items (
   id CHAR(36) NOT NULL PRIMARY KEY,
@@ -300,7 +306,10 @@ CREATE TABLE IF NOT EXISTS closet_items (
   description VARCHAR(200) NOT NULL DEFAULT '',
   photo_data MEDIUMTEXT DEFAULT NULL,
   created_at BIGINT NOT NULL,
-  KEY idx_account_created (account_id, created_at)
+  visibility VARCHAR(10) NOT NULL DEFAULT 'hidden',
+  author_name VARCHAR(60) NOT NULL DEFAULT '',
+  KEY idx_account_created (account_id, created_at),
+  KEY idx_visibility_created (visibility, created_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 SET FOREIGN_KEY_CHECKS = 1;
