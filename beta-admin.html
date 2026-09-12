@@ -1,0 +1,231 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<title>Beta Tester Sync — Style-LORE Admin</title>
+<style>
+  :root{
+    --paper:#FBF0F3;
+    --paper-raised:#FFF8F9;
+    --ink:#2E1620;
+    --ink-soft:#6C4C56;
+    --line:#EACBD3;
+    --accent:#C92C69;
+    color-scheme: light dark;
+  }
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){
+      --paper:#1C1015; --paper-raised:#25141A; --ink:#F6E6EB;
+      --ink-soft:#BB93A1; --line:#3D212B; --accent:#F0A0C4;
+    }
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0; padding:0; background:var(--paper); color:var(--ink);
+    font-family:-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    line-height:1.5;
+  }
+  .wrap{ max-width:760px; margin:0 auto; padding:32px 20px 80px; }
+  h1{ font-size:22px; margin:0 0 4px; }
+  .sub{ font-size:13px; color:var(--ink-soft); margin:0 0 24px; }
+  .card{
+    background:var(--paper-raised); border:1px solid var(--line);
+    border-radius:14px; padding:20px; margin-bottom:20px;
+  }
+  .counts{ display:flex; gap:16px; flex-wrap:wrap; margin-bottom:20px; }
+  .count{
+    background:var(--paper-raised); border:1px solid var(--line);
+    border-radius:12px; padding:14px 20px; text-align:center; min-width:100px;
+  }
+  .count .n{ font-size:26px; font-weight:700; }
+  .count .label{ font-size:12px; color:var(--ink-soft); text-transform:uppercase; letter-spacing:0.04em; }
+  button{
+    font-family:inherit; font-size:14px; font-weight:600; padding:10px 18px;
+    border-radius:999px; border:1px solid var(--accent); background:var(--accent);
+    color:#FFF7F9; cursor:pointer; margin-right:10px; margin-bottom:10px;
+  }
+  button.secondary{ background:transparent; color:var(--accent); }
+  button:disabled{ opacity:0.5; cursor:default; }
+  textarea{
+    width:100%; min-height:140px; font-family:ui-monospace, monospace; font-size:13px;
+    padding:12px; border-radius:10px; border:1px solid var(--line); background:var(--paper);
+    color:var(--ink); resize:vertical;
+  }
+  table{ width:100%; border-collapse:collapse; font-size:13px; }
+  th, td{ text-align:left; padding:8px 10px; border-bottom:1px solid var(--line); }
+  th{ font-size:11px; text-transform:uppercase; letter-spacing:0.04em; color:var(--ink-soft); }
+  .status-pill{
+    display:inline-block; padding:2px 10px; border-radius:999px; font-size:11px; font-weight:600;
+  }
+  .status-pending{ background:#F7D9E5; color:#8C1D4F; }
+  .status-synced{ background:#FCE7B8; color:#7A5200; }
+  .status-sent{ background:#CDEFD8; color:#1F6B3A; }
+  #gate{ max-width:340px; margin:80px auto; text-align:center; }
+  #gate input{
+    width:100%; font-size:15px; padding:12px 14px; border-radius:10px;
+    border:1px solid var(--line); background:var(--paper-raised); color:var(--ink); margin-bottom:12px;
+  }
+  #msg{ font-size:13px; margin-top:14px; min-height:18px; }
+  #msg.error{ color:#B3261E; }
+  #msg.success{ color:#1F6B3A; }
+  [hidden]{ display:none !important; }
+</style>
+</head>
+<body>
+
+<div id="gate" class="wrap">
+  <h1>Beta Tester Sync</h1>
+  <p class="sub">Enter your admin key to continue.</p>
+  <input type="password" id="admin-key" placeholder="Admin key" autocomplete="off">
+  <button id="unlock-btn" style="width:100%; margin:0;">Unlock</button>
+  <div id="gate-msg" class="sub"></div>
+</div>
+
+<div id="app" class="wrap" hidden>
+  <h1>Beta Tester Sync</h1>
+  <p class="sub">Google doesn't offer an API to add testers to your Play Console closed-testing list, so this stays a two-click manual step. Copy the pending emails in below, paste them into Play Console's tester list, then come back and mark them synced.</p>
+
+  <div class="counts">
+    <div class="count"><div class="n" id="count-pending">–</div><div class="label">Pending</div></div>
+    <div class="count"><div class="n" id="count-synced">–</div><div class="label">Synced</div></div>
+    <div class="count"><div class="n" id="count-sent">–</div><div class="label">Sent</div></div>
+  </div>
+
+  <div class="card">
+    <h2 style="margin-top:0; font-size:16px;">Step 1 &mdash; Copy pending emails</h2>
+    <p class="sub">Copy this list, then in Play Console go to Testing &rarr; Closed testing &rarr; your track &rarr; Testers &rarr; edit your email list, and paste them in.</p>
+    <textarea id="pending-list" readonly></textarea>
+    <div style="margin-top:12px;">
+      <button id="copy-btn">Copy pending emails</button>
+      <button id="refresh-btn" class="secondary">Refresh</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2 style="margin-top:0; font-size:16px;">Step 2 &mdash; Mark as synced</h2>
+    <p class="sub">Once you've confirmed in Play Console that those emails are actually added to the tester list, click below. This moves every pending tester to "synced."</p>
+    <button id="sync-btn">Mark pending as synced</button>
+  </div>
+
+  <div class="card">
+    <h2 style="margin-top:0; font-size:16px;">Step 3 &mdash; Send download links</h2>
+    <p class="sub">Emails every "synced" tester their Play Store testing link and marks them "sent." Only run this after Google actually shows them as added testers.</p>
+    <button id="send-btn">Send Play Store links to synced testers</button>
+  </div>
+
+  <div id="msg" class="sub"></div>
+
+  <div class="card">
+    <h2 style="margin-top:0; font-size:16px;">All testers</h2>
+    <table>
+      <thead><tr><th>Email</th><th>Name</th><th>Status</th><th>Signed up</th></tr></thead>
+      <tbody id="tester-rows"></tbody>
+    </table>
+  </div>
+</div>
+
+<script>
+  var API = '/api/admin_beta_testers.php';
+  var key = sessionStorage.getItem('betaAdminKey') || '';
+
+  function fmtDate(ms) {
+    try { return new Date(ms).toLocaleString(); } catch (e) { return ''; }
+  }
+
+  function showMsg(text, cls) {
+    var el = document.getElementById('msg');
+    el.textContent = text;
+    el.className = cls || '';
+  }
+
+  function load() {
+    fetch(API + '?key=' + encodeURIComponent(key))
+      .then(function (res) { return res.json().then(function (d) { return { ok: res.ok, data: d }; }); })
+      .then(function (result) {
+        if (!result.ok) {
+          document.getElementById('gate').hidden = false;
+          document.getElementById('app').hidden = true;
+          document.getElementById('gate-msg').textContent = (result.data && result.data.error) || 'Not authorized.';
+          document.getElementById('gate-msg').className = 'sub error';
+          sessionStorage.removeItem('betaAdminKey');
+          return;
+        }
+        document.getElementById('gate').hidden = true;
+        document.getElementById('app').hidden = false;
+
+        var counts = result.data.counts;
+        document.getElementById('count-pending').textContent = counts.pending;
+        document.getElementById('count-synced').textContent = counts.synced;
+        document.getElementById('count-sent').textContent = counts.sent;
+
+        var testers = result.data.testers;
+        var pendingEmails = testers.filter(function (t) { return t.status === 'pending'; }).map(function (t) { return t.email; });
+        document.getElementById('pending-list').value = pendingEmails.join('\n');
+
+        var rowsHtml = testers.map(function (t) {
+          return '<tr><td>' + t.email + '</td><td>' + (t.name || '') + '</td>' +
+            '<td><span class="status-pill status-' + t.status + '">' + t.status + '</span></td>' +
+            '<td>' + fmtDate(t.createdAt) + '</td></tr>';
+        }).join('');
+        document.getElementById('tester-rows').innerHTML = rowsHtml || '<tr><td colspan="4">No sign-ups yet.</td></tr>';
+      })
+      .catch(function () {
+        showMsg('Could not reach the server. Try refreshing.', 'error');
+      });
+  }
+
+  document.getElementById('unlock-btn').addEventListener('click', function () {
+    key = document.getElementById('admin-key').value.trim();
+    if (!key) return;
+    sessionStorage.setItem('betaAdminKey', key);
+    load();
+  });
+
+  document.getElementById('refresh-btn').addEventListener('click', load);
+
+  document.getElementById('copy-btn').addEventListener('click', function () {
+    var textarea = document.getElementById('pending-list');
+    textarea.select();
+    navigator.clipboard.writeText(textarea.value).then(function () {
+      showMsg('Copied ' + (textarea.value ? textarea.value.split('\n').length : 0) + ' pending email(s) to your clipboard.', 'success');
+    }).catch(function () {
+      showMsg('Could not copy automatically -- the text is selected, use Ctrl/Cmd+C.', 'error');
+    });
+  });
+
+  document.getElementById('sync-btn').addEventListener('click', function () {
+    if (!confirm('Only click this after you have confirmed these emails are actually added in Play Console. Continue?')) return;
+    fetch(API, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ key: key, action: 'mark_synced' })
+    })
+      .then(function (res) { return res.json(); })
+      .then(function (data) {
+        showMsg('Marked ' + data.marked + ' tester(s) as synced.', 'success');
+        load();
+      })
+      .catch(function () { showMsg('Something went wrong.', 'error'); });
+  });
+
+  document.getElementById('send-btn').addEventListener('click', function () {
+    if (!confirm('This emails every "synced" tester their Play Store link right now. Continue?')) return;
+    fetch(API, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ key: key, action: 'send_links' })
+    })
+      .then(function (res) { return res.json(); })
+      .then(function (data) {
+        showMsg('Sent ' + data.sent + ' link(s)' + (data.failed ? (', ' + data.failed + ' failed') : '') + '.', data.failed ? 'error' : 'success');
+        load();
+      })
+      .catch(function () { showMsg('Something went wrong.', 'error'); });
+  });
+
+  if (key) load();
+</script>
+</body>
+</html>

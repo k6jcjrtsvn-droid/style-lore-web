@@ -344,4 +344,22 @@ CREATE TABLE IF NOT EXISTS device_tokens (
   KEY idx_account (account_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
+-- ---------------------------------------------------------------------
+-- beta_testers -- sign-ups from beta.html for the Play Store closed-
+-- testing tester list. Google gives no API to add someone to a Play
+-- Console tester list, so this stays a manual sync (see beta-admin.html /
+-- api/admin_beta_testers.php): 'pending' -> Kenneth pastes into Play
+-- Console -> 'synced' -> real download link emailed -> 'sent'.
+-- ---------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS beta_testers (
+  id CHAR(36) NOT NULL PRIMARY KEY,
+  email VARCHAR(255) NOT NULL,
+  name VARCHAR(60) NOT NULL DEFAULT '',
+  status VARCHAR(20) NOT NULL DEFAULT 'pending',
+  created_at BIGINT NOT NULL,
+  synced_at BIGINT DEFAULT NULL,
+  sent_at BIGINT DEFAULT NULL,
+  UNIQUE KEY uniq_email (email)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
 SET FOREIGN_KEY_CHECKS = 1;
