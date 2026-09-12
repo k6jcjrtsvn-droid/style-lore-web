@@ -50,7 +50,7 @@ Style-LORE has a few new things worth a look:
 
 Thanks for testing — reply any time with feedback or bugs.
 
-— Kenneth, Style-LORE
+— Jayne and Kenneth, Style-LORE
 TXT;
 
 if (($_SERVER['REQUEST_METHOD'] ?? '') === 'GET') {
@@ -66,8 +66,7 @@ if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST') {
     $sent = 0;
     $failed = 0;
     foreach ($accounts as $a) {
-        $name = $a['name'] ?: 'there';
-        $body = "Hi {$name},\n\n" . BROADCAST_BODY;
+        $body = "Hi,\n\n" . BROADCAST_BODY;
 
         if (!$a['email_verified']) {
             $verifyToken = new_auth_token();
