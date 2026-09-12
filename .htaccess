@@ -14,6 +14,15 @@ RewriteRule ^api/account/delete/?$ api/account_delete.php [L,QSA]
 RewriteRule ^api/posts/([^/]+)/like/?$ api/post_like.php?id=$1 [L,QSA]
 RewriteRule ^api/posts/([^/]+)/comments/?$ api/post_comments.php?id=$1 [L,QSA]
 RewriteRule ^api/posts/([^/]+)/report/?$ api/post_report.php?id=$1 [L,QSA]
+
+# A single post by id — DELETE removes it, PUT edits it (see
+# api/post_delete.php / api/post_edit.php). Method-conditional since both
+# live at the same /api/posts/:id URL, same resource either way.
+RewriteCond %{REQUEST_METHOD} =DELETE
+RewriteRule ^api/posts/([^/]+)/?$ api/post_delete.php?id=$1 [L,QSA]
+RewriteCond %{REQUEST_METHOD} =PUT
+RewriteRule ^api/posts/([^/]+)/?$ api/post_edit.php?id=$1 [L,QSA]
+
 RewriteRule ^api/posts/?$ api/posts.php [L,QSA]
 
 RewriteRule ^api/follows/([^/]+)/([^/]+)/?$ api/follow_delete.php?followerId=$1&followingId=$2 [L,QSA]
