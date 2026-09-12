@@ -40,9 +40,18 @@ try {
     $pdo->commit();
 
     $verifyUrl = SITE_BASE_URL . '/?verify=' . $verifyToken;
-    send_app_email(
+    $safeName = htmlspecialchars($name);
+    $verifyHtml = style_lore_email_html(
+        'Verify your email',
+        "<p style=\"margin:0 0 16px;\">Hi $safeName,</p><p style=\"margin:0;\">Thanks for joining Style-LORE! Confirm your email address to finish setting up your account.</p>",
+        'Verify my email',
+        $verifyUrl,
+        "This link works for 48 hours. If you didn't create this account, you can safely ignore this email."
+    );
+    send_app_html_email(
         $email,
         'Verify your Style-LORE email',
+        $verifyHtml,
         "Hi $name,\n\nOne click to verify your email on Style-LORE:\n\n$verifyUrl\n\nThis link works for 48 hours. If you didn't create this account, you can ignore this email.\n"
     );
 

@@ -139,6 +139,104 @@ function send_app_email(string $to, string $subject, string $body): bool {
     return @mail($to, $subject, $body, $headers, $envelopeSender);
 }
 
+/**
+ * Sends a branded HTML email with a plain-text fallback (multipart/
+ * alternative) -- mail clients that prefer or require plain text still get
+ * a good experience, and spam filters see a real text part alongside the
+ * HTML one. Same envelope-sender pattern as send_app_email() above.
+ */
+function send_app_html_email(string $to, string $subject, string $html, string $textFallback): bool {
+    $boundary = 'stylelore-' . bin2hex(random_bytes(12));
+    $headers = "From: Style-LORE <" . MAIL_FROM . ">\r\n" .
+        "MIME-Version: 1.0\r\n" .
+        "Content-Type: multipart/alternative; boundary=\"$boundary\"\r\n";
+
+    $body = "--$boundary\r\n" .
+        "Content-Type: text/plain; charset=utf-8\r\n\r\n" .
+        $textFallback . "\r\n\r\n" .
+        "--$boundary\r\n" .
+        "Content-Type: text/html; charset=utf-8\r\n\r\n" .
+        $html . "\r\n\r\n" .
+        "--$boundary--";
+
+    $envelopeSender = '-f' . MAIL_FROM;
+    return @mail($to, $subject, $body, $headers, $envelopeSender);
+}
+
+/**
+ * Wraps content in Style-LORE's branded HTML email shell: logo header (the
+ * same emblem used as the app's apple-touch-icon, hosted at
+ * SITE_BASE_URL . '/email-assets/logo.png' so email clients that block
+ * inline/data-URI images still render it), a heading, body copy, an
+ * optional call-to-action button, and a footer note. $bodyHtml and
+ * $footerNote are raw HTML -- callers must htmlspecialchars() any
+ * user-supplied text themselves before interpolating it in.
+ */
+function style_lore_email_html(string $heading, string $bodyHtml, ?string $buttonText, ?string $buttonUrl, string $footerNote): string {
+    $logoUrl = SITE_BASE_URL . '/email-assets/logo.png';
+    $accent = '#C92C69';
+    $accentSoft = '#F7D9E5';
+    $ink = '#2E1620';
+    $inkSoft = '#6C4C56';
+    $paper = '#FBF0F3';
+
+    $buttonHtml = '';
+    if ($buttonText !== null && $buttonUrl !== null) {
+        $buttonHtml = '
+              <table role="presentation" cellpadding="0" cellspacing="0" style="margin:28px auto 8px;">
+                <tr>
+                  <td style="border-radius:999px; background:' . $accent . ';">
+                    <a href="' . htmlspecialchars($buttonUrl) . '" style="display:inline-block; padding:14px 34px; font-family:Georgia, \'Times New Roman\', serif; font-size:16px; font-weight:bold; color:#FFF7F9; text-decoration:none; border-radius:999px;">' . htmlspecialchars($buttonText) . '</a>
+                  </td>
+                </tr>
+              </table>';
+    }
+
+    return '<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Style-LORE</title>
+</head>
+<body style="margin:0; padding:0; background:' . $paper . '; font-family: Georgia, \'Times New Roman\', serif;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:' . $paper . ';">
+    <tr>
+      <td align="center" style="padding:32px 16px;">
+        <table role="presentation" width="480" cellpadding="0" cellspacing="0" style="max-width:480px; width:100%; background:#FFF8F9; border-radius:16px; overflow:hidden; border:1px solid #EACBD3;">
+          <tr>
+            <td style="background:' . $accent . '; padding:28px 32px; text-align:center;">
+              <table role="presentation" cellpadding="0" cellspacing="0" align="center" style="margin:0 auto 10px;">
+                <tr>
+                  <td width="64" height="64" style="width:64px; height:64px; background:#FFF7F9; border-radius:50%; text-align:center; vertical-align:middle;">
+                    <img src="' . $logoUrl . '" width="44" height="44" alt="Style-LORE" style="display:block; margin:10px auto; border-radius:50%;">
+                  </td>
+                </tr>
+              </table>
+              <div style="font-family:Georgia, \'Times New Roman\', serif; font-size:22px; font-weight:bold; color:#FFF7F9; letter-spacing:0.5px;">Style-LORE</div>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:32px;">
+              <h1 style="margin:0 0 16px; font-size:20px; color:' . $ink . '; font-family:Georgia, \'Times New Roman\', serif;">' . htmlspecialchars($heading) . '</h1>
+              <div style="font-size:15px; line-height:1.6; color:' . $ink . ';">' . $bodyHtml . '</div>
+              ' . $buttonHtml . '
+              <p style="font-size:13px; color:' . $inkSoft . '; line-height:1.5; margin:24px 0 0;">' . $footerNote . '</p>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:18px 32px; background:' . $accentSoft . '; text-align:center;">
+              <p style="margin:0; font-size:12px; color:' . $inkSoft . ';">Style-LORE &mdash; find your Kibbe style</p>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>';
+}
+
 /** A post is hidden once this many distinct people have reported it —
  *  see post_report.php and the `reports` table. */
 const REPORT_HIDE_THRESHOLD = 3;

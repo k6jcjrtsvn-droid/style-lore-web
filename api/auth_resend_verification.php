@@ -23,9 +23,18 @@ if (is_valid_email($email)) {
                 ->execute([hash_token($verifyToken), $expires, $account['id']]);
 
             $verifyUrl = SITE_BASE_URL . '/?verify=' . $verifyToken;
-            send_app_email(
+            $safeName = htmlspecialchars($account['name']);
+            $verifyHtml = style_lore_email_html(
+                'Verify your email',
+                "<p style=\"margin:0 0 16px;\">Hi $safeName,</p><p style=\"margin:0;\">Here's your new verification link for Style-LORE.</p>",
+                'Verify my email',
+                $verifyUrl,
+                'This link works for 48 hours.'
+            );
+            send_app_html_email(
                 $account['email'],
                 'Verify your Style-LORE email',
+                $verifyHtml,
                 "Hi {$account['name']},\n\nOne click to verify your email on Style-LORE:\n\n$verifyUrl\n\nThis link works for 48 hours.\n"
             );
         }
