@@ -6064,12 +6064,29 @@ function App(){
   // Mirrors the local closet up to the server (see api/closet.php) so
   // whichever items are marked Public can be shown on the profile and in
   // Community's Closets tab. The device's local array stays the source of
-  // truth for editing (including each item's own visibility); this is a
-  // fire-and-forget background sync, same spirit as the style-summary sync
-  // above.
+  // truth for editing (including each item's own visibility).
+  //
+  // api/closet.php does a full delete+reinsert per sync, keyed only by
+  // account_id -- there's no version/timestamp for the server to order by.
+  // Two edits in quick succession (e.g. add an item, then immediately mark
+  // it Public) fire two overlapping requests, and a plain fire-and-forget
+  // fetch has no guarantee the second (newer) one's response lands after
+  // the first: if the network reorders them, the older "hidden" snapshot
+  // can land last and silently stomp the newer "public" one, which is
+  // exactly the bug Kenneth saw (2026-09-12: an item marked Public showed
+  // up as hidden). closetSyncChainRef below chains every sync onto a
+  // promise, so requests are always sent one at a time in issuance order
+  // and each one reads closetRef.current at send time -- the true latest
+  // state -- rather than whatever `closet` value was captured when it was
+  // scheduled, so a slow request can no longer overwrite a newer one.
+  const closetRef = useRef(closet);
+  useEffect(() => { closetRef.current = closet; }, [closet]);
+  const closetSyncChainRef = useRef(Promise.resolve());
   useEffect(() => {
     if(!profile || !profile.visitorId) return;
-    Api.syncCloset(profile.visitorId, profile.name, profile.token, closet).catch(()=>{});
+    closetSyncChainRef.current = closetSyncChainRef.current.then(() =>
+      Api.syncCloset(profile.visitorId, profile.name, profile.token, closetRef.current).catch(()=>{})
+    );
   }, [profile && profile.visitorId, profile && profile.name, profile && profile.token, closet]);
 
   // Lightweight polling for the topbar's bell/mail unread badges — cheap
