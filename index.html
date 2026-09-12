@@ -1217,6 +1217,7 @@ function styleGapAnalysis(closet, profile){
     }
   }
   const gaps = [];
+  const gapLabels = [];
   for (const axisId of Object.keys(ideal)){
     if (!weights[axisId] || weights[axisId] < 0.6) continue;
     const closetAvg = sums[axisId] / weights[axisId];
@@ -1225,9 +1226,43 @@ function styleGapAnalysis(closet, profile){
       const axisDef = STYLE_AXES.find(a => a.id === axisId);
       const wantLabel = diff > 0 ? axisDef.highLabel : axisDef.lowLabel;
       gaps.push(`Your logged pieces lean away from ${wantLabel} — a few more items that read ${wantLabel} would round out ${capsuleLabel}.`);
+      gapLabels.push(wantLabel);
     }
   }
-  return { itemsWithSignal, totalItems: closet.length, gaps };
+  return { itemsWithSignal, totalItems: closet.length, gaps, gapLabels };
+}
+
+/* =====================================================================
+   AFFILIATE SHOPPING SCAFFOLD — placeholder-safe by design. No product
+   names, prices, or images are fabricated here; this only builds a real,
+   live outbound search a person could just as easily run themselves, so
+   there's nothing dishonest to show before Kenneth has an actual
+   affiliate feed. Swap shopSearchUrl()'s body for a real ShopStyle
+   Collective API/deep-link call once that account is approved (see
+   claude/monetization-setup-checklist.md) — every caller of ShopTheGap
+   below stays exactly the same either way, since they only ever pass a
+   style-axis label ("crisp & structured"), never a product.
+===================================================================== */
+function shopSearchUrl(query){
+  return "https://www.google.com/search?tbm=shop&q=" + encodeURIComponent(query + " women's fashion");
+}
+function shopQueryFromAxisLabel(label){
+  return label.replace(/\s*&\s*/g, " ") + " clothing";
+}
+// Small row of outbound "Shop [label]" links for a set of style-axis
+// labels (e.g. from a closet gap-analysis miss, or a checker verdict's
+// non-aligned axes) — dedups and caps at 3 so this never crowds out the
+// actual verdict/analysis above it.
+function ShopTheGap({ labels }){
+  const unique = Array.from(new Set((labels || []).filter(Boolean))).slice(0, 3);
+  if (unique.length === 0) return null;
+  return e("div", { style:{ display:"flex", flexWrap:"wrap", gap:8, marginTop:10, marginBottom:16 } },
+    unique.map(label => e("a", {
+      key:label, href: shopSearchUrl(shopQueryFromAxisLabel(label)),
+      target:"_blank", rel:"noopener noreferrer",
+      style:{ padding:"6px 12px", border:"1px solid var(--line)", borderRadius:20, fontSize:12.5, color:"var(--ink)", textDecoration:"none" },
+    }, "Shop " + label))
+  );
 }
 
 /* The single Kibbe type id with the highest weight in a blend map (the
@@ -4054,6 +4089,7 @@ function ClosetScreen({ closet, setCloset, blend, styleWordBlend, kibbeTypeName,
         ),
 
     gapBanner,
+    gapAnalysis ? e(ShopTheGap, { labels: gapAnalysis.gapLabels }) : null,
 
     e(Banner, { kind:"info" }, "Verdicts and gap analysis run right on your device from item descriptions — no account, key, or network call needed. It's a rule-based style-language match, not a professional styling opinion."),
 
@@ -4379,6 +4415,8 @@ function CheckerScreen({ blend, styleWordBlend, kibbeTypeName, topStyleWords, vi
         : null
     ) : null,
 
+    checked && checked.axisNotes ? e(ShopTheGap, { labels: checked.axisNotes.filter(n => !n.aligned && n.typeWants).map(n => n.typeWants) }) : null,
+
     e(Banner, { kind:"info" }, "This check runs entirely on your device from the words you type — no account, key, or network call. It's a rule-based style-language match, not a professional styling opinion."),
 
     e("hr", { className:"rule", style:{ margin:"28px 0" } }),
@@ -4416,6 +4454,8 @@ function CheckerScreen({ blend, styleWordBlend, kibbeTypeName, topStyleWords, vi
         ))
       ) : null
     ) : null,
+
+    photoResult && photoResult.axisNotes ? e(ShopTheGap, { labels: photoResult.axisNotes.filter(n => !n.aligned && n.typeWants).map(n => n.typeWants) }) : null,
 
     e(Banner, { kind:"info" }, "This one also runs entirely on your device — an on-device pose and image analyzer reads the photo's edges, colors, and (when a full body is visible) silhouette. No photo, key, or account ever leaves your device for either checker."),
 
