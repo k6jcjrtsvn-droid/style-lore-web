@@ -1,7 +1,7 @@
 ---
 deployment:
   tasks:
-    - export DEPLOYPATH=/home/d4c4z4l7ufo/public_html/
+    - export DEPLOYPATH=/home/d4c4z41l7ufo/public_html/
     - /bin/cp -f index.html $DEPLOYPATH
     - /bin/cp -f privacy.html $DEPLOYPATH
     - /bin/cp -f .htaccess $DEPLOYPATH
