@@ -115,15 +115,28 @@ function require_owner(PDO $pdo, string $accountId, ?string $token): void {
 
 /**
  * Sends a plain-text email via PHP's built-in mail() (works out of the box
- * on GoDaddy shared hosting, no SMTP setup needed). Returns whether mail()
- * reported success — callers should treat a false return as "couldn't
- * send it right now" but generally shouldn't reveal that to the client for
- * auth emails (see auth_forgot.php's anti-enumeration note).
+ * on GoDaddy shared hosting, no SMTP setup needed) — but only if the
+ * envelope sender (the "-f" additional parameter) is set to a real mailbox
+ * on this domain. Without it, GoDaddy's sendmail uses a default envelope
+ * sender (something like the server's own hostname account) that fails
+ * SPF for style-lore.com and gets silently dropped by receiving mail
+ * servers — mail() still returns true either way, so this failure mode is
+ * invisible unless you know to look for it. Confirmed by an earlier
+ * diagnostic on this exact box: a plain mail() call with no "-f" never
+ * arrived anywhere (inbox or spam), while the same call with "-f
+ * no-reply@style-lore.com" (after that mailbox was created in cPanel) did.
+ * MAIL_FROM is that same mailbox, so it doubles as the envelope sender.
+ *
+ * Returns whether mail() reported success — callers should treat a false
+ * return as "couldn't send it right now" but generally shouldn't reveal
+ * that to the client for auth emails (see auth_forgot.php's
+ * anti-enumeration note).
  */
 function send_app_email(string $to, string $subject, string $body): bool {
     $headers = "From: Style-LORE <" . MAIL_FROM . ">\r\n" .
         "Content-Type: text/plain; charset=utf-8\r\n";
-    return @mail($to, $subject, $body, $headers);
+    $envelopeSender = '-f' . MAIL_FROM;
+    return @mail($to, $subject, $body, $headers, $envelopeSender);
 }
 
 /** A post is hidden once this many distinct people have reported it —

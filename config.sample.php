@@ -36,3 +36,21 @@ define('MAIL_FROM', 'no-reply@style-lore.com');
 // word — for example, generate one with:
 //   php -r "echo bin2hex(random_bytes(24));"
 define('ADMIN_KEY', '');
+
+// Powers the real photo-based AI Checker (api/checker_photo.php) — a
+// server-side call to Anthropic's Claude API that looks at an uploaded
+// photo (a person, an outfit, or both) and gives a fit verdict, as
+// opposed to the free on-device text checker that's always available.
+//
+// Get a key at https://console.anthropic.com — Settings > API Keys >
+// Create Key. Copy the value shown at that moment (starts with
+// "sk-ant-api03-"); it is shown only once and can't be retrieved again
+// later, only replaced with a new one. The Console's key LIST view shows
+// a similar-looking but non-secret "Key ID" (starts with "apikey_") for
+// reference only — that is not usable here.
+//
+// Leave ANTHROPIC_API_KEY blank to keep the photo checker gracefully
+// disabled (it shows a clean "not set up yet" message instead of an
+// error) — everything else in the app works fine without it.
+define('ANTHROPIC_API_KEY', '');
+define('ANTHROPIC_MODEL', 'claude-haiku-4-5-20251001');

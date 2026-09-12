@@ -63,6 +63,14 @@ CREATE TABLE IF NOT EXISTS profiles (
   -- has taken either quiz yet.
   kibbe_type_name VARCHAR(60) DEFAULT NULL,
   style_words TEXT DEFAULT NULL,
+  -- Full underlying quiz results (JSON-encoded), synced alongside the
+  -- summary columns above — lets this account's results be reloaded on a
+  -- new device without retaking either quiz, and lets two accounts be
+  -- compared axis-by-axis on the Compare screen (see api/profile_style.php
+  -- and api/profile.php). Both nullable: not everyone has taken either
+  -- quiz yet.
+  kibbe_result_json TEXT DEFAULT NULL,
+  style_blend_json TEXT DEFAULT NULL,
   updated_at BIGINT NOT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 

@@ -1,0 +1,18 @@
+---
+deployment:
+  tasks:
+    - export DEPLOYPATH=/home/d4c4z4l7ufo/public_html/
+    - /bin/cp -f index.html $DEPLOYPATH
+    - /bin/cp -f privacy.html $DEPLOYPATH
+    - /bin/cp -f .htaccess $DEPLOYPATH
+    - /bin/cp -f config.sample.php $DEPLOYPATH
+    - /bin/cp -f schema.sql $DEPLOYPATH
+    - /bin/cp -f MIGRATE-2026-09.sql $DEPLOYPATH
+    - /bin/cp -f MIGRATE-2026-09-2.sql $DEPLOYPATH
+    - /bin/mkdir -p $DEPLOYPATH/api
+    - /bin/cp -rf api/. $DEPLOYPATH/api/
+    - /bin/mkdir -p $DEPLOYPATH/includes
+    - /bin/cp -rf includes/. $DEPLOYPATH/includes/
+    - /bin/mkdir -p $DEPLOYPATH/uploads/avatars
+    - /bin/mkdir -p $DEPLOYPATH/uploads/posts
+    - /bin/cp -f uploads/.htaccess $DEPLOYPATH/uploads/.htaccess

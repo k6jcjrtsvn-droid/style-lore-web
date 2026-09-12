@@ -1063,6 +1063,94 @@ function styleGapAnalysis(closet, profile){
   return { itemsWithSignal, totalItems: closet.length, gaps };
 }
 
+/* The single Kibbe type id with the highest weight in a blend map (the
+   shape stored in kibbeBlend / returned as profileRow.kibbeBlend) — used
+   by compareProfiles below instead of trusting a separately-synced
+   display-name string, so a compare is correct even if that summary
+   field is stale or missing. */
+function topKibbeTypeId(blend){
+  if(!blend) return null;
+  let bestId = null, bestPct = -1;
+  for(const id of Object.keys(blend)){
+    const pct = blend[id] || 0;
+    if(pct > bestPct){ bestPct = pct; bestId = id; }
+  }
+  return bestPct > 0 ? bestId : null;
+}
+
+/* Compares two people's own quiz results — reuses the same
+   idealAxesForPerson() engine the Checker and Closet gap-analysis use, so
+   "how similar are we" is computed the identical way "does this item
+   match me" is: same four structure/ornamentation/line/scale axes, same
+   60/40 Kibbe-blend/Style-Quiz-word weighting. Entirely on-device, same
+   as the rest of this rubric — no account, key, or network call needed to
+   render a comparison once both people's data is in hand (see
+   ProfileScreen's CompareSheet, which fetches the other person's data via
+   the ordinary GET /api/profiles/:id call before rendering this).
+   `a` and `b` are profile-like objects: { kibbeBlend, styleWordBlend,
+   topStyleWords }. Returns { ready:false, ... } when one or both people
+   haven't taken either quiz yet, rather than guessing. */
+function compareProfiles(a, b){
+  const aHasData = !!(a && (a.kibbeBlend || a.styleWordBlend));
+  const bHasData = !!(b && (b.kibbeBlend || b.styleWordBlend));
+  if(!aHasData || !bHasData){
+    return { ready:false, missingA: !aHasData, missingB: !bHasData };
+  }
+
+  const axesA = idealAxesForPerson(a);
+  const axesB = idealAxesForPerson(b);
+  const axisRows = [];
+  let simSum = 0, simCount = 0;
+  if(axesA && axesB){
+    for(const axisDef of STYLE_AXES){
+      const av = axesA[axisDef.id], bv = axesB[axisDef.id];
+      if(av === undefined || bv === undefined) continue;
+      const diff = Math.abs(av - bv);
+      simSum += (1 - diff);
+      simCount++;
+      axisRows.push({
+        axis: axisDef.id,
+        aLabel: av >= 0.5 ? axisDef.highLabel : axisDef.lowLabel,
+        bLabel: bv >= 0.5 ? axisDef.highLabel : axisDef.lowLabel,
+        aligned: diff < 0.25,
+      });
+    }
+  }
+  const overallScore = simCount > 0 ? Math.round((simSum / simCount) * 100) : null;
+
+  const aWords = a.topStyleWords || [];
+  const bWordSet = new Set(b.topStyleWords || []);
+  const sharedWords = aWords.filter(w => bWordSet.has(w));
+
+  const aTypeId = topKibbeTypeId(a.kibbeBlend);
+  const bTypeId = topKibbeTypeId(b.kibbeBlend);
+  const sameType = !!(aTypeId && bTypeId && aTypeId === bTypeId);
+  const aFamily = aTypeId ? KIBBE_BY_ID[aTypeId].family : null;
+  const bFamily = bTypeId ? KIBBE_BY_ID[bTypeId].family : null;
+  const sameFamily = !!(aFamily && bFamily && aFamily === bFamily);
+
+  let headline;
+  if(overallScore !== null){
+    if(overallScore >= 75) headline = "Very similar style profiles";
+    else if(overallScore >= 50) headline = "Some real overlap, some differences";
+    else headline = "Fairly different style profiles";
+  } else {
+    headline = sameType ? "Same Kibbe type" : (sharedWords.length ? "Some shared style words" : "Not enough overlapping data yet");
+  }
+
+  return {
+    ready: true,
+    overallScore,
+    axisRows,
+    sharedWords,
+    sameType,
+    sameFamily,
+    aTypeName: aTypeId ? KIBBE_BY_ID[aTypeId].name : (a.kibbeTypeName || null),
+    bTypeName: bTypeId ? KIBBE_BY_ID[bTypeId].name : (b.kibbeTypeName || null),
+    headline,
+  };
+}
+
 /* Style words are a large, open vocabulary rather than a short fixed set
    of "categories" — a personal style-language result should land on
    whichever handful of words genuinely fit (e.g. "Glamorous, Effortless,
@@ -1966,21 +2054,49 @@ const Api = {
     }
     return r.json();
   },
-  async updateStyleSummary(id, { kibbeTypeName, styleWords, authToken }){
+  async updateStyleSummary(id, { kibbeTypeName, styleWords, kibbeResult, styleBlend, authToken }){
     // Fire-and-forget background sync of the quiz-derived style summary
     // shown on this account's public profile — deliberately a separate
     // endpoint from saveProfile so a quiz-completion sync can never
     // accidentally blank out the person's real name/bio (saveProfile
     // always overwrites both, unconditionally, on every call).
+    //
+    // kibbeResult/styleBlend (the full underlying quiz data, not just the
+    // display summary) are optional — omit either to leave whatever the
+    // server already has for that field untouched, rather than clearing
+    // it. This is what lets the same account's results follow them to a
+    // new device, and lets two accounts be compared on the Compare screen.
+    const body = { kibbeTypeName: kibbeTypeName || null, styleWords: styleWords || [], authToken };
+    if (kibbeResult !== undefined) body.kibbeResult = kibbeResult;
+    if (styleBlend !== undefined) body.styleBlend = styleBlend;
     const r = await fetch("/api/profile-style/"+encodeURIComponent(id), {
       method:"POST", headers:{ "Content-Type":"application/json" },
-      body: JSON.stringify({ kibbeTypeName: kibbeTypeName || null, styleWords: styleWords || [], authToken }),
+      body: JSON.stringify(body),
     });
     if(!r.ok){
-      const body = await r.json().catch(()=>({}));
-      throw new Error(body.error || "Couldn't update your style summary.");
+      const body2 = await r.json().catch(()=>({}));
+      throw new Error(body2.error || "Couldn't update your style summary.");
     }
     return r.json();
+  },
+  async checkPhoto({ photoBlob, kibbeTypeName, topStyleWords, visitorId, authToken }){
+    // Server-side vision AI check — see api/checker_photo.php. Returns a
+    // clean { unavailable:true, message } shape (not an exception) when
+    // the server doesn't have an AI key configured yet, so the UI can
+    // show a calm "not set up yet" state instead of an error.
+    const fd = new FormData();
+    fd.append("photo", photoBlob, "photo.jpg");
+    if (kibbeTypeName) fd.append("kibbeTypeName", kibbeTypeName);
+    if (topStyleWords && topStyleWords.length) fd.append("topStyleWords", JSON.stringify(topStyleWords));
+    fd.append("visitorId", visitorId || "");
+    fd.append("authToken", authToken || "");
+    const r = await fetch("/api/checker/photo", { method:"POST", body:fd });
+    const body = await r.json().catch(()=>({}));
+    if (r.status === 503 && body.code === "ai_unavailable"){
+      return { unavailable:true, message: body.error || "AI photo check isn't set up yet." };
+    }
+    if(!r.ok) throw new Error(body.error || "Couldn't run the photo check right now.");
+    return body;
   },
   async deleteAccount(id, password){
     const r = await fetch("/api/account/delete", {
@@ -3341,14 +3457,56 @@ function ClosetRow({ item, profile, onRemove }){
    CHECKER — on-device fit verdicts, no API key or network call
 ===================================================================== */
 
-function CheckerScreen({ blend, styleWordBlend, kibbeTypeName, topStyleWords }){
+function CheckerScreen({ blend, styleWordBlend, kibbeTypeName, topStyleWords, visitorId, authToken }){
   const [description, setDescription] = useState("");
   const [checked, setChecked] = useState(null);
   const profile = { kibbeBlend: blend, styleWordBlend, kibbeTypeName, topStyleWords };
 
+  // Photo checker — a separate, independent flow from the text checker
+  // above: its own state, its own button, its own result area. Deliberately
+  // does not touch `description`/`checked` or runCheck() at all, so this
+  // addition can't interfere with the existing on-device text checker,
+  // which keeps working exactly as it always has (with or without a
+  // network connection, with or without an AI key configured).
+  const [photoPreview, setPhotoPreview] = useState(null);
+  const [photoBlob, setPhotoBlob] = useState(null);
+  const [photoBusy, setPhotoBusy] = useState(false);
+  const [photoResult, setPhotoResult] = useState(null); // { verdict, headline, detail }
+  const [photoUnavailable, setPhotoUnavailable] = useState(null); // message string | null
+  const [photoError, setPhotoError] = useState(null);
+
   function runCheck(){
     if (!description.trim()) return;
     setChecked(styleCheckVerdict(description.trim(), profile));
+  }
+
+  function pickCheckerPhoto(ev){
+    const file = ev.target.files && ev.target.files[0];
+    if(!file) return;
+    setPhotoResult(null);
+    setPhotoError(null);
+    setPhotoUnavailable(null);
+    downscaleImage(file, 900, 0.8).then(dataUrl => {
+      setPhotoPreview(dataUrl);
+      setPhotoBlob(dataUrlToBlob(dataUrl));
+    }).catch(() => setPhotoError("Couldn't read that photo — try a different one."));
+  }
+
+  async function runPhotoCheck(){
+    if(!photoBlob || photoBusy) return;
+    setPhotoBusy(true);
+    setPhotoResult(null);
+    setPhotoError(null);
+    setPhotoUnavailable(null);
+    try{
+      const result = await Api.checkPhoto({ photoBlob, kibbeTypeName, topStyleWords, visitorId, authToken });
+      if(result.unavailable) setPhotoUnavailable(result.message);
+      else setPhotoResult(result);
+    }catch(err){
+      setPhotoError(err.message || "Couldn't run the photo check right now.");
+    }finally{
+      setPhotoBusy(false);
+    }
   }
 
   return e("div", null,
@@ -3388,7 +3546,41 @@ function CheckerScreen({ blend, styleWordBlend, kibbeTypeName, topStyleWords }){
         : null
     ) : null,
 
-    e(Banner, { kind:"info" }, "This check runs entirely on your device from the words you type — no account, key, or network call. It's a rule-based style-language match, not a professional styling opinion.")
+    e(Banner, { kind:"info" }, "This check runs entirely on your device from the words you type — no account, key, or network call. It's a rule-based style-language match, not a professional styling opinion."),
+
+    e("hr", { className:"rule", style:{ margin:"28px 0" } }),
+
+    e("div", { className:"eyebrow" }, "Or show it to the AI"),
+    e("h2", { className:"screen-title", style:{ fontSize:20 } }, "Photo checker"),
+    e("p", { className:"screen-lede", style:{ marginBottom:16 } },
+      "Upload a photo of yourself, an outfit on its own, or yourself wearing it — a real AI vision model gives it a look and a verdict."
+    ),
+
+    e("div", { className:"photo-frame", style:{ aspectRatio:"4/3", marginBottom:12 } },
+      photoPreview ? e("img", { src:photoPreview, alt:"" })
+        : e("label", { className:"photo-frame-label", htmlFor:"checker-photo-input" }, Icon("shirt"), e("span", null, "Add a photo"))
+    ),
+    e("input", { id:"checker-photo-input", type:"file", accept:"image/*", className:"visually-hidden", onChange:pickCheckerPhoto }),
+
+    e("button", {
+      className:"btn btn-accent btn-block", style:{ marginBottom:16 },
+      disabled: !photoBlob || photoBusy,
+      onClick: runPhotoCheck
+    }, photoBusy ? "Checking…" : "Check photo"),
+
+    photoError ? e(Banner, { kind:"error" }, photoError) : null,
+
+    photoUnavailable ? e(Banner, { kind:"info" }, photoUnavailable) : null,
+
+    photoResult ? e("div", { className:"card", style:{ padding:16, marginBottom:16 } },
+      e("div", { style:{ display:"flex", alignItems:"center", gap:10, marginBottom:8 } },
+        e(VerdictPill, { verdict: photoResult.verdict === "match" ? "match" : photoResult.verdict === "mismatch" ? "avoid" : "neutral" })
+      ),
+      e("div", { style:{ fontSize:15, fontWeight:600, marginBottom:6 } }, photoResult.headline),
+      photoResult.detail ? e("p", { style:{ fontSize:13.5, color:"var(--ink-soft)", marginBottom:0 } }, photoResult.detail) : null
+    ) : null,
+
+    e(Banner, { kind:"info" }, "This one sends your photo to Anthropic's Claude API for a real vision-AI look — the only place in Style-LORE that leaves your device. Nothing else here (Kibbe quiz, style quiz, closet, or the text checker above) ever does.")
   );
 }
 
@@ -3828,13 +4020,14 @@ function PostCard({ post, profile, followingIds, onToggleFollow, onOpenProfile, 
    PROFILE
 ===================================================================== */
 
-function ProfileScreen({ id, viewer, onBack, onOpenProfile, onNameChange }){
+function ProfileScreen({ id, viewer, onBack, onOpenProfile, onNameChange, viewerKibbeBlend, viewerStyleWordBlend, viewerKibbeTypeName, viewerTopStyleWords }){
   const [profileRow, setProfileRow] = useState(null); // null = still loading
   const [posts, setPosts] = useState(null);
   const [followerIds, setFollowerIds] = useState(null); // Set|null
   const [followingCount, setFollowingCount] = useState(null);
   const [followBusy, setFollowBusy] = useState(false);
   const [showEdit, setShowEdit] = useState(false);
+  const [showCompare, setShowCompare] = useState(false);
   const [loadError, setLoadError] = useState(null);
 
   const isMe = id === viewer.visitorId;
@@ -3899,13 +4092,23 @@ function ProfileScreen({ id, viewer, onBack, onOpenProfile, onNameChange }){
           e("div", { className:"profile-stat" }, e("b", null, followerIds === null ? "—" : followerIds.size), e("span", null, "Followers")),
           e("div", { className:"profile-stat" }, e("b", null, followingCount === null ? "—" : followingCount), e("span", null, "Following"))
         ),
-        isMe
-          ? e("button", { className:"btn btn-ghost btn-sm", onClick:()=>setShowEdit(true) }, "Edit profile")
-          : e("button", {
-              className:"btn btn-sm " + (isFollowing ? "btn-ghost" : "btn-accent"),
-              disabled: followBusy || !followerIds,
-              onClick: toggleFollow
-            }, isFollowing ? "Following" : "Follow")
+        e("div", { style:{ display:"flex", gap:8, flexWrap:"wrap" } },
+          isMe
+            ? e("button", { className:"btn btn-ghost btn-sm", onClick:()=>setShowEdit(true) }, "Edit profile")
+            : e("button", {
+                className:"btn btn-sm " + (isFollowing ? "btn-ghost" : "btn-accent"),
+                disabled: followBusy || !followerIds,
+                onClick: toggleFollow
+              }, isFollowing ? "Following" : "Follow"),
+          // "Compare styles" is available on anyone's profile, including
+          // your own (comparing yourself is a harmless no-op the sheet
+          // handles gracefully) — it only needs the other profile's own
+          // quiz data, already returned by the same Api.getProfile(id)
+          // call this screen already makes (profileRow.kibbeBlend /
+          // .styleWordBlend), plus the viewer's own quiz data passed down
+          // from App(). No extra network call to open it.
+          !isMe ? e("button", { className:"btn btn-ghost btn-sm", onClick:()=>setShowCompare(true) }, "Compare styles") : null
+        )
       )
     ),
 
@@ -3930,7 +4133,100 @@ function ProfileScreen({ id, viewer, onBack, onOpenProfile, onNameChange }){
       currentProfile: profileRow || { name:viewer.name, bio:"", avatarUrl:null },
       onSaved: handleSaved,
       onClose: () => setShowEdit(false)
+    }) : null,
+
+    showCompare ? e(CompareSheet, {
+      myName: viewer.name,
+      theirName: displayName,
+      me: { kibbeBlend: viewerKibbeBlend, styleWordBlend: viewerStyleWordBlend, kibbeTypeName: viewerKibbeTypeName, topStyleWords: viewerTopStyleWords },
+      them: profileRow ? {
+        kibbeBlend: profileRow.kibbeResult ? profileRow.kibbeResult.kibbeBlend : null,
+        styleWordBlend: profileRow.styleBlend || null,
+        kibbeTypeName: profileRow.kibbeTypeName,
+        topStyleWords: profileRow.styleWords,
+      } : null,
+      onClose: () => setShowCompare(false)
     }) : null
+  );
+}
+
+/* Side-by-side style comparison between the signed-in viewer and whatever
+   profile they're looking at — see compareProfiles() for the actual
+   similarity math. Entirely on-device once both people's quiz data is in
+   hand (the viewer's own from App()'s state, the other person's already
+   fetched by ProfileScreen's normal profile load). */
+function CompareSheet({ myName, theirName, me, them, onClose }){
+  if(!them){
+    return e("div", { className:"sheet-backdrop", onClick:onClose },
+      e("div", { className:"sheet", onClick: ev=>ev.stopPropagation() },
+        e("div", { className:"sheet-handle" }),
+        e("div", { className:"sheet-head" },
+          e("h2", { className:"display", style:{ fontSize:20, fontWeight:700 } }, "Compare styles"),
+          e("button", { className:"close-btn", onClick:onClose, "aria-label":"Close" }, Icon("x"))
+        ),
+        e("div", { style:{ padding:"20px 0" } }, e(Thinking, { label:"Loading…" }))
+      )
+    );
+  }
+
+  const result = compareProfiles(me, them);
+
+  return e("div", { className:"sheet-backdrop", onClick:onClose },
+    e("div", { className:"sheet", onClick: ev=>ev.stopPropagation() },
+      e("div", { className:"sheet-handle" }),
+      e("div", { className:"sheet-head" },
+        e("h2", { className:"display", style:{ fontSize:20, fontWeight:700 } }, "Compare styles"),
+        e("button", { className:"close-btn", onClick:onClose, "aria-label":"Close" }, Icon("x"))
+      ),
+
+      !result.ready
+        ? e(Banner, { kind:"info" },
+            result.missingA && result.missingB
+              ? "Neither of you has taken the Kibbe Quiz or Style Quiz yet — take one first, then come back to compare."
+              : result.missingA
+                ? "Take the Kibbe Quiz or Style Quiz first so there's something of yours to compare."
+                : `${theirName} hasn't taken the Kibbe Quiz or Style Quiz yet — nothing to compare against yet.`
+          )
+        : e("div", null,
+            e("div", { className:"card", style:{ padding:16, marginBottom:16 } },
+              e("div", { style:{ display:"flex", alignItems:"center", gap:10, marginBottom:8 } },
+                result.overallScore !== null
+                  ? e(VerdictPill, { verdict: result.overallScore >= 75 ? "match" : result.overallScore >= 50 ? "neutral" : "avoid" })
+                  : null,
+                result.overallScore !== null ? e("span", { className:"mono", style:{ fontSize:13, color:"var(--ink-soft)" } }, result.overallScore + "% match") : null
+              ),
+              e("div", { style:{ fontSize:15, fontWeight:600, marginBottom:6 } }, result.headline),
+              e("p", { style:{ fontSize:13.5, color:"var(--ink-soft)", marginBottom:0 } },
+                result.sameType
+                  ? `You're both ${result.aTypeName || "the same Kibbe type"}.`
+                  : (result.aTypeName && result.bTypeName)
+                    ? `${myName || "You"}: ${result.aTypeName} · ${theirName}: ${result.bTypeName}` + (result.sameFamily ? " — same family, different variant." : ".")
+                    : "Not everything is in yet, so this comparison uses whatever both of you have."
+              )
+            ),
+
+            result.axisRows.length > 0 ? e("div", { style:{ marginBottom:16 } },
+              e("div", { style:{ fontSize:12.5, fontWeight:600, color:"var(--ink-soft)", marginBottom:8, textTransform:"uppercase", letterSpacing:"0.03em" } }, "By trait"),
+              e("div", { style:{ display:"flex", flexDirection:"column", gap:8 } },
+                result.axisRows.map(row => e("div", { key:row.axis, className:"card", style:{ padding:"10px 14px" } },
+                  e("div", { style:{ display:"flex", justifyContent:"space-between", fontSize:13, marginBottom:2 } },
+                    e("span", null, myName || "You"), e("span", null, theirName)
+                  ),
+                  e("div", { style:{ display:"flex", justifyContent:"space-between", fontSize:13.5, fontWeight:600 } },
+                    e("span", { style:{ color: row.aligned ? "var(--accent)" : "var(--ink)" } }, row.aLabel),
+                    e("span", { style:{ color: row.aligned ? "var(--accent)" : "var(--ink)" } }, row.bLabel)
+                  )
+                ))
+              )
+            ) : null,
+
+            result.sharedWords && result.sharedWords.length
+              ? e("p", { style:{ fontSize:13, color:"var(--accent)", marginBottom:0 } },
+                  "You both leaned into: " + result.sharedWords.map(w => { const sw = STYLE_WORDS.find(x=>x.id===w); return sw ? sw.name : w; }).join(", ") + "."
+                )
+              : null
+          )
+    )
   );
 }
 
@@ -4096,13 +4392,40 @@ function App(){
   // derived from their own quiz results — "Style" per Kenneth's request,
   // not something anyone types in. Fires whenever either quiz's result
   // changes; harmless to call again with the same values (the backend
-  // just upserts). Silently ignored on failure — this is a nice-to-have
-  // sync, never something that should interrupt using the app.
+  // just upserts). Also sends the full kibbeResult/styleBlend objects
+  // (not just the short display summary), so this account's actual quiz
+  // results — not just the top-line chips — can follow them to a new
+  // device, and can be compared against another account's on the Compare
+  // screen. Silently ignored on failure — this is a nice-to-have sync,
+  // never something that should interrupt using the app.
   useEffect(() => {
     if(!profile || !profile.visitorId) return;
     if(!kibbeTypeName && topStyleWords.length === 0) return;
-    Api.updateStyleSummary(profile.visitorId, { kibbeTypeName, styleWords: topStyleWords, authToken: profile.token }).catch(()=>{});
-  }, [profile && profile.visitorId, profile && profile.token, kibbeTypeName, JSON.stringify(topStyleWords)]);
+    Api.updateStyleSummary(profile.visitorId, {
+      kibbeTypeName, styleWords: topStyleWords,
+      kibbeResult: kibbeResult || null, styleBlend: styleBlend || null,
+      authToken: profile.token,
+    }).catch(()=>{});
+  }, [profile && profile.visitorId, profile && profile.token, kibbeTypeName, JSON.stringify(topStyleWords), JSON.stringify(kibbeResult), JSON.stringify(styleBlend)]);
+
+  // Hydrate this account's own quiz results from the server on login/mount
+  // when this browser has neither locally yet (a fresh device, or right
+  // after "Sign out" + log back in) — lets someone see their own Kibbe
+  // Quiz / Style Quiz results without retaking either one, as long as
+  // they've synced from at least one other device/browser before. Runs
+  // once per sign-in; never overwrites results this device already has
+  // (a fresh local retake always wins over whatever the server has).
+  const hydratedForRef = useRef(null);
+  useEffect(() => {
+    if(!profile || !profile.visitorId) return;
+    if(kibbeResult || styleBlend) return; // this device already has results — never overwrite
+    if(hydratedForRef.current === profile.visitorId) return; // already tried this sign-in
+    hydratedForRef.current = profile.visitorId;
+    Api.getProfile(profile.visitorId).then(row => {
+      if(row && row.kibbeResult && row.kibbeResult.kibbeBlend) setKibbeResult(row.kibbeResult);
+      if(row && row.styleBlend) setStyleBlend(row.styleBlend);
+    }).catch(()=>{});
+  }, [profile && profile.visitorId, kibbeResult, styleBlend]);
 
   function completeGate(newProfile){
     setProfile(newProfile);
@@ -4163,14 +4486,15 @@ function App(){
   if(viewingProfileId){
     body = e(ProfileScreen, {
       id: viewingProfileId, viewer: profile,
-      onBack: closeProfile, onOpenProfile: openProfile, onNameChange: renameLocalProfile
+      onBack: closeProfile, onOpenProfile: openProfile, onNameChange: renameLocalProfile,
+      viewerKibbeBlend: blend, viewerStyleWordBlend: styleBlend, viewerKibbeTypeName: kibbeTypeName, viewerTopStyleWords: topStyleWords
     });
   }
   else if(screen === "home") body = e(HomeScreen, { profile, blend, styleBlend, onNavigate:goTo, onSignOut:signOut, onOpenProfile:openProfile, onAccountDeleted:handleAccountDeleted });
   else if(screen === "quiz") body = e(StyleQuizScreen, { kibbeResult, styleLanguageResult:styleBlend, onSaveKibbe:setKibbeResult, onSaveStyle:setStyleBlend });
   else if(screen === "color") body = e(ColorScreen, { colorResult, onSaveColor:setColorResult });
   else if(screen === "closet") body = e(ClosetScreen, { closet, setCloset, blend, styleWordBlend:styleBlend, kibbeTypeName, topStyleWords });
-  else if(screen === "checker") body = e(CheckerScreen, { blend, styleWordBlend:styleBlend, kibbeTypeName, topStyleWords });
+  else if(screen === "checker") body = e(CheckerScreen, { blend, styleWordBlend:styleBlend, kibbeTypeName, topStyleWords, visitorId: profile.visitorId, authToken: profile.token });
   else if(screen === "community") body = e(CommunityScreen, { profile, blend, onOpenProfile:openProfile });
 
   return e("div", { className:"app" },

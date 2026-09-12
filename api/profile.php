@@ -5,10 +5,20 @@ $pdo = db();
 $id = (string)($_GET['id'] ?? '');
 
 if ($_SERVER['REQUEST_METHOD'] === 'GET') {
-    $stmt = $pdo->prepare('SELECT id, name, bio, avatar_url, kibbe_type_name, style_words FROM profiles WHERE id = ?');
+    $stmt = $pdo->prepare('SELECT id, name, bio, avatar_url, kibbe_type_name, style_words, kibbe_result_json, style_blend_json FROM profiles WHERE id = ?');
     $stmt->execute([$id]);
     $existing = $stmt->fetch();
     if ($existing) {
+        $kibbeResult = null;
+        if (!empty($existing['kibbe_result_json'])) {
+            $decoded = json_decode($existing['kibbe_result_json'], true);
+            if (is_array($decoded)) $kibbeResult = $decoded;
+        }
+        $styleBlend = null;
+        if (!empty($existing['style_blend_json'])) {
+            $decoded = json_decode($existing['style_blend_json'], true);
+            if (is_array($decoded)) $styleBlend = $decoded;
+        }
         json_response([
             'id' => $existing['id'],
             'name' => $existing['name'],
@@ -18,6 +28,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
             // results — see api/profile_style.php. Never hand-entered.
             'kibbeTypeName' => $existing['kibbe_type_name'],
             'styleWords' => $existing['style_words'] ? json_decode($existing['style_words'], true) : [],
+            // Full underlying quiz results — used to (a) reload this
+            // account's own results on a new device without retaking
+            // either quiz, and (b) drive the Compare screen. Same shape
+            // the client itself uses locally: kibbeResult is the
+            // {kibbeTypeId, kibbeBlend} object from the Kibbe Quiz,
+            // styleBlend is the Style Quiz's raw word-weight dict. Null
+            // when that quiz hasn't been taken (or synced) yet.
+            'kibbeResult' => $kibbeResult,
+            'styleBlend' => $styleBlend,
         ]);
     }
 
@@ -34,6 +53,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
         'avatarUrl' => null,
         'kibbeTypeName' => null,
         'styleWords' => [],
+        'kibbeResult' => null,
+        'styleBlend' => null,
         'exists' => false,
     ]);
 }
