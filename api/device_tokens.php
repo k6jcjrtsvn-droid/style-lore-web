@@ -40,4 +40,12 @@ $pdo->prepare(
      ON DUPLICATE KEY UPDATE account_id = VALUES(account_id), platform = VALUES(platform), updated_at = VALUES(updated_at)'
 )->execute([$token, $visitorId, $platform, current_time_ms()]);
 
+// Keep at most 10 tokens per account (newest win) so a reinstalling
+// device can't pile up stale tokens forever.
+$stale = $pdo->prepare('SELECT token FROM device_tokens WHERE account_id = ? ORDER BY updated_at DESC LIMIT 10, 1000');
+$stale->execute([$visitorId]);
+foreach ($stale->fetchAll() as $row) {
+    $pdo->prepare('DELETE FROM device_tokens WHERE token = ?')->execute([$row['token']]);
+}
+
 json_response(['ok' => true]);

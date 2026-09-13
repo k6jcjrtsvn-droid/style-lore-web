@@ -69,6 +69,24 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $id = uuidv4();
     $now = current_time_ms();
     $expiresAt = $now + (24 * 60 * 60 * 1000);
+
+    // Housekeeping: stories that expired more than a day ago are gone for
+    // good — drop their rows, views and media files so uploads/ doesn't
+    // grow forever. Done here (on the next story post) since shared
+    // hosting has no reliable cron.
+    try {
+        $old = $pdo->prepare('SELECT id, media_url FROM stories WHERE expires_at < ? LIMIT 50');
+        $old->execute([$now - 24 * 60 * 60 * 1000]);
+        $uploadsRoot = realpath(__DIR__ . '/../uploads');
+        foreach ($old->fetchAll() as $dead) {
+            $pdo->prepare('DELETE FROM story_views WHERE story_id = ?')->execute([$dead['id']]);
+            $pdo->prepare('DELETE FROM stories WHERE id = ?')->execute([$dead['id']]);
+            $real = $dead['media_url'] ? realpath(__DIR__ . '/../' . ltrim($dead['media_url'], '/')) : false;
+            if ($real && $uploadsRoot && strpos($real, $uploadsRoot) === 0 && is_file($real)) @unlink($real);
+        }
+    } catch (Throwable $e) {
+        error_log('Expired story cleanup failed: ' . $e->getMessage());
+    }
     $ins = $pdo->prepare(
         'INSERT INTO stories (id, author_id, author_name, author_avatar_url, media_url, media_type, caption, created_at, expires_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'

@@ -23,7 +23,10 @@
 require_once __DIR__ . '/../includes/helpers.php';
 
 function require_admin_key(): void {
-    $sent = (string)($_GET['key'] ?? '');
+    // Preferred: "X-Admin-Key" header (keeps the key out of URLs/logs);
+    // ?key= and a JSON "key" field still work for older callers.
+    $sent = (string)($_SERVER['HTTP_X_ADMIN_KEY'] ?? '');
+    if ($sent === '') $sent = (string)($_GET['key'] ?? '');
     if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST') {
         $body = request_json();
         if ($body['key'] ?? null) $sent = (string)$body['key'];

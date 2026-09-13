@@ -141,6 +141,11 @@
   var API = '/api/admin_beta_testers.php';
   var key = sessionStorage.getItem('betaAdminKey') || '';
 
+  function esc(v) {
+    return String(v == null ? '' : v).replace(/[&<>"']/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+    });
+  }
   function fmtDate(ms) {
     try { return new Date(ms).toLocaleString(); } catch (e) { return ''; }
   }
@@ -152,7 +157,7 @@
   }
 
   function load() {
-    fetch(API + '?key=' + encodeURIComponent(key))
+    fetch(API, { headers: { 'X-Admin-Key': key } })
       .then(function (res) { return res.json().then(function (d) { return { ok: res.ok, data: d }; }); })
       .then(function (result) {
         if (!result.ok) {
@@ -175,11 +180,14 @@
         var pendingEmails = testers.filter(function (t) { return t.status === 'pending'; }).map(function (t) { return t.email; });
         document.getElementById('pending-list').value = pendingEmails.join('\n');
 
+        // Names/emails are user-supplied — always escape before they hit
+        // innerHTML (this page holds the admin key, so XSS here matters).
         var rowsHtml = testers.map(function (t) {
-          return '<tr><td>' + t.email + '</td><td>' + (t.name || '') + '</td>' +
-            '<td><span class="status-pill status-' + t.status + '">' + t.status + '</span></td>' +
-            '<td>' + fmtDate(t.createdAt) + '</td>' +
-            '<td><button class="row-remove" data-email="' + t.email + '">remove</button></td></tr>';
+          var status = /^[a-z_]+$/.test(t.status) ? t.status : 'unknown';
+          return '<tr><td>' + esc(t.email) + '</td><td>' + esc(t.name || '') + '</td>' +
+            '<td><span class="status-pill status-' + status + '">' + esc(t.status) + '</span></td>' +
+            '<td>' + esc(fmtDate(t.createdAt)) + '</td>' +
+            '<td><button class="row-remove" data-email="' + esc(t.email) + '">remove</button></td></tr>';
         }).join('');
         document.getElementById('tester-rows').innerHTML = rowsHtml || '<tr><td colspan="5">No sign-ups yet.</td></tr>';
 
