@@ -10,6 +10,30 @@ require_once __DIR__ . '/db.php';
 
 header('Content-Type: application/json; charset=utf-8');
 
+// CORS for the native apps. The website itself is same-origin and never
+// needs this, but the iOS/Android shells load the bundled index.html from
+// their own local origin (capacitor://localhost on iOS, https://localhost
+// on Android) and call this API cross-origin. Only those app origins are
+// allowed — never "*", because the API reads bearer tokens. OPTIONS
+// preflights are answered here (and by api/_cors.php for paths whose
+// rewrite rule is method-conditional) so the real request can follow.
+cors_headers();
+
+function cors_headers(): void {
+    $origin = $_SERVER['HTTP_ORIGIN'] ?? '';
+    $allowed = ['capacitor://localhost', 'https://localhost', 'http://localhost', 'ionic://localhost'];
+    if ($origin === '' || !in_array($origin, $allowed, true)) return;
+    header('Access-Control-Allow-Origin: ' . $origin);
+    header('Vary: Origin');
+    header('Access-Control-Allow-Methods: GET, POST, PUT, DELETE, OPTIONS');
+    header('Access-Control-Allow-Headers: Authorization, Content-Type, X-Admin-Key');
+    header('Access-Control-Max-Age: 86400');
+    if (($_SERVER['REQUEST_METHOD'] ?? '') === 'OPTIONS') {
+        http_response_code(204);
+        exit;
+    }
+}
+
 // Both handlers below log the real detail server-side only. The client
 // only ever sees a generic message — an earlier version of this file
 // echoed the raw exception/error message straight into the JSON response,
@@ -101,49 +125,6 @@ function hash_token(string $token): string {
  * profile, creating a post, following someone, liking a post) should
  * call this before touching the database.
  */
-/**
- * The display name + avatar the server holds for an account — used
- * instead of whatever name a client sends along with an action, so one
- * account can't label its DMs/follows/group joins with someone else's name.
- */
-function profile_identity(PDO $pdo, string $accountId): array {
-    $stmt = $pdo->prepare('SELECT name, avatar_url FROM profiles WHERE id = ?');
-    $stmt->execute([$accountId]);
-    $row = $stmt->fetch();
-    $name = $row ? mb_substr(trim((string)$row['name']), 0, 60) : '';
-    return ['name' => $name !== '' ? $name : 'Style-LORE member', 'avatar' => $row ? $row['avatar_url'] : null];
-}
-
-/**
- * Requires the account's email to be verified before it can reach other
- * people directly (DMs, groups). Call after require_owner().
- */
-function require_verified(PDO $pdo, string $accountId): void {
-    $stmt = $pdo->prepare('SELECT email_verified FROM accounts WHERE id = ?');
-    $stmt->execute([$accountId]);
-    $row = $stmt->fetch();
-    if (!$row || !(int)$row['email_verified']) {
-        error_response('Verify your email address first — check your inbox for the Style-LORE verification link.', 403);
-    }
-}
-
-/**
- * Auth token from the "Authorization: Bearer <token>" header — used by
- * GET endpoints so the token never lands in URLs, access logs, or
- * referrers. Falls back to ?authToken= for older clients.
- */
-function bearer_token(): string {
-    $hdr = $_SERVER['HTTP_AUTHORIZATION'] ?? $_SERVER['REDIRECT_HTTP_AUTHORIZATION'] ?? '';
-    if ($hdr === '' && function_exists('apache_request_headers')) {
-        $all = apache_request_headers();
-        $hdr = $all['Authorization'] ?? $all['authorization'] ?? '';
-    }
-    if (preg_match('/^Bearer\s+(\S+)$/i', trim((string)$hdr), $m)) {
-        return $m[1];
-    }
-    return (string)($_GET['authToken'] ?? '');
-}
-
 function require_owner(PDO $pdo, string $accountId, ?string $token): void {
     if ($accountId === '' || !$token) {
         error_response('Missing account id or auth token — try logging in again.', 401);
@@ -154,51 +135,6 @@ function require_owner(PDO $pdo, string $accountId, ?string $token): void {
     if (!$row || !$row['auth_token_hash'] || !hash_equals($row['auth_token_hash'], hash_token($token))) {
         error_response('Not authorized for this account — try logging in again.', 401);
     }
-}
-
-/**
- * Fixed-window rate limiter backed by the rate_limits table (see
- * MIGRATE-2026-09-17.sql). Allows $max hits per $windowSeconds for $key,
- * otherwise responds 429 and exits. Keys are things like
- * "login:ip:1.2.3.4" or "signup:email:foo@bar.com". Fails OPEN if the
- * table is missing (pre-migration) so a forgotten migration can't lock
- * everyone out — it just logs once per request.
- */
-function rate_limit(PDO $pdo, string $key, int $max, int $windowSeconds, string $message = 'Too many attempts — please wait a bit and try again.'): void {
-    $key = substr($key, 0, 160);
-    $now = time();
-    $ownTxn = !$pdo->inTransaction();
-    try {
-        $stmt = $pdo->prepare('SELECT hits, window_start FROM rate_limits WHERE rl_key = ? FOR UPDATE');
-        if ($ownTxn) $pdo->beginTransaction();
-        $stmt->execute([$key]);
-        $row = $stmt->fetch();
-        if (!$row || ($now - (int)$row['window_start']) >= $windowSeconds) {
-            $pdo->prepare('INSERT INTO rate_limits (rl_key, hits, window_start) VALUES (?, 1, ?)
-                           ON DUPLICATE KEY UPDATE hits = 1, window_start = VALUES(window_start)')->execute([$key, $now]);
-            if ($ownTxn) $pdo->commit();
-            // Opportunistic cleanup, ~1% of calls: drop windows older than a day.
-            if (random_int(1, 100) === 1) {
-                $pdo->prepare('DELETE FROM rate_limits WHERE window_start < ?')->execute([$now - 86400]);
-            }
-            return;
-        }
-        $hits = (int)$row['hits'] + 1;
-        $pdo->prepare('UPDATE rate_limits SET hits = ? WHERE rl_key = ?')->execute([$hits, $key]);
-        if ($ownTxn) $pdo->commit();
-        if ($hits > $max) {
-            header('Retry-After: ' . max(1, $windowSeconds - ($now - (int)$row['window_start'])));
-            error_response($message, 429);
-        }
-    } catch (PDOException $e) {
-        if ($ownTxn && $pdo->inTransaction()) $pdo->rollBack();
-        error_log('rate_limit unavailable (' . $key . '): ' . $e->getMessage());
-    }
-}
-
-/** Best-effort client IP for rate limiting (shared hosting behind Apache; no proxy trust). */
-function client_ip(): string {
-    return substr((string)($_SERVER['REMOTE_ADDR'] ?? '0.0.0.0'), 0, 45);
 }
 
 /**
@@ -480,22 +416,9 @@ function save_upload(string $field, string $subdir, string $requiredMimePrefix, 
         throw new RuntimeException($friendlyName . ' must be a ' . rtrim($requiredMimePrefix, '/') . ' file.');
     }
 
-    // The extension is derived from the *sniffed* MIME type only — never from
-    // the client-supplied filename — so a polyglot "image.php" can never land
-    // on disk with an executable extension.
-    $allowed = [
-        'image/jpeg' => 'jpg',
-        'image/png' => 'png',
-        'image/webp' => 'webp',
-        'image/gif' => 'gif',
-        'video/mp4' => 'mp4',
-        'video/webm' => 'webm',
-        'video/quicktime' => 'mov',
-    ];
-    if (!isset($allowed[$mime])) {
-        throw new RuntimeException($friendlyName . ' must be a JPG, PNG, WebP, GIF, MP4, WebM or MOV file.');
-    }
-    $ext = '.' . $allowed[$mime];
+    $ext = strtolower(pathinfo($file['name'], PATHINFO_EXTENSION));
+    $ext = preg_replace('/[^a-z0-9]/', '', $ext);
+    $ext = $ext !== '' ? '.' . substr($ext, 0, 10) : '';
 
     $dir = __DIR__ . '/../uploads/' . $subdir;
     if (!is_dir($dir)) mkdir($dir, 0755, true);
@@ -571,17 +494,8 @@ function post_to_public(PDO $pdo, array $row): array {
  * frontend to decide what tapping this notification should do (e.g.
  * ['conversationId' => ..., 'otherId' => ...] for a message).
  */
-function create_notification(PDO $pdo, string $recipientId, ?string $actorId, string $actorName, ?string $actorAvatarUrl, string $type, string $message, ?array $data = null, int $dedupeSeconds = 0): void {
+function create_notification(PDO $pdo, string $recipientId, ?string $actorId, string $actorName, ?string $actorAvatarUrl, string $type, string $message, ?array $data = null): void {
     if ($recipientId === '' || $recipientId === $actorId) return;
-    // Flip-flop protection: liking/unliking/re-liking (or follow/unfollow/
-    // refollow) shouldn't re-ping the recipient. When $dedupeSeconds > 0,
-    // an identical (recipient, actor, type, data) notification within that
-    // window means we skip creating another one.
-    if ($dedupeSeconds > 0 && $actorId !== null) {
-        $dup = $pdo->prepare('SELECT id FROM notifications WHERE recipient_id = ? AND actor_id = ? AND type = ? AND created_at > ? AND data <=> ? LIMIT 1');
-        $dup->execute([$recipientId, $actorId, $type, current_time_ms() - $dedupeSeconds * 1000, $data !== null ? json_encode($data) : null]);
-        if ($dup->fetch()) return;
-    }
     $stmt = $pdo->prepare(
         'INSERT INTO notifications (id, recipient_id, actor_id, actor_name, actor_avatar_url, type, message, data, created_at, is_read)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0)'

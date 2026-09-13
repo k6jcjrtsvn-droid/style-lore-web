@@ -6,16 +6,13 @@
 
 RewriteEngine On
 
-# Pass the Authorization header through to PHP (CGI/FastCGI setups strip
-# it otherwise) — community GET endpoints read the auth token from
-# "Authorization: Bearer ..." instead of the query string.
-RewriteCond %{HTTP:Authorization} .
-RewriteRule .* - [E=HTTP_AUTHORIZATION:%{HTTP:Authorization}]
-<IfModule mod_setenvif.c>
-    SetEnvIf Authorization "(.*)" HTTP_AUTHORIZATION=$1
-</IfModule>
-
 # --- API routing -------------------------------------------------------
+# CORS preflights from the native apps (see includes/helpers.php
+# cors_headers and api/_cors.php). Must come before the method-conditional
+# rules below, which would otherwise 404 an OPTIONS request.
+RewriteCond %{REQUEST_METHOD} =OPTIONS
+RewriteRule ^api/ api/_cors.php [L]
+
 RewriteRule ^api/auth/signup/?$ api/auth_signup.php [L,QSA]
 RewriteRule ^api/auth/login/?$ api/auth_login.php [L,QSA]
 RewriteRule ^api/account/delete/?$ api/account_delete.php [L,QSA]
@@ -86,25 +83,6 @@ RewriteRule ^api/closet/?$ api/closet.php [L,QSA]
 <Files "schema.sql">
     Require all denied
 </Files>
-<FilesMatch "^MIGRATE-.*\.sql$">
-    Require all denied
-</FilesMatch>
-<Files "error_log">
-    Require all denied
-</Files>
-<Files ".cpanel.yml">
-    Require all denied
-</Files>
-
-# No directory listings anywhere.
-Options -Indexes
-
-# Basic hardening headers.
-<IfModule mod_headers.c>
-    Header always set X-Content-Type-Options "nosniff"
-    Header always set X-Frame-Options "SAMEORIGIN"
-    Header always set Referrer-Policy "strict-origin-when-cross-origin"
-</IfModule>
 
 # Never let anything under includes/ be requested directly.
 RewriteRule ^includes/ - [F,L]
