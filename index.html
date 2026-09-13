@@ -5306,17 +5306,24 @@ function CheckerScreen({ blend, styleWordBlend, kibbeTypeName, topStyleWords, vi
     // The AI Stylist lives right under the free photo read, as the natural
     // "want more?" next step — not as a separate section three screens
     // down. Sold on what the person gets, not on how it's built.
-    photoBlob ? e("div", { className:"card", style:{ padding:16, marginBottom:16, borderColor:"var(--accent)" } },
+    // Always visible — with no photo yet, the button doubles as the photo
+    // picker so nobody has to discover that a photo unlocks it.
+    e("div", { className:"card", style:{ padding:16, marginBottom:16, borderColor:"var(--accent)" } },
       e("div", { className:"eyebrow", style:{ marginBottom:4 } }, isPremium ? "AI Stylist" : hasFreeRead ? "AI Stylist · your first read is free" : "AI Stylist · Premium"),
-      e("div", { style:{ fontSize:15, fontWeight:600, marginBottom:6 } }, "Want a stylist's read on this photo?"),
+      e("div", { style:{ fontSize:15, fontWeight:600, marginBottom:6 } }, photoBlob ? "Want a stylist's read on this photo?" : "Want a stylist's read on a photo?"),
       e("p", { style:{ fontSize:13.5, color:"var(--ink-soft)", marginBottom:12 } },
         (visitorId ? "" : "Create a free account and your first read is on us. ") +
-        "Specific feedback on the cut, the color and the fit — and what to change if it's not working. Uses the photo above; this is the one feature that sends it off your phone, to get the read."),
-      e("button", {
-        className:"btn btn-accent btn-block",
-        disabled: aiBusy,
-        onClick: runAiStylist
-      }, aiBusy ? "Reading your photo…" : !visitorId ? "Sign in for a free read" : isPremium ? "Get my stylist read" : hasFreeRead ? "Try it free — one read on us" : "Unlock the AI Stylist"),
+        "Specific feedback on the cut, the color and the fit — and what to change if it's not working. " +
+        (photoBlob ? "Uses the photo above; this is the one feature that sends it off your phone, to get the read." : "Add a photo of the piece, or of you wearing it — this is the one feature that sends it off your phone, to get the read.")),
+      !photoBlob
+        ? e("label", { className:"btn btn-accent btn-block", htmlFor:"checker-photo-input", style:{ cursor:"pointer" }, onClick: ev => pickWithNativeCamera(ev, pickCheckerPhoto) },
+            isPremium ? "Add a photo for your stylist read" : hasFreeRead && visitorId ? "Add a photo — your first read is free" : "Add a photo to get started")
+        : e("button", {
+            className:"btn btn-accent btn-block",
+            disabled: aiBusy,
+            onClick: runAiStylist
+          }, aiBusy ? "Reading your photo…" : !visitorId ? "Sign in for a free read" : isPremium ? "Get my stylist read" : hasFreeRead ? "Try it free — one read on us" : "Unlock the AI Stylist"),
+      !photoBlob && !isPremium ? e("button", { className:"btn-text", style:{ marginTop:8, padding:0, fontSize:12.5 }, onClick:()=>onUpgrade("checker") }, "See what Premium includes") : null,
       aiError ? e("div", { style:{ marginTop:10 } }, e(Banner, { kind:"error" }, aiError)) : null,
       aiResult ? e("div", { style:{ marginTop:14, paddingTop:14, borderTop:"1px solid var(--line-soft)" } },
         e("div", { style:{ display:"flex", alignItems:"center", gap:10, marginBottom:8 } },
@@ -5326,7 +5333,7 @@ function CheckerScreen({ blend, styleWordBlend, kibbeTypeName, topStyleWords, vi
         aiResult.detail ? e("p", { style:{ fontSize:13.5, color:"var(--ink-soft)", marginBottom: aiResult.suggestion ? 10 : 0 } }, aiResult.detail) : null,
         aiResult.suggestion ? e("p", { style:{ fontSize:13.5, color:"var(--accent)", marginBottom:0, fontWeight:500 } }, "✦ " + aiResult.suggestion) : null
       ) : null
-    ) : null,
+    ),
 
     e(HistoryList, { isPremium, onUpgrade, version: historyVersion }),
 
