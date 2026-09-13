@@ -505,6 +505,22 @@
     margin-bottom:22px;
   }
   .progress-fill{height:100%; background:var(--accent); transition:width .25s ease;}
+  .progress-track{height:5px;}
+  .skip-link{display:block; width:100%; text-align:center; padding:12px 8px 4px; font-size:13px; color:var(--ink-soft); background:none; border:0;}
+  .skip-link:hover{color:var(--ink); text-decoration:underline;}
+  /* Results reveal: the type name on its own color, edge to edge. */
+  .result-hero{
+    margin:-24px -20px 18px; padding:34px 22px 26px; color:#fff;
+    background:var(--hero, var(--accent));
+    border-radius:0 0 var(--radius-l, 22px) var(--radius-l, 22px);
+  }
+  .result-hero .eyebrow{color:rgba(255,255,255,.78);}
+  .result-hero h1{font-family:'Bodoni Moda', Georgia, serif; font-weight:700; font-size:38px; line-height:1.02; margin:6px 0 10px; letter-spacing:-.01em;}
+  .result-hero p{font-size:15px; line-height:1.5; margin:0; opacity:.92;}
+  .result-hero .hero-actions{display:flex; gap:10px; margin-top:16px; flex-wrap:wrap;}
+  .result-hero .btn{background:rgba(255,255,255,.16); color:#fff; border:1px solid rgba(255,255,255,.45);}
+  .result-words{display:flex; flex-wrap:wrap; gap:8px; margin-top:12px;}
+  .result-words span{padding:6px 12px; border-radius:999px; background:rgba(255,255,255,.18); border:1px solid rgba(255,255,255,.35); font-size:13px; font-weight:600;}
 
   .option-btn{
     display:block;
@@ -653,6 +669,13 @@
   .browse-row{ display:flex; gap:8px; overflow-x:auto; padding-bottom:4px; scrollbar-width:none; }
   .browse-row::-webkit-scrollbar{ display:none; }
   .browse-row .tab-chip{ flex:0 0 auto; white-space:nowrap; }
+  .home-grid{ display:grid; grid-template-columns:repeat(2,1fr); gap:10px; }
+  .home-tile{
+    display:flex; flex-direction:column; align-items:flex-start; gap:4px; text-align:left;
+    padding:14px; border:1px solid var(--line); border-radius:var(--radius-m); background:var(--paper-raised);
+    transition:border-color .15s ease, box-shadow .15s ease, transform .15s ease;
+  }
+  .home-tile:hover{ border-color:var(--accent); box-shadow:var(--shadow); transform:translateY(-1px); }
   .style-tile{
     border-radius:var(--radius-s); padding:11px 6px 9px; text-align:center;
     font-size:11.5px; font-weight:600; color:#fff;
@@ -823,6 +846,16 @@
   .avatar-picker-edit-badge svg{ width:12px; height:12px; stroke:currentColor; fill:none; stroke-width:1.8; }
 
   .color-chip-grid{ display:flex; flex-wrap:wrap; gap:8px; }
+  .color-swatch-grid{ display:grid; grid-template-columns:repeat(3,1fr); gap:10px; }
+  .color-swatch{
+    aspect-ratio:1/1; border-radius:var(--radius-m); border:0; position:relative;
+    box-shadow:0 0 0 1px rgba(0,0,0,.06) inset, 0 2px 6px rgba(0,0,0,.08);
+  }
+  .color-swatch span{
+    position:absolute; left:8px; bottom:8px; font-family:'IBM Plex Mono', monospace; font-size:11px;
+    padding:3px 7px; border-radius:6px; background:rgba(255,255,255,.85); color:#2E1620; opacity:0; transition:opacity .15s ease;
+  }
+  .color-swatch.show-hex span{ opacity:1; }
   .color-chip{
     width:42px; height:42px; border-radius:11px; flex-shrink:0;
     box-shadow:0 0 0 1px var(--line) inset, 0 1px 2px rgba(0,0,0,.1);
@@ -1548,6 +1581,7 @@ const STYLE_WORD_BY_ID = Object.fromEntries(STYLE_WORDS.map(x => [x.id, x]));
 const MAX_STYLE_TAGS = 3;
 
 const SKIP_OPTION = { label:"Not sure — skip this one", w:{} };
+function isSkipOption(opt){ return !!opt && typeof opt.label === "string" && /^not sure/i.test(opt.label); }
 const MOD_SKIP_OPTION = { label:"Not sure — skip this one", mod:null };
 
 /* BODY_QUESTIONS reads Kibbe's own structural inputs — bone structure,
@@ -3677,7 +3711,16 @@ function BottomNav({ screen, onNavigate }){
    HOME
 ===================================================================== */
 
-function HomeScreen({ profile, blend, styleBlend, onNavigate, onSignOut, onOpenProfile, onAccountDeleted, onSignIn }){
+function HomeScreen({ profile, blend, styleBlend, kibbeResult, colorResult, closetCount, onNavigate, onSignOut, onOpenProfile, onAccountDeleted, onSignIn }){
+  const homeType = (kibbeResult && kibbeResult.kibbeTypeId && KIBBE_BY_ID[kibbeResult.kibbeTypeId]) || null;
+  const homeWords = styleBlend ? topWords(styleBlend, STYLE_WORDS, 4) : [];
+  const homeSeason = (colorResult && colorResult.seasonId && COLOR_SEASON_BY_ID[colorResult.seasonId]) || null;
+  // One next step, chosen in the order that builds the most value.
+  const nextStep = !blend ? null
+    : !styleBlend ? { title:"Finish the style-words part", desc:"Two minutes more and your closet and checker get your own vocabulary.", screen:"quiz" }
+    : !homeSeason ? { title:"Find your best colors", desc:"Six questions for a palette you can hold up to a garment.", screen:"color" }
+    : (closetCount || 0) < 5 ? { title:"Log 5 pieces you wear most", desc:"That's enough for the closet to tell you what's missing.", screen:"closet" }
+    : { title:"Check something before you buy it", desc:"Describe it or snap it — the Checker gives a verdict against your type.", screen:"checker" };
   const [confirmingSignOut, setConfirmingSignOut] = useState(false);
   const [showDeleteAccount, setShowDeleteAccount] = useState(false);
   const [verifyBannerDismissed, setVerifyBannerDismissed] = useState(false);
@@ -3692,10 +3735,24 @@ function HomeScreen({ profile, blend, styleBlend, onNavigate, onSignOut, onOpenP
   }
 
   return e("div", null,
-    e("div", { className:"eyebrow" }, profile ? "Welcome back" : "Welcome"),
-    e("h1", { className:"screen-title" }, profile ? (profile.name.split(" ")[0] + "’s Style-LORE") : "Your Style-LORE"),
-    e("p", { className:"screen-lede", style:{ marginBottom:22 } },
-      "A style system built around your style quiz — plus your closet and people who share your look."),
+    homeType ? e("div", { className:"result-hero", style:{ "--hero": homeType.color } },
+      e("div", { className:"eyebrow" }, profile ? (profile.name.split(" ")[0] + ", you're a") : "You're a"),
+      e("h1", null, homeType.name),
+      e("p", null, homeType.tag),
+      (homeWords.length || homeSeason) ? e("div", { className:"result-words" },
+        homeWords.map(w => e("span", { key:w.id }, w.name)),
+        homeSeason ? e("span", { key:"season", style:{ background:"rgba(255,255,255,.3)" } }, homeSeason.name) : null
+      ) : null,
+      e("div", { className:"hero-actions" },
+        e("button", { className:"btn btn-sm", onClick:()=>onNavigate("quiz") }, "See full result"),
+        !homeSeason ? e("button", { className:"btn btn-sm", onClick:()=>onNavigate("color") }, "Find my colors") : null
+      )
+    ) : e(React.Fragment, null,
+      e("div", { className:"eyebrow" }, profile ? "Welcome back" : "Welcome"),
+      e("h1", { className:"screen-title" }, profile ? (profile.name.split(" ")[0] + "’s Style-LORE") : "Your Style-LORE"),
+      e("p", { className:"screen-lede", style:{ marginBottom:22 } },
+        "Start with the quiz. Everything else here — your colors, your closet, the Checker — is built on what it finds.")
+    ),
 
     (profile && profile.emailVerified === false && !verifyBannerDismissed) ? e("div", { className:"card", style:{ marginBottom:16 } },
       e(Banner, { kind:"info" },
@@ -3710,41 +3767,41 @@ function HomeScreen({ profile, blend, styleBlend, onNavigate, onSignOut, onOpenP
       )
     ) : null,
 
-    blend ? e("div", { className:"card", style:{ marginBottom:16 } },
-      e("div", { className:"eyebrow" }, "Your style quiz"),
-      e("div", { style:{ display:"flex", alignItems:"baseline", justifyContent:"space-between", marginBottom:12 } },
-        e("span", { className:"display", style:{ fontSize:22, fontWeight:700 } }, topBlendLabel(blend, KIBBE_TYPES)),
-        e("button", { className:"btn-text", onClick:()=>onNavigate("quiz") }, "Retake")
+    nextStep ? e("button", { className:"card", style:{ marginBottom:16, width:"100%", textAlign:"left", display:"block", borderColor:"var(--accent)" }, onClick:()=>onNavigate(nextStep.screen) },
+      e("div", { className:"eyebrow" }, "Next step"),
+      e("div", { style:{ display:"flex", alignItems:"center", justifyContent:"space-between", gap:10 } },
+        e("span", { className:"display", style:{ fontSize:19, fontWeight:700 } }, nextStep.title),
+        e("span", { style:{ color:"var(--accent)", flexShrink:0 } }, "→")
       ),
-      e(BlendBar, { blend, ids:KIBBE_TYPES })
-    ) : e("button", { className:"card", style:{ marginBottom:16, width:"100%", textAlign:"left", display:"block" }, onClick:()=>onNavigate("quiz") },
+      e("p", { className:"screen-lede", style:{ marginTop:6, fontSize:13.5, marginBottom:0 } }, nextStep.desc)
+    ) : e("button", { className:"card", style:{ marginBottom:16, width:"100%", textAlign:"left", display:"block", borderColor:"var(--accent)" }, onClick:()=>onNavigate("quiz") },
       e("div", { className:"eyebrow" }, "Get started"),
       e("div", { style:{ display:"flex", alignItems:"center", justifyContent:"space-between" } },
         e("span", { className:"display", style:{ fontSize:19, fontWeight:700 } }, "Take the style quiz"),
         e("span", { style:{ color:"var(--accent)" } }, Icon("kibbe"))
       ),
-      e("p", { className:"screen-lede", style:{ marginTop:6, fontSize:13.5 } }, "A couple minutes on your shape and your style language.")
+      e("p", { className:"screen-lede", style:{ marginTop:6, fontSize:13.5, marginBottom:0 } }, "About two minutes on your shape and how you like to dress.")
     ),
 
-    e("div", { className:"eyebrow", style:{ marginTop:26, marginBottom:10 } }, "Jump in"),
-    [
-      profile
-        ? { id:"profile", title:"Your profile", desc:"See your posts, and set your picture and bio.", icon:"user" }
-        : { id:"signin", title:"Create a free account", desc:"Unlock Community, messages and a closet that syncs across devices.", icon:"user" },
-      { id:"color", title:"Color palette", desc:"Find your best colors from a quick quiz, with an optional photo check.", icon:"palette" },
-      { id:"closet", title:"Closet", desc:"Log what you own and see what fits your style.", icon:"closet" },
-      { id:"checker", title:"Checker", desc:"Considering something new? Check it against your style.", icon:"check" },
-      { id:"community", title:"Community", desc:"Browse and post with people who share your style.", icon:"community" },
-    ].map(x => e("button", {
-      key:x.id, className:"row-list-item", style:{ width:"100%", textAlign:"left", borderTop:"1px solid var(--line-soft)" },
-      onClick: x.id === "profile" ? () => onOpenProfile(profile.visitorId) : x.id === "signin" ? onSignIn : () => onNavigate(x.id)
-    },
-      e("span", { style:{ color:"var(--accent)", flexShrink:0, width:22, height:22 } }, Icon(x.icon)),
-      e("span", null,
-        e("div", { style:{ fontWeight:600, fontSize:14.5, marginBottom:2 } }, x.title),
-        e("div", { style:{ fontSize:12.5, color:"var(--ink-soft)" } }, x.desc)
-      )
-    )),
+    e("div", { className:"eyebrow", style:{ marginTop:8, marginBottom:10 } }, "Jump in"),
+    e("div", { className:"home-grid" },
+      [
+        { id:"color", title:"Colors", desc: homeSeason ? homeSeason.name : "Your season", icon:"palette" },
+        { id:"closet", title:"Closet", desc: closetCount ? (closetCount + (closetCount === 1 ? " piece" : " pieces")) : "Log what you own", icon:"closet" },
+        { id:"checker", title:"Checker", desc:"Before you buy", icon:"check" },
+        { id:"community", title:"Community", desc:"People like you", icon:"community" },
+        profile
+          ? { id:"profile", title:"Profile", desc:"Posts, picture, bio", icon:"user" }
+          : { id:"signin", title:"Free account", desc:"Save & sync", icon:"user" },
+      ].map(x => e("button", {
+        key:x.id, className:"home-tile",
+        onClick: x.id === "profile" ? () => onOpenProfile(profile.visitorId) : x.id === "signin" ? onSignIn : () => onNavigate(x.id)
+      },
+        e("span", { style:{ color:"var(--accent)", width:22, height:22 } }, Icon(x.icon)),
+        e("span", { style:{ fontWeight:600, fontSize:14.5 } }, x.title),
+        e("span", { style:{ fontSize:12, color:"var(--ink-soft)" } }, x.desc)
+      ))
+    ),
 
     !profile ? e("div", { style:{ marginTop:30, paddingTop:18, borderTop:"1px solid var(--line-soft)", display:"flex", justifyContent:"space-between", alignItems:"center", gap:12 } },
       e("span", { className:"footnote" }, "Exploring without an account"),
@@ -3894,29 +3951,35 @@ function StyleQuizScreen({ kibbeResult, styleLanguageResult, onSaveKibbe, onSave
   if(stage === "intro"){
     return e("div", null,
       e("div", { className:"eyebrow" }, "Style Quiz"),
-      e("h1", { className:"screen-title" }, "Two quick parts"),
-      e("p", { className:"screen-lede", style:{ marginBottom:8 } },
-        "First, some questions about your build and proportions — bone, flesh, and scale, plus your natural yin/yang lean — to place you into one of 13 style archetypes that suggest which silhouettes tend to work for you. Then a short round on the actual words that describe how you like to dress."),
+      e("h1", { className:"screen-title" }, "Find your type"),
       e("p", { className:"screen-lede", style:{ marginBottom:18 } },
-        "This is about structure and line, not gender — the quiz works the same for everyone. If a question doesn't feel clear-cut, use \"Not sure — skip this one\" rather than guessing; a skipped question won't tilt your result in the wrong direction."
-        + " After the first part you can optionally upload a photo for a refined read — analyzed right on your device, never uploaded anywhere."),
-      e("div", { className:"card", style:{ marginBottom:24 } },
-        e("div", { className:"eyebrow", style:{ marginBottom:10 } }, "Quick primer — four words this quiz uses a lot"),
-        e("div", { className:"primer-row" },
-          e("span", { className:"primer-swatch", style:{ clipPath:"polygon(50% 0%, 100% 100%, 0% 100%)" } }),
-          e("div", { className:"primer-text" }, e("b", null, "Sharp / angular"), e("p", null, "Clean corners, like a triangle — think a strong jawline or a defined collarbone."))
-        ),
-        e("div", { className:"primer-row" },
-          e("span", { className:"primer-swatch", style:{ borderRadius:"50%" } }),
-          e("div", { className:"primer-text" }, e("b", null, "Soft / curved"), e("p", null, "Rounded, with no corners — think a circle."))
-        ),
-        e("div", { className:"primer-row" },
-          e("span", { className:"primer-swatch", style:{ height:8, borderRadius:2, marginTop:10 } }),
-          e("div", { className:"primer-text" }, e("b", null, "Broad / blunt"), e("p", null, "Straight-edged and solid — neither sharp nor curved."))
-        ),
-        e("div", { className:"primer-row" },
-          e("span", { className:"primer-swatch", style:{ borderRadius:"6px 14px 6px 14px" } }),
-          e("div", { className:"primer-text" }, e("b", null, "Balanced"), e("p", null, "A mix of the above — nothing about it reads as extreme."))
+        "About two minutes: a few questions on your build, then a few on how you like to dress. Not sure on one? Skip it — a skip never tilts the result."),
+      e("details", { style:{ marginBottom:22 } },
+        e("summary", { className:"btn-text", style:{ padding:0, cursor:"pointer", listStyle:"none" } }, "How it works ▾"),
+        e("div", { style:{ marginTop:12 } },
+          e("p", { className:"screen-lede", style:{ marginBottom:8, fontSize:14 } },
+            "Questions about bone, flesh and scale, plus your natural yin/yang lean, place you in one of 13 style archetypes — the silhouettes that tend to work for you. Then a short round on the words that describe how you dress. It's about structure and line, not gender, so it works the same for everyone."),
+          e("p", { className:"screen-lede", style:{ marginBottom:14, fontSize:14 } },
+            "After the first part you can add a photo for a sharper read. It's analyzed on your phone and never uploaded."),
+          e("div", { className:"card", style:{ marginBottom:0 } },
+            e("div", { className:"eyebrow", style:{ marginBottom:10 } }, "Four words you'll see a lot"),
+            e("div", { className:"primer-row" },
+              e("span", { className:"primer-swatch", style:{ clipPath:"polygon(50% 0%, 100% 100%, 0% 100%)" } }),
+              e("div", { className:"primer-text" }, e("b", null, "Sharp / angular"), e("p", null, "Clean corners, like a triangle — a strong jawline, a defined collarbone."))
+            ),
+            e("div", { className:"primer-row" },
+              e("span", { className:"primer-swatch", style:{ borderRadius:"50%" } }),
+              e("div", { className:"primer-text" }, e("b", null, "Soft / curved"), e("p", null, "Rounded, no corners — think a circle."))
+            ),
+            e("div", { className:"primer-row" },
+              e("span", { className:"primer-swatch", style:{ height:8, borderRadius:2, marginTop:10 } }),
+              e("div", { className:"primer-text" }, e("b", null, "Broad / blunt"), e("p", null, "Straight-edged and solid — neither sharp nor curved."))
+            ),
+            e("div", { className:"primer-row" },
+              e("span", { className:"primer-swatch", style:{ borderRadius:"6px 14px 6px 14px" } }),
+              e("div", { className:"primer-text" }, e("b", null, "Balanced"), e("p", null, "A mix — nothing reads as extreme."))
+            )
+          )
         )
       ),
       e("button", { className:"btn btn-accent btn-block", onClick:()=>setStage("quiz") }, "Start the quiz"),
@@ -3928,17 +3991,18 @@ function StyleQuizScreen({ kibbeResult, styleLanguageResult, onSaveKibbe, onSave
     const q = KIBBE_QUIZ_QUESTIONS[qIndex];
     const answeredIdx = q.kind === "mod" ? modAnswers[q.id] : bodyAnswers[q.id];
     return e("div", null,
-      e("div", { className:"progress-track" }, e("div", { className:"progress-fill", style:{ width:((qIndex)/KIBBE_QUIZ_QUESTIONS.length*100)+"%" } })),
-      e("div", { className:"kicker-num", style:{ marginBottom:6 } }, "Question " + (qIndex+1) + " of " + KIBBE_QUIZ_QUESTIONS.length),
+      e("div", { className:"progress-track" }, e("div", { className:"progress-fill", style:{ width:((qIndex+1)/KIBBE_QUIZ_QUESTIONS.length*100)+"%" } })),
+      e("div", { className:"kicker-num", style:{ marginBottom:6 } }, (qIndex+1) + " of " + KIBBE_QUIZ_QUESTIONS.length),
       e("div", { className:"eyebrow" }, q.hint),
       e("h2", { className:"screen-title", style:{ fontSize:23, marginBottom:6 } }, q.prompt),
       q.help ? e("p", { className:"field-hint", style:{ marginBottom:16 } }, q.help) : null,
-      q.options.map((opt, idx) => e("button", {
+      q.options.map((opt, idx) => isSkipOption(opt) ? null : e("button", {
         key:idx,
         className:"option-btn",
         "aria-pressed": answeredIdx === idx ? "true" : "false",
         onClick: () => choose(q, idx)
       }, opt.label)),
+      q.options.map((opt, idx) => isSkipOption(opt) ? e("button", { key:"skip"+idx, type:"button", className:"skip-link", onClick: () => choose(q, idx) }, "Not sure — skip this one") : null),
       qIndex > 0 ? e("button", { className:"btn-text", onClick:()=>setQIndex(qIndex-1) }, "← Back") : null
     );
   }
@@ -3968,9 +4032,9 @@ function StyleQuizScreen({ kibbeResult, styleLanguageResult, onSaveKibbe, onSave
   if(stage === "style-intro"){
     return e("div", null,
       e("div", { className:"eyebrow" }, "Style language"),
-      e("h1", { className:"screen-title" }, "Twelve quick questions"),
+      e("h1", { className:"screen-title" }, "Now, how you like to dress"),
       e("p", { className:"screen-lede", style:{ marginBottom:18 } },
-        "This is about how you actually want to dress — silhouette, color, fabric, and mood. There's no fixed list of categories here: the result is whichever handful of words genuinely fit, out of a wide, open vocabulary. If a question doesn't feel clear-cut, use \"Not sure — skip this one\" rather than guessing."),
+        "Twelve quick ones on silhouette, color, fabric and mood. You'll get the handful of words that actually fit you — not a box."),
       e("div", { className:"field", style:{ marginBottom:20 } },
         e("label", null, "Shopping for — optional"),
         e("div", { style:{ display:"flex", gap:8, flexWrap:"wrap", marginTop:8 } },
@@ -3992,16 +4056,17 @@ function StyleQuizScreen({ kibbeResult, styleLanguageResult, onSaveKibbe, onSave
   if(stage === "style-quiz"){
     const q = STYLE_LANGUAGE_QUESTIONS[styleQIndex];
     return e("div", null,
-      e("div", { className:"progress-track" }, e("div", { className:"progress-fill", style:{ width:((styleQIndex)/STYLE_LANGUAGE_QUESTIONS.length*100)+"%" } })),
-      e("div", { className:"kicker-num", style:{ marginBottom:6 } }, "Question " + (styleQIndex+1) + " of " + STYLE_LANGUAGE_QUESTIONS.length),
+      e("div", { className:"progress-track" }, e("div", { className:"progress-fill", style:{ width:((styleQIndex+1)/STYLE_LANGUAGE_QUESTIONS.length*100)+"%" } })),
+      e("div", { className:"kicker-num", style:{ marginBottom:6 } }, (styleQIndex+1) + " of " + STYLE_LANGUAGE_QUESTIONS.length),
       e("div", { className:"eyebrow" }, q.hint),
       e("h2", { className:"screen-title", style:{ fontSize:23, marginBottom:6 } }, q.prompt),
-      q.options.map((opt, idx) => e("button", {
+      q.options.map((opt, idx) => isSkipOption(opt) ? null : e("button", {
         key:idx,
         className:"option-btn",
         "aria-pressed": styleAnswers[q.id] === idx ? "true" : "false",
         onClick: () => chooseStyle(q.id, idx)
       }, opt.label)),
+      q.options.map((opt, idx) => isSkipOption(opt) ? e("button", { key:"skip"+idx, type:"button", className:"skip-link", onClick: () => chooseStyle(q.id, idx) }, "Not sure — skip this one") : null),
       styleQIndex > 0 ? e("button", { className:"btn-text", onClick:()=>setStyleQIndex(styleQIndex-1) }, "← Back") : null
     );
   }
@@ -4023,25 +4088,27 @@ function StyleQuizScreen({ kibbeResult, styleLanguageResult, onSaveKibbe, onSave
   }
 
   return e("div", null,
-    e("div", { className:"eyebrow" }, "Your style quiz"),
+    e("div", { className:"result-hero", style:{ "--hero": hasKibbe ? kibbeType.color : "var(--accent)" } },
+      e("div", { className:"eyebrow" }, hasKibbe ? "You're a" : "Your style words"),
+      e("h1", null, hasKibbe ? kibbeType.name : words.slice(0, 3).map(w => w.name).join(" · ")),
+      e("p", null, hasKibbe ? kibbeType.tag : "The words that fit how you dress."),
+      (hasKibbe && hasStyle) ? e("div", { className:"result-words" }, words.slice(0, 4).map(w => e("span", { key:w.id }, w.name))) : null,
+      e("div", { className:"hero-actions" },
+        canShare() ? e("button", { className:"btn btn-sm", onClick: () => shareText("My Style-LORE result",
+          (hasKibbe ? ("I'm a " + kibbeType.name + " on Style-LORE") : "I took the Style-LORE style quiz") +
+          (styleQuizBlend ? (" — my style language is " + topWords(styleQuizBlend, STYLE_WORDS, 3).map(w => w.name || w.id).join(", ")) : "") +
+          ". Find yours:") }, "Share my result") : null
+      )
+    ),
+
     onSignIn ? e("div", { className:"card", style:{ marginBottom:16, padding:14, borderColor:"var(--accent)" } },
       e("div", { style:{ fontSize:14.5, fontWeight:600, marginBottom:4 } }, "Keep this result"),
       e("p", { style:{ fontSize:13.5, color:"var(--ink-soft)", marginBottom:10 } }, "It's saved on this phone for now. A free account keeps it across devices and unlocks Community, messages and closet sync."),
       e("button", { className:"btn btn-accent btn-sm", onClick:onSignIn }, "Create a free account")
     ) : null,
-    e("div", { style:{ display:"flex", alignItems:"baseline", justifyContent:"space-between", gap:12, marginBottom:20 } },
-      e("h1", { className:"screen-title", style:{ marginBottom:0 } }, "Your results"),
-      canShare() ? e("button", { className:"btn-text", onClick: () => shareText("My Style-LORE result",
-        (hasKibbe ? ("I'm a " + kibbeType.name + " on Style-LORE") : "I took the Style-LORE style quiz") +
-        (styleQuizBlend ? (" — my style language is " + topWords(styleQuizBlend, STYLE_WORDS, 3).map(w => w.name || w.id).join(", ")) : "") +
-        ". Find yours:") }, "Share") : null
-    ),
-
     e("div", { style:{ marginBottom:28 } },
       e("div", { className:"eyebrow", style:{ marginBottom:4 } }, "Body & shape type"),
       hasKibbe ? e(React.Fragment, null,
-        e("h2", { className:"screen-title", style:{ fontSize:22, marginBottom:4 } }, kibbeType.name),
-        e("p", { className:"screen-lede", style:{ marginBottom:14 } }, kibbeType.tag),
         e("div", { className:"card" },
           e("p", { style:{ fontSize:14, lineHeight:1.6, marginBottom:14 } }, kibbeType.desc),
           e(BlendBar, { blend: kibbeQuizResult.kibbeBlend, ids: KIBBE_TYPES }),
@@ -4241,10 +4308,8 @@ function ColorScreen({ colorResult, onSaveColor }){
     return e("div", null,
       e("div", { className:"eyebrow" }, "Color palette"),
       e("h1", { className:"screen-title" }, "Find your best colors"),
-      e("p", { className:"screen-lede", style:{ marginBottom:8 } },
-        "A separate, short quiz about your natural coloring — skin, hair, and eyes — not your body/Kibbe type. It places you in one of 12 color \"seasons\" and gives you a palette to shop from."),
       e("p", { className:"screen-lede", style:{ marginBottom:24 } },
-        "Six easy questions, then an optional photo step to double-check the read. The photo never leaves this device — colors are sampled right here in the browser."),
+        "Six questions about your skin, hair and eyes give you your color season and a palette to shop from. Add a photo after, if you like — it stays on your phone."),
       e("button", { className:"btn btn-accent btn-block", onClick:()=>setStage("quiz") }, "Start the quiz"),
       finalResult ? e("button", { className:"btn btn-ghost btn-block", style:{ marginTop:10 }, onClick:()=>setStage("result") }, "See my last result") : null
     );
@@ -4253,15 +4318,16 @@ function ColorScreen({ colorResult, onSaveColor }){
   if(stage === "quiz"){
     const q = COLOR_QUESTIONS[qIndex];
     return e("div", null,
-      e("div", { className:"progress-track" }, e("div", { className:"progress-fill", style:{ width:((qIndex)/COLOR_QUESTIONS.length*100)+"%" } })),
-      e("div", { className:"kicker-num", style:{ marginBottom:6 } }, "Question " + (qIndex+1) + " of " + COLOR_QUESTIONS.length),
+      e("div", { className:"progress-track" }, e("div", { className:"progress-fill", style:{ width:((qIndex+1)/COLOR_QUESTIONS.length*100)+"%" } })),
+      e("div", { className:"kicker-num", style:{ marginBottom:6 } }, (qIndex+1) + " of " + COLOR_QUESTIONS.length),
       e("div", { className:"eyebrow" }, q.hint),
       e("h2", { className:"screen-title", style:{ fontSize:23, marginBottom:6 } }, q.prompt),
       e("p", { className:"field-hint", style:{ marginBottom:16 } }, q.help),
-      q.options.map((opt, idx) => e("button", {
+      q.options.map((opt, idx) => isSkipOption(opt) ? null : e("button", {
         key:idx, className:"option-btn", "aria-pressed": answers[q.id] === idx ? "true" : "false",
         onClick: () => choose(q.id, idx)
       }, opt.label)),
+      q.options.map((opt, idx) => isSkipOption(opt) ? e("button", { key:"skip"+idx, type:"button", className:"skip-link", onClick: () => choose(q.id, idx) }, "Not sure — skip this one") : null),
       qIndex > 0 ? e("button", { className:"btn-text", onClick:()=>setQIndex(qIndex-1) }, "← Back") : null
     );
   }
@@ -4283,15 +4349,23 @@ function ColorScreen({ colorResult, onSaveColor }){
       e("button", { className:"btn btn-accent btn-block", style:{ marginTop:16 }, onClick:()=>setStage("quiz") }, "Start the quiz"));
   }
   const season = COLOR_SEASON_BY_ID[finalResult.seasonId];
+  const heroBg = "linear-gradient(135deg, " + season.swatches.slice(0, 4).join(", ") + ")";
   return e("div", null,
-    e("div", { className:"eyebrow" }, "Your color season"),
-    e("h1", { className:"screen-title", style:{ marginBottom:6 } }, season.name),
-    e("p", { className:"screen-lede", style:{ marginBottom:16 } }, season.blurb),
-    e("div", { className:"card", style:{ marginBottom:16 } },
-      e("div", { className:"eyebrow", style:{ marginBottom:10 } }, "Your best colors"),
-      e("div", { className:"color-chip-grid" },
-        season.swatches.map((hex,i) => e("span", { key:i, className:"color-chip", style:{ background:hex }, title:hex }))
+    e("div", { className:"result-hero", style:{ "--hero": heroBg, color:"var(--ink)", textShadow:"0 1px 0 rgba(255,255,255,.35)" } },
+      e("div", { className:"eyebrow", style:{ color:"var(--ink-soft)" } }, "Your color season"),
+      e("h1", null, season.name),
+      e("p", null, season.blurb),
+      e("div", { className:"hero-actions" },
+        canShare() ? e("button", { className:"btn btn-sm", style:{ color:"var(--ink)", borderColor:"rgba(0,0,0,.25)", background:"rgba(255,255,255,.45)" }, onClick: () => shareText("My color season", "I'm a " + season.name + " on Style-LORE. Find your best colors:") }, "Share") : null
       )
+    ),
+    e("div", { className:"eyebrow", style:{ marginBottom:10 } }, "Your best colors — hold one up to a garment"),
+    // Big enough to compare against fabric in a store; tapping a swatch
+    // shows its hex for anyone shopping online.
+    e("div", { className:"color-swatch-grid", style:{ marginBottom:16 } },
+      season.swatches.map((hex,i) => e("button", { key:i, type:"button", className:"color-swatch", style:{ background:hex }, "aria-label":"Color " + hex,
+        onClick: ev => { const el = ev.currentTarget; el.classList.toggle("show-hex"); } },
+        e("span", null, hex.toUpperCase())))
     ),
     e("p", { className:"footnote", style:{ marginBottom:20 } },
       finalResult.source === "quiz+photo"
@@ -6861,7 +6935,7 @@ function App(){
       viewerKibbeBlend: blend, viewerStyleWordBlend: styleBlend, viewerKibbeTypeName: kibbeTypeName, viewerTopStyleWords: topStyleWords
     });
   }
-  else if(screen === "home") body = e(HomeScreen, { profile, blend, styleBlend, onNavigate:goTo, onSignOut:signOut, onOpenProfile:openProfile, onAccountDeleted:handleAccountDeleted, onSignIn:leaveGuestForGate });
+  else if(screen === "home") body = e(HomeScreen, { profile, blend, styleBlend, kibbeResult, colorResult, closetCount: closet.length, onNavigate:goTo, onSignOut:signOut, onOpenProfile:openProfile, onAccountDeleted:handleAccountDeleted, onSignIn:leaveGuestForGate });
   else if(screen === "quiz") body = e(StyleQuizScreen, { kibbeResult, styleLanguageResult:styleBlend, onSaveKibbe:setKibbeResult, onSaveStyle:setStyleBlend, onSignIn: profile ? null : leaveGuestForGate });
   else if(screen === "color") body = e(ColorScreen, { colorResult, onSaveColor:setColorResult });
   else if(screen === "closet") body = e(ClosetScreen, { closet, setCloset, blend, styleWordBlend:styleBlend, kibbeTypeName, topStyleWords, profile, isPremium, closetFreeLimit, onUpgrade:openPaywall, syncStatus:closetSyncStatus, onRetrySync:retryClosetSync, storageFull:closetStorageFull });
