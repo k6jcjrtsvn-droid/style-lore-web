@@ -2,7 +2,9 @@
 /**
  * Weekly "your type this week" email. Triggered by a cPanel cron job:
  *
- *   curl -s "https://style-lore.com/api/cron_weekly_digest.php?key=CRON_KEY"
+ *   /usr/local/bin/php /home/<cpanel-user>/public_html/api/cron_weekly_digest.php
+ *
+ * (CLI runs need no key; an HTTP call needs ?key=CRON_KEY.)
  *
  * Protected by CRON_KEY in config.php (a random string; not an admin
  * key). Sends one email per verified account that has a Kibbe type on
@@ -16,10 +18,17 @@
  */
 require_once __DIR__ . '/../includes/helpers.php';
 
-$key = (string)($_GET['key'] ?? '');
-if (!defined('CRON_KEY') || CRON_KEY === '' || !hash_equals(CRON_KEY, $key)) {
-    error_response('Not authorized.', 401);
+// Two ways in: cPanel's cron runs this file with the PHP CLI (no key
+// needed — nothing outside the server can do that), or an HTTP call with
+// ?key=CRON_KEY for manual runs.
+$isCli = PHP_SAPI === 'cli';
+if (!$isCli) {
+    $key = (string)($_GET['key'] ?? '');
+    if (!defined('CRON_KEY') || CRON_KEY === '' || !hash_equals(CRON_KEY, $key)) {
+        error_response('Not authorized.', 401);
+    }
 }
+if ($isCli) { $_GET['limit'] = $argv[1] ?? '200'; if (in_array('--dry', $argv, true)) $_GET['dry'] = '1'; }
 if (!defined('RESEND_API_KEY') || RESEND_API_KEY === '') {
     error_response('Mail is not configured.', 503);
 }
