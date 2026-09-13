@@ -40,7 +40,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $visitorId = (string)($body['visitorId'] ?? '');
     require_owner($pdo, $visitorId, (string)($body['authToken'] ?? ''));
 
-    $visitorName = mb_substr(trim((string)($body['visitorName'] ?? '')), 0, 60);
+    // Name comes from the profiles table, never from the client.
+    $visitorName = profile_identity($pdo, $visitorId)['name'];
 
     // Free accounts are capped at CLOSET_FREE_LIMIT items; Style-LORE
     // Premium (has_premium()) gets the full 300-item sync ceiling. This is
@@ -63,7 +64,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         foreach ($items as $item) {
             if (!is_array($item)) continue;
             $description = mb_substr(trim((string)($item['description'] ?? '')), 0, 200);
+            // Photos are inline data: URLs produced by the app's canvas
+            // resize. Only accept a real base64 image, capped at 2MB, since
+            // this string is rendered as an <img src> in other people's
+            // closet feeds.
             $photo = isset($item['photo']) && is_string($item['photo']) ? $item['photo'] : null;
+            if ($photo !== null && (strlen($photo) > 2 * 1024 * 1024
+                || !preg_match('#^data:image/(jpeg|png|webp|gif);base64,[A-Za-z0-9+/]+=*$#', $photo))) {
+                $photo = null;
+            }
             $createdAt = isset($item['createdAt']) ? (int)$item['createdAt'] : current_time_ms();
             $visibility = ($item['visibility'] ?? '') === 'public' ? 'public' : 'hidden';
             $ins->execute([uuidv4(), $visitorId, $description, $photo, $createdAt, $visibility, $visitorName]);
