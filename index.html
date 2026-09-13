@@ -670,7 +670,10 @@
   .browse-row::-webkit-scrollbar{ display:none; }
   .browse-row .tab-chip{ flex:0 0 auto; white-space:nowrap; }
   .home-grid{ display:grid; grid-template-columns:repeat(2,1fr); gap:10px; }
-  .toast{ position:fixed; left:16px; right:16px; bottom:calc(84px + env(safe-area-inset-bottom)); z-index:60; background:var(--ink); color:#fff; padding:13px 16px; border-radius:var(--radius-m); font-size:13.5px; line-height:1.45; box-shadow:0 10px 30px -10px rgba(0,0,0,.4); }
+  .premium-card{ border-color:var(--accent); background:linear-gradient(135deg, rgba(255,255,255,.55), rgba(255,255,255,0)); }
+.premium-list{ margin:10px 0 12px; padding-left:18px; font-size:13.5px; line-height:1.45; color:var(--ink); }
+.premium-list li{ margin:3px 0; }
+.toast{ position:fixed; left:16px; right:16px; bottom:calc(84px + env(safe-area-inset-bottom)); z-index:60; background:var(--ink); color:#fff; padding:13px 16px; border-radius:var(--radius-m); font-size:13.5px; line-height:1.45; box-shadow:0 10px 30px -10px rgba(0,0,0,.4); }
   .outfit-row{ display:flex; gap:10px; overflow-x:auto; padding-bottom:4px; scrollbar-width:none; }
   .outfit-row::-webkit-scrollbar{ display:none; }
   .outfit-piece{ flex:0 0 108px; }
@@ -3036,7 +3039,7 @@ const Api = {
     return r.json();
   },
   async getSubscriptionStatus(accountId){
-    const r = await fetch("/api/subscription/status?accountId=" + encodeURIComponent(accountId));
+    const r = await fetch("/api/subscription/status?accountId=" + encodeURIComponent(accountId), { cache:"no-store" });
     if(!r.ok) return { isPremium:false, closetFreeLimit:20 };
     return r.json();
   },
@@ -4051,7 +4054,7 @@ function BottomNav({ screen, onNavigate }){
    HOME
 ===================================================================== */
 
-function HomeScreen({ profile, blend, styleBlend, kibbeResult, colorResult, closetCount, closet, digestOptOut, onToggleDigest, isPremium, billing, onManageBilling, onNavigate, onSignOut, onOpenProfile, onAccountDeleted, onSignIn }){
+function HomeScreen({ profile, blend, styleBlend, kibbeResult, colorResult, closetCount, closet, digestOptOut, onToggleDigest, isPremium, billing, onManageBilling, onUpgrade, onNavigate, onSignOut, onOpenProfile, onAccountDeleted, onSignIn }){
   const homeType = (kibbeResult && kibbeResult.kibbeTypeId && KIBBE_BY_ID[kibbeResult.kibbeTypeId]) || null;
   const homeWords = styleBlend ? topWords(styleBlend, STYLE_WORDS, 4) : [];
   const homeSeason = (colorResult && colorResult.seasonId && COLOR_SEASON_BY_ID[colorResult.seasonId]) || null;
@@ -4126,6 +4129,25 @@ function HomeScreen({ profile, blend, styleBlend, kibbeResult, colorResult, clos
 
     blend ? e(OutfitCard, { closet: closet || [], profile: { kibbeBlend: blend, styleWordBlend: styleBlend, kibbeTypeName: homeType ? homeType.name : null, topStyleWords: homeWords.map(w => w.id) }, compact:true, onNavigate }) : null,
 
+    !isPremium ? e("div", { className:"card premium-card", style:{ marginBottom:16 } },
+      e("div", { style:{ display:"flex", alignItems:"center", justifyContent:"space-between", gap:10, flexWrap:"wrap" } },
+        e("div", null,
+          e("div", { className:"eyebrow" }, "Style-LORE Premium"),
+          e("div", { className:"display", style:{ fontSize:19, fontWeight:700 } }, "A stylist in your pocket")
+        ),
+        e("span", { style:{ fontSize:13, color:"var(--ink-soft)", whiteSpace:"nowrap" } }, "from $3.33 / month")
+      ),
+      e("ul", { className:"premium-list" },
+        e("li", null, "A stylist's read on any photo — cut, color and fit, in plain language"),
+        e("li", null, "Unlimited closet, a gap list that says what to buy next, and your capsule"),
+        e("li", null, "Every check and read saved, so you can scroll back before you shop")
+      ),
+      e("div", { style:{ display:"flex", gap:10, alignItems:"center", flexWrap:"wrap" } },
+        e("button", { className:"btn btn-accent", onClick:()=>onUpgrade("home") }, profile ? "Upgrade to Premium" : "See Premium"),
+        e("span", { className:"footnote", style:{ margin:0 } }, "$4.99 / month or $39.99 / year · cancel anytime")
+      )
+    ) : null,
+
     e("div", { className:"eyebrow", style:{ marginTop:8, marginBottom:10 } }, "Jump in"),
     e("div", { className:"home-grid" },
       [
@@ -4165,7 +4187,10 @@ function HomeScreen({ profile, blend, styleBlend, kibbeResult, colorResult, clos
         billing === "stripe" && !IS_NATIVE_APP
           ? e("button", { className:"btn-text", style:{ padding:0, fontSize:12.5 }, onClick:onManageBilling }, "Manage subscription")
           : e("span", null, billing === "stripe" ? "manage it at style-lore.com" : "manage it in your phone's subscription settings")
-      ) : null,
+      ) : e("div", { style:{ marginTop:10, fontSize:12.5, color:"var(--ink-soft)" } },
+        "Free account · ",
+        e("button", { className:"btn-text", style:{ padding:0, fontSize:12.5 }, onClick:()=>onUpgrade("home") }, "Upgrade to Premium")
+      ),
       e("label", { className:"checkline", style:{ marginTop:12, fontSize:12.5 } },
         e("input", { type:"checkbox", checked: !digestOptOut, onChange: onToggleDigest }),
         e("span", null, "Weekly email — one tip for your type, every week")
@@ -4967,8 +4992,20 @@ function ClosetFeedRow({ item, onOpenProfile }){
   );
 }
 
-function PaywallSheet({ reason, onClose, onPurchased, profile, webCheckout, onSignIn }){
+function PaywallSheet({ reason, onClose, onPurchased, profile, webCheckout: webCheckoutProp, onSignIn }){
   const [webBusy, setWebBusy] = useState(null);
+  // The website's checkout flag comes from /api/subscription/status. Re-ask
+  // when the sheet opens so a status fetched before Stripe was configured
+  // (or a cached response) can never hide the plans from a paying customer.
+  const [webCheckout, setWebCheckout] = useState(!!webCheckoutProp);
+  useEffect(() => {
+    if(webCheckoutProp){ setWebCheckout(true); return; }
+    const native = window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform();
+    if(native) return;
+    let cancelled = false;
+    Api.getSubscriptionStatus(profile ? profile.visitorId : "guest").then(s => { if(!cancelled) setWebCheckout(!!(s && s.webCheckout)); }).catch(()=>{});
+    return () => { cancelled = true; };
+  }, [webCheckoutProp, profile && profile.visitorId]);
   async function webBuy(plan){
     if(!profile){ if(onSignIn) onSignIn(); return; }
     setWebBusy(plan);
@@ -5034,6 +5071,8 @@ function PaywallSheet({ reason, onClose, onPurchased, profile, webCheckout, onSi
     ? "Your capsule is ready: the pieces you own that make the most outfits together. Premium shows you which ones, and the combinations."
     : reason === "checker"
       ? "A stylist's read on your photo is a Premium feature. Here's what comes with it."
+      : reason === "home"
+      ? "Everything Style-LORE can do for your wardrobe, for less than a coffee a month."
       : "Know before you buy, and stop guessing in the fitting room.";
 
   let plansContent;
@@ -5075,7 +5114,7 @@ function PaywallSheet({ reason, onClose, onPurchased, profile, webCheckout, onSi
         e("li", null, e("strong", null, "Your whole wardrobe"), " — a closet of up to 300 pieces, the gap read that tells you what to buy next, and a capsule builder that finds the pieces that make the most outfits."),
         e("li", null, e("strong", null, "A shopping notebook"), " — every check and stylist read saved, so you never wonder what the verdict was."),
         e("li", null, e("strong", null, "Still private"), " — your closet and quiz never leave your phone; only the photos you send to the AI Stylist do."),
-        e("li", null, "Cancel anytime from your phone's subscription settings.")
+        e("li", null, isNative ? "Cancel anytime from your phone's subscription settings." : "Cancel anytime — one click from your account, no calls, no emails.")
       ),
       plansContent,
       error ? e(Banner, { kind:"error" }, error) : null
@@ -6836,7 +6875,9 @@ function App(){
   function openPaywall(reason){
     // Purchases are tied to an account (RevenueCat is configured with the
     // account id), so an explorer is asked to sign in first.
-    if(!profile){ leaveGuestForGate(); return; }
+    // The Home "See Premium" card is the exception: explorers may read the
+    // plans; the sheet itself asks them to sign in when they tap a plan.
+    if(!profile && reason !== "home"){ leaveGuestForGate(); return; }
     setPaywallReason(reason || true);
   }
 
@@ -7359,7 +7400,7 @@ function App(){
       viewerKibbeBlend: blend, viewerStyleWordBlend: styleBlend, viewerKibbeTypeName: kibbeTypeName, viewerTopStyleWords: topStyleWords
     });
   }
-  else if(screen === "home") body = e(HomeScreen, { profile, blend, styleBlend, kibbeResult, colorResult, closetCount: closet.length, closet, digestOptOut, onToggleDigest: toggleDigest, isPremium, billing, onManageBilling: openBillingPortal, onNavigate:goTo, onSignOut:signOut, onOpenProfile:openProfile, onAccountDeleted:handleAccountDeleted, onSignIn:leaveGuestForGate });
+  else if(screen === "home") body = e(HomeScreen, { profile, blend, styleBlend, kibbeResult, colorResult, closetCount: closet.length, closet, digestOptOut, onToggleDigest: toggleDigest, isPremium, billing, onManageBilling: openBillingPortal, onUpgrade:openPaywall, onNavigate:goTo, onSignOut:signOut, onOpenProfile:openProfile, onAccountDeleted:handleAccountDeleted, onSignIn:leaveGuestForGate });
   else if(screen === "quiz") body = e(StyleQuizScreen, { kibbeResult, styleLanguageResult:styleBlend, onSaveKibbe:setKibbeResult, onSaveStyle:setStyleBlend, onSignIn: profile ? null : leaveGuestForGate, colorResult });
   else if(screen === "color") body = e(ColorScreen, { colorResult, onSaveColor:setColorResult });
   else if(screen === "closet") body = e(ClosetScreen, { closet, setCloset, blend, styleWordBlend:styleBlend, kibbeTypeName, topStyleWords, profile, isPremium, closetFreeLimit, onUpgrade:openPaywall, syncStatus:closetSyncStatus, onRetrySync:retryClosetSync, storageFull:closetStorageFull });
