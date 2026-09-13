@@ -135,19 +135,102 @@ function require_owner(PDO $pdo, string $accountId, ?string $token): void {
 /**
  * The single place mail actually leaves the app.
  *
- * This exists because the previous code called @mail(...) directly, and that
- * "@" threw the failure reason away -- when sending broke, all anyone could
- * see was a bare "failed" count. So: record the reason, log it, and hand it
- * back via $GLOBALS['last_mail_error'] for the calling endpoint to report.
+ * Two transports, chosen at runtime:
  *
- * Deliberately a single attempt, no retries. An earlier version retried
- * twice on the theory that failures were transient; in practice the failure
- * mode on this host is mail() BLOCKING for tens of seconds rather than
- * returning false promptly, so retrying tripled a hang and pushed the whole
- * request past PHP's execution limit. A slow failure must fail once.
+ *   1. Resend (HTTP API) -- used whenever RESEND_API_KEY is defined and
+ *      non-empty in config.php. This is the intended path. A curl POST with
+ *      a hard 10-second timeout means a slow provider fails fast with a
+ *      readable error, and Resend's dashboard shows every send and its
+ *      delivery status.
+ *
+ *   2. PHP mail() -- the fallback when no key is configured, so nothing
+ *      breaks before the key is set. On this shared host mail() has been
+ *      observed to BLOCK for tens of seconds on handoff to Exim rather than
+ *      return, which is the whole reason the Resend path exists.
+ *
+ * Either way the failure reason is recorded in $GLOBALS['last_mail_error']
+ * and written to the error log, so the calling endpoint can report it. The
+ * original code called @mail(...) and the "@" threw the reason away, which
+ * made a broken send undiagnosable.
+ *
+ * Deliberately a single attempt, no retries: a blocking sender must fail
+ * once, not three times. (An earlier retry loop tripled a hang and pushed
+ * the whole request past PHP's execution limit.)
+ *
+ * $html may be null for a plain-text-only message.
  */
-function send_mail_tracked(string $to, string $subject, string $body, string $headers): bool {
+function send_mail_tracked(string $to, string $subject, ?string $html, string $text): bool {
     $GLOBALS['last_mail_error'] = null;
+
+    $useResend = defined('RESEND_API_KEY') && RESEND_API_KEY !== '' && function_exists('curl_init');
+    return $useResend
+        ? send_via_resend($to, $subject, $html, $text)
+        : send_via_php_mail($to, $subject, $html, $text);
+}
+
+function send_via_resend(string $to, string $subject, ?string $html, string $text): bool {
+    $payload = [
+        'from'    => 'Style-LORE <' . MAIL_FROM . '>',
+        'to'      => [$to],
+        'subject' => $subject,
+        'text'    => $text,
+    ];
+    if ($html !== null) $payload['html'] = $html;
+
+    $ch = curl_init('https://api.resend.com/emails');
+    curl_setopt_array($ch, [
+        CURLOPT_POST           => true,
+        CURLOPT_POSTFIELDS     => json_encode($payload, JSON_UNESCAPED_UNICODE),
+        CURLOPT_HTTPHEADER     => [
+            'Authorization: Bearer ' . RESEND_API_KEY,
+            'Content-Type: application/json',
+        ],
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_CONNECTTIMEOUT => 5,
+        CURLOPT_TIMEOUT        => 10,
+    ]);
+    $response = curl_exec($ch);
+    $status   = (int)curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
+    $curlErr  = curl_error($ch);
+    curl_close($ch);
+
+    if ($response !== false && $status >= 200 && $status < 300) {
+        return true;
+    }
+
+    if ($response === false) {
+        $reason = 'Resend: transport error - ' . ($curlErr !== '' ? $curlErr : 'no response');
+    } else {
+        $decoded = json_decode((string)$response, true);
+        $apiMsg  = is_array($decoded) && isset($decoded['message']) ? (string)$decoded['message'] : trim((string)$response);
+        $reason  = 'Resend: HTTP ' . $status . ' - ' . ($apiMsg !== '' ? $apiMsg : 'no error body');
+    }
+    error_log('[style-lore mail] FAILED to=' . $to . ' subject=' . $subject . ' reason=' . $reason);
+    $GLOBALS['last_mail_error'] = $reason;
+    return false;
+}
+
+function send_via_php_mail(string $to, string $subject, ?string $html, string $text): bool {
+    if ($html === null) {
+        $headers = "From: Style-LORE <" . MAIL_FROM . ">\r\n" .
+            "Content-Type: text/plain; charset=utf-8\r\n";
+        $body = $text;
+    } else {
+        // multipart/alternative: clients that prefer or require plain text
+        // still get a good experience, and spam filters see a real text part
+        // alongside the HTML one.
+        $boundary = 'stylelore-' . bin2hex(random_bytes(12));
+        $headers = "From: Style-LORE <" . MAIL_FROM . ">\r\n" .
+            "MIME-Version: 1.0\r\n" .
+            "Content-Type: multipart/alternative; boundary=\"$boundary\"\r\n";
+        $body = "--$boundary\r\n" .
+            "Content-Type: text/plain; charset=utf-8\r\n\r\n" .
+            $text . "\r\n\r\n" .
+            "--$boundary\r\n" .
+            "Content-Type: text/html; charset=utf-8\r\n\r\n" .
+            $html . "\r\n\r\n" .
+            "--$boundary--";
+    }
 
     $before = error_get_last();
     $ok = @mail($to, $subject, $body, $headers, '-f' . MAIL_FROM);
@@ -163,32 +246,16 @@ function send_mail_tracked(string $to, string $subject, string $body, string $he
 }
 
 function send_app_email(string $to, string $subject, string $body): bool {
-    $headers = "From: Style-LORE <" . MAIL_FROM . ">\r\n" .
-        "Content-Type: text/plain; charset=utf-8\r\n";
-    return send_mail_tracked($to, $subject, $body, $headers);
+    return send_mail_tracked($to, $subject, null, $body);
 }
 
 /**
- * Sends a branded HTML email with a plain-text fallback (multipart/
- * alternative) -- mail clients that prefer or require plain text still get
- * a good experience, and spam filters see a real text part alongside the
- * HTML one. Same envelope-sender pattern as send_app_email() above.
+ * Sends a branded HTML email with a plain-text fallback. Both parts are
+ * passed through separately so the Resend path can hand them over as
+ * fields and the mail() path can assemble multipart/alternative.
  */
 function send_app_html_email(string $to, string $subject, string $html, string $textFallback): bool {
-    $boundary = 'stylelore-' . bin2hex(random_bytes(12));
-    $headers = "From: Style-LORE <" . MAIL_FROM . ">\r\n" .
-        "MIME-Version: 1.0\r\n" .
-        "Content-Type: multipart/alternative; boundary=\"$boundary\"\r\n";
-
-    $body = "--$boundary\r\n" .
-        "Content-Type: text/plain; charset=utf-8\r\n\r\n" .
-        $textFallback . "\r\n\r\n" .
-        "--$boundary\r\n" .
-        "Content-Type: text/html; charset=utf-8\r\n\r\n" .
-        $html . "\r\n\r\n" .
-        "--$boundary--";
-
-    return send_mail_tracked($to, $subject, $body, $headers);
+    return send_mail_tracked($to, $subject, $html, $textFallback);
 }
 
 /**

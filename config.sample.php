@@ -28,6 +28,15 @@ define('SITE_BASE_URL', 'https://style-lore.com');
 // when this address's domain matches the site's own domain.
 define('MAIL_FROM', 'no-reply@style-lore.com');
 
+// Resend (https://resend.com) API key for outbound email. When this is set,
+// every email the app sends goes through Resend's HTTP API instead of PHP's
+// mail(), which on this shared host has been observed to block for tens of
+// seconds on handoff. Create a sending-only key in the Resend dashboard and
+// paste it here. Leave empty to fall back to mail(). The sending domain
+// (style-lore.com) must be verified in Resend first -- see
+// claude/smtp-migration-plan.md in the project.
+define('RESEND_API_KEY', '');
+
 // A private key only you know, used to access the moderation endpoint
 // (api/admin_moderation.php) — list and unhide reported posts by visiting
 // e.g. https://style-lore.com/api/admin/moderation?key=<this value>.
