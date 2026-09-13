@@ -670,6 +670,7 @@
   .browse-row::-webkit-scrollbar{ display:none; }
   .browse-row .tab-chip{ flex:0 0 auto; white-space:nowrap; }
   .home-grid{ display:grid; grid-template-columns:repeat(2,1fr); gap:10px; }
+  .toast{ position:fixed; left:16px; right:16px; bottom:calc(84px + env(safe-area-inset-bottom)); z-index:60; background:var(--ink); color:#fff; padding:13px 16px; border-radius:var(--radius-m); font-size:13.5px; line-height:1.45; box-shadow:0 10px 30px -10px rgba(0,0,0,.4); }
   .outfit-row{ display:flex; gap:10px; overflow-x:auto; padding-bottom:4px; scrollbar-width:none; }
   .outfit-row::-webkit-scrollbar{ display:none; }
   .outfit-piece{ flex:0 0 108px; }
@@ -3019,6 +3020,16 @@ const Api = {
   },
 
   // ---- Style-LORE Premium (RevenueCat-backed subscription) -------------
+  async stripeCheckout(visitorId, authToken, plan){
+    const r = await fetch("/api/stripe_checkout.php", { method:"POST", headers:{ "Content-Type":"application/json" }, body: JSON.stringify({ visitorId, authToken, plan }) });
+    if(!r.ok) throw await apiError(r, "Couldn't start checkout.");
+    return r.json();
+  },
+  async stripePortal(visitorId, authToken){
+    const r = await fetch("/api/stripe_portal.php", { method:"POST", headers:{ "Content-Type":"application/json" }, body: JSON.stringify({ visitorId, authToken }) });
+    if(!r.ok) throw await apiError(r, "Couldn't open billing.");
+    return r.json();
+  },
   async setDigestPrefs(visitorId, authToken, optOut){
     const r = await fetch("/api/digest_prefs.php", { method:"POST", headers:{ "Content-Type":"application/json" }, body: JSON.stringify({ visitorId, authToken, optOut: optOut ? 1 : 0 }) });
     if(!r.ok) throw await apiError(r, "Couldn't save that setting.");
@@ -4040,7 +4051,7 @@ function BottomNav({ screen, onNavigate }){
    HOME
 ===================================================================== */
 
-function HomeScreen({ profile, blend, styleBlend, kibbeResult, colorResult, closetCount, closet, digestOptOut, onToggleDigest, onNavigate, onSignOut, onOpenProfile, onAccountDeleted, onSignIn }){
+function HomeScreen({ profile, blend, styleBlend, kibbeResult, colorResult, closetCount, closet, digestOptOut, onToggleDigest, isPremium, billing, onManageBilling, onNavigate, onSignOut, onOpenProfile, onAccountDeleted, onSignIn }){
   const homeType = (kibbeResult && kibbeResult.kibbeTypeId && KIBBE_BY_ID[kibbeResult.kibbeTypeId]) || null;
   const homeWords = styleBlend ? topWords(styleBlend, STYLE_WORDS, 4) : [];
   const homeSeason = (colorResult && colorResult.seasonId && COLOR_SEASON_BY_ID[colorResult.seasonId]) || null;
@@ -4148,6 +4159,12 @@ function HomeScreen({ profile, blend, styleBlend, kibbeResult, colorResult, clos
         e("span", { style:{ fontSize:12.5, color:"var(--ink-soft)" } }, "Sign out? Your quiz result and closet stay on this device."),
         e("button", { className:"btn-text", style:{ padding:0, fontSize:12.5, color:"var(--danger)" }, onClick:onSignOut }, "Confirm"),
         e("button", { className:"btn-text", style:{ padding:0, fontSize:12.5 }, onClick:()=>setConfirmingSignOut(false) }, "Cancel")
+      ) : null,
+      isPremium ? e("div", { style:{ marginTop:10, fontSize:12.5, color:"var(--ink-soft)" } },
+        "Style-LORE Premium · ",
+        billing === "stripe" && !IS_NATIVE_APP
+          ? e("button", { className:"btn-text", style:{ padding:0, fontSize:12.5 }, onClick:onManageBilling }, "Manage subscription")
+          : e("span", null, billing === "stripe" ? "manage it at style-lore.com" : "manage it in your phone's subscription settings")
       ) : null,
       e("label", { className:"checkline", style:{ marginTop:12, fontSize:12.5 } },
         e("input", { type:"checkbox", checked: !digestOptOut, onChange: onToggleDigest }),
@@ -4950,7 +4967,14 @@ function ClosetFeedRow({ item, onOpenProfile }){
   );
 }
 
-function PaywallSheet({ reason, onClose, onPurchased }){
+function PaywallSheet({ reason, onClose, onPurchased, profile, webCheckout, onSignIn }){
+  const [webBusy, setWebBusy] = useState(null);
+  async function webBuy(plan){
+    if(!profile){ if(onSignIn) onSignIn(); return; }
+    setWebBusy(plan);
+    try{ const { url } = await Api.stripeCheckout(profile.visitorId, profile.token, plan); window.location.href = url; }
+    catch(err){ setError(err.message || "Couldn't start checkout."); setWebBusy(null); }
+  }
   const dialogRef = useDialog(onClose);
   useBackClose(onClose);
   const [offerings, setOfferings] = useState(null);
@@ -5013,7 +5037,14 @@ function PaywallSheet({ reason, onClose, onPurchased }){
       : "Know before you buy, and stop guessing in the fitting room.";
 
   let plansContent;
-  if (!isNative){
+  if (!isNative && webCheckout){
+    // Website: Stripe's hosted Checkout. Card details never touch our server.
+    plansContent = e("div", { style:{ display:"flex", flexDirection:"column", gap:10, marginBottom:12 } },
+      e("button", { className:"btn btn-accent btn-block", disabled:!!webBusy, onClick:()=>webBuy("yearly") }, webBusy === "yearly" ? "Opening checkout…" : "Yearly — $39.99 / year (save 33%)"),
+      e("button", { className:"btn btn-ghost btn-block", disabled:!!webBusy, onClick:()=>webBuy("monthly") }, webBusy === "monthly" ? "Opening checkout…" : "Monthly — $4.99 / month"),
+      e("p", { className:"footnote", style:{ margin:"4px 0 0", textAlign:"center" } }, "Secure checkout by Stripe. Cancel anytime from your account.")
+    );
+  } else if (!isNative){
     plansContent = e(Banner, { kind:"info" }, "Subscriptions are handled through the Style-LORE mobile app right now — open the app on your phone to upgrade.");
   } else if (!REVENUECAT_PUBLIC_SDK_KEY_ANDROID){
     plansContent = e(Banner, { kind:"info" }, "Premium isn't fully set up yet — check back soon.");
@@ -6777,6 +6808,21 @@ function App(){
   // that sells Premium. Server-enforced; this just shapes the button.
   const [freeAiReadsLeft, setFreeAiReadsLeft] = useState(0);
   const [digestOptOut, setDigestOptOut] = useState(false);
+  const [webCheckout, setWebCheckout] = useState(false);
+  const [billing, setBilling] = useState(null); // "stripe" | "play" | null
+  // Back from Stripe Checkout: ?upgraded=1 — thank them, re-check status.
+  const [upgradeNotice, setUpgradeNotice] = useState(() => {
+    try{ const p = new URLSearchParams(window.location.search); return p.get("upgraded") === "1" ? "done" : p.get("upgraded") === "0" ? "cancelled" : null; }catch(err){ return null; }
+  });
+  useEffect(() => {
+    if(upgradeNotice === null) return;
+    try{ const url = new URL(window.location.href); url.searchParams.delete("upgraded"); window.history.replaceState({}, "", url.pathname + url.search + url.hash); }catch(err){}
+  }, []);
+  async function openBillingPortal(){
+    if(!profile) return;
+    try{ const { url } = await Api.stripePortal(profile.visitorId, profile.token); window.location.href = url; }
+    catch(err){ onAuthError(err); setUpgradeNotice(null); setSessionExpired(false); console.warn(err); }
+  }
   async function toggleDigest(){
     if(!profile) return;
     const next = !digestOptOut;
@@ -7100,15 +7146,17 @@ function App(){
   useEffect(() => {
     if(!profile || !profile.visitorId){ setIsPremium(false); return; }
     let cancelled = false;
-    Api.getSubscriptionStatus(profile.visitorId).then(({ isPremium, closetFreeLimit, freeAiReadsLeft, digestOptOut }) => {
+    Api.getSubscriptionStatus(profile.visitorId).then(({ isPremium, closetFreeLimit, freeAiReadsLeft, digestOptOut, billing, webCheckout }) => {
       if(cancelled) return;
       setIsPremium(!!isPremium);
       if(closetFreeLimit) setClosetFreeLimit(closetFreeLimit);
       setFreeAiReadsLeft(typeof freeAiReadsLeft === "number" ? freeAiReadsLeft : 0);
       setDigestOptOut(!!digestOptOut);
+      setBilling(billing || null);
+      setWebCheckout(!!webCheckout);
     }).catch(()=>{});
     return () => { cancelled = true; };
-  }, [profile && profile.visitorId, paywallReason === null]);
+  }, [profile && profile.visitorId, paywallReason === null, upgradeNotice]);
 
   // RevenueCat — native purchase flow for Style-LORE Premium. Configured
   // with this account's own id as RevenueCat's "app user id" (rather than
@@ -7311,7 +7359,7 @@ function App(){
       viewerKibbeBlend: blend, viewerStyleWordBlend: styleBlend, viewerKibbeTypeName: kibbeTypeName, viewerTopStyleWords: topStyleWords
     });
   }
-  else if(screen === "home") body = e(HomeScreen, { profile, blend, styleBlend, kibbeResult, colorResult, closetCount: closet.length, closet, digestOptOut, onToggleDigest: toggleDigest, onNavigate:goTo, onSignOut:signOut, onOpenProfile:openProfile, onAccountDeleted:handleAccountDeleted, onSignIn:leaveGuestForGate });
+  else if(screen === "home") body = e(HomeScreen, { profile, blend, styleBlend, kibbeResult, colorResult, closetCount: closet.length, closet, digestOptOut, onToggleDigest: toggleDigest, isPremium, billing, onManageBilling: openBillingPortal, onNavigate:goTo, onSignOut:signOut, onOpenProfile:openProfile, onAccountDeleted:handleAccountDeleted, onSignIn:leaveGuestForGate });
   else if(screen === "quiz") body = e(StyleQuizScreen, { kibbeResult, styleLanguageResult:styleBlend, onSaveKibbe:setKibbeResult, onSaveStyle:setStyleBlend, onSignIn: profile ? null : leaveGuestForGate, colorResult });
   else if(screen === "color") body = e(ColorScreen, { colorResult, onSaveColor:setColorResult });
   else if(screen === "closet") body = e(ClosetScreen, { closet, setCloset, blend, styleWordBlend:styleBlend, kibbeTypeName, topStyleWords, profile, isPremium, closetFreeLimit, onUpgrade:openPaywall, syncStatus:closetSyncStatus, onRetrySync:retryClosetSync, storageFull:closetStorageFull });
@@ -7347,10 +7395,14 @@ function App(){
     e("main", { className:"app-main" }, body),
     e(BottomNav, { screen, onNavigate:goTo }),
     paywallReason ? e(PaywallSheet, {
-      reason: paywallReason,
+      reason: paywallReason, profile, webCheckout, onSignIn: leaveGuestForGate,
       onClose: () => setPaywallReason(null),
       onPurchased: () => { setIsPremium(true); setPaywallReason(null); },
-    }) : null
+    }) : null,
+    upgradeNotice ? e("div", { className:"toast", role:"status", onClick:()=>setUpgradeNotice(null) },
+      upgradeNotice === "done"
+        ? (isPremium ? "You're Premium — welcome. The AI Stylist and your full closet are unlocked." : "Payment received — Premium switches on within a few seconds. Tap to dismiss.")
+        : "Checkout cancelled — nothing was charged.") : null
   );
 }
 

@@ -25,6 +25,7 @@ if (!defined('RESEND_API_KEY') || RESEND_API_KEY === '') {
 }
 
 $pdo = db();
+ensure_digest_columns($pdo);
 $tips = require __DIR__ . '/../includes/digest_tips.php';
 $week = (int)date('W');
 $now = current_time_ms();

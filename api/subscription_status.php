@@ -24,4 +24,8 @@ json_response([
     'closetFreeLimit' => CLOSET_FREE_LIMIT,
     'freeAiReadsLeft' => free_ai_reads_left($pdo, $accountId),
     'digestOptOut' => digest_opt_out($pdo, $accountId),
+    // Where the subscription came from, so the web can show "Manage" for
+    // Stripe subscribers and point store subscribers at their phone.
+    'billing' => subscription_billing_source($pdo, $accountId),
+    'webCheckout' => defined('STRIPE_SECRET_KEY') && STRIPE_SECRET_KEY !== '' && defined('STRIPE_PRICE_MONTHLY') && STRIPE_PRICE_MONTHLY !== '',
 ]);

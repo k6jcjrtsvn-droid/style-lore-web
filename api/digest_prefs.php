@@ -10,6 +10,7 @@ $visitorId = (string)($body['visitorId'] ?? '');
 $authToken = (string)($body['authToken'] ?? '');
 if ($visitorId === '' || $authToken === '') error_response('You need to be signed in.', 401);
 $pdo = db();
+ensure_digest_columns($pdo);
 require_owner($pdo, $visitorId, $authToken);
 $optOut = !empty($body['optOut']) ? 1 : 0;
 $pdo->prepare('UPDATE accounts SET digest_opt_out = ? WHERE id = ?')->execute([$optOut, $visitorId]);

@@ -391,9 +391,25 @@ function digest_unsub_token(string $accountId): string {
     return substr(hash_hmac('sha256', 'digest:' . $accountId, $secret), 0, 32);
 }
 
+/** Adds the weekly-email columns if a deploy got ahead of the migration. Cheap, idempotent, MariaDB. */
+function ensure_digest_columns(PDO $pdo): void {
+    static $done = false; if ($done) return; $done = true;
+    try { $pdo->exec('ALTER TABLE accounts ADD COLUMN IF NOT EXISTS digest_opt_out TINYINT(1) NOT NULL DEFAULT 0, ADD COLUMN IF NOT EXISTS digest_sent_at BIGINT DEFAULT NULL'); }
+    catch (Throwable $e) { error_log('ensure_digest_columns: ' . $e->getMessage()); }
+}
+
 function digest_opt_out(PDO $pdo, string $accountId): bool {
+    ensure_digest_columns($pdo);
     try { $st = $pdo->prepare('SELECT digest_opt_out FROM accounts WHERE id = ?'); $st->execute([$accountId]); return (bool)$st->fetchColumn(); }
     catch (Throwable $e) { return false; }
+}
+
+/** 'stripe' | 'play' | null — which billing system owns this account's subscription row. */
+function subscription_billing_source(PDO $pdo, string $accountId): ?string {
+    try { $st = $pdo->prepare('SELECT product_id FROM subscriptions WHERE account_id = ?'); $st->execute([$accountId]); $p = (string)($st->fetchColumn() ?: ''); }
+    catch (Throwable $e) { return null; }
+    if ($p === '') return null;
+    return strpos($p, 'stripe') === 0 ? 'stripe' : 'play';
 }
 
 const FREE_AI_READS = 1;

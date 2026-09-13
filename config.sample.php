@@ -94,6 +94,16 @@ define('ANTHROPIC_MODEL', 'claude-sonnet-5');
 // won't sync — nothing else breaks).
 define('REVENUECAT_WEBHOOK_SECRET', '');
 
+// Stripe — website subscriptions (api/stripe_checkout.php, stripe_webhook.php,
+// stripe_portal.php). From dashboard.stripe.com: Developers → API keys
+// (secret key, sk_live_... or sk_test_...), Developers → Webhooks → the
+// endpoint's signing secret (whsec_...), and the two price IDs (price_...)
+// from the Premium product's monthly and yearly prices.
+define('STRIPE_SECRET_KEY', '');
+define('STRIPE_WEBHOOK_SECRET', '');
+define('STRIPE_PRICE_MONTHLY', '');
+define('STRIPE_PRICE_YEARLY', '');
+
 // Powers real phone push notifications (likes, comments, follows,
 // messages, group-joins) via Firebase Cloud Messaging. Both values come
 // from a Firebase project (free) at https://console.firebase.google.com:

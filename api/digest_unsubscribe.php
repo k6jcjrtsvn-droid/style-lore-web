@@ -12,7 +12,7 @@ $id = (string)($_GET['id'] ?? '');
 $t = (string)($_GET['t'] ?? '');
 $ok = $id !== '' && $t !== '' && hash_equals(digest_unsub_token($id), $t);
 if ($ok) {
-    try { db()->prepare('UPDATE accounts SET digest_opt_out = 1 WHERE id = ?')->execute([$id]); } catch (Throwable $e) { $ok = false; }
+    try { $pdo = db(); ensure_digest_columns($pdo); $pdo->prepare('UPDATE accounts SET digest_opt_out = 1 WHERE id = ?')->execute([$id]); } catch (Throwable $e) { $ok = false; }
 }
 $msg = $ok ? "You're unsubscribed from the weekly email. Your account and results are untouched."
            : "That unsubscribe link isn't valid. You can also turn the weekly email off from the app's Home screen.";
