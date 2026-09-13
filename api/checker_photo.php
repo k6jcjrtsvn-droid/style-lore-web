@@ -26,6 +26,47 @@
  * and show the right message for each.
  */
 require_once __DIR__ . '/../includes/helpers.php';
+
+/**
+ * Turns whatever the model wrote into the {verdict, headline, detail,
+ * suggestion} array — tolerating a missing opening brace (we prefill it),
+ * ```json fences, text around the object, and a reply cut off by
+ * max_tokens (in which case the fields that did arrive are salvaged).
+ */
+function parse_stylist_json(string $text): ?array {
+    $t = trim($text);
+    $t = preg_replace('/^```(?:json)?\s*/i', '', $t);
+    $t = preg_replace('/\s*```\s*$/', '', $t);
+    if ($t === '') return null;
+    if ($t[0] !== '{') $t = '{' . $t;
+    $data = json_decode($t, true);
+    if (is_array($data)) return $data;
+    // Text around the object?
+    if (preg_match('/\{.*\}/s', $t, $m)) {
+        $data = json_decode($m[0], true);
+        if (is_array($data)) return $data;
+    }
+    // Truncated: pull each field out individually.
+    $out = [];
+    foreach (['verdict', 'headline', 'detail', 'suggestion'] as $k) {
+        if (preg_match('/"' . $k . '"\s*:\s*"((?:[^"\\\\]|\\\\.)*)"?/s', $t, $m)) {
+            $v = json_decode('"' . rtrim($m[1], '\\') . '"');
+            if ($v === null) $v = stripslashes($m[1]);
+            $out[$k] = trim((string)$v);
+        }
+    }
+    return $out ?: null;
+}
+
+/** Last resort: make a non-JSON reply readable — no fences, braces, keys or stray quotes. */
+function stylist_text_to_prose(string $text): string {
+    $t = preg_replace('/```(?:json)?/i', '', $text);
+    $t = preg_replace('/"(verdict|headline|detail|suggestion)"\s*:\s*/', '', $t);
+    $t = str_replace(['{', '}'], '', $t);
+    $t = preg_replace('/"\s*,\s*"/', ' ', $t);
+    $t = trim(str_replace('"', '', $t), " \t\n\r,");
+    return trim(preg_replace('/\s+/', ' ', $t));
+}
 require_method('POST');
 
 $visitorId = (string)($_POST['visitorId'] ?? '');
@@ -134,14 +175,20 @@ TXT;
 
 $payload = [
     'model' => $model,
-    'max_tokens' => 700,
-    'messages' => [[
-        'role' => 'user',
-        'content' => [
-            ['type' => 'image', 'source' => ['type' => 'base64', 'media_type' => $mime, 'data' => $imageBase64]],
-            ['type' => 'text', 'text' => $instructions],
+    'max_tokens' => 1000,
+    'messages' => [
+        [
+            'role' => 'user',
+            'content' => [
+                ['type' => 'image', 'source' => ['type' => 'base64', 'media_type' => $mime, 'data' => $imageBase64]],
+                ['type' => 'text', 'text' => $instructions],
+            ],
         ],
-    ]],
+        // Prefill the reply with the opening brace so the model continues
+        // the JSON object directly instead of wrapping it in ```json fences
+        // or a preamble — which is what used to reach the screen raw.
+        ['role' => 'assistant', 'content' => '{'],
+    ],
 ];
 
 try {
@@ -179,11 +226,12 @@ try {
         }
     }
 
-    $verdictData = json_decode(trim($text), true);
+    $verdictData = parse_stylist_json($text);
     if (!is_array($verdictData) || empty($verdictData['headline'])) {
-        // The model didn't return clean JSON — fall back to showing its
-        // raw text as the detail rather than failing outright.
-        $verdictData = ['verdict' => 'caution', 'headline' => 'Here\'s what the AI saw', 'detail' => $text ?: "Couldn't get a clear read on that photo — try a clearer, well-lit shot.", 'suggestion' => ''];
+        // The model didn't return usable JSON — show its words as prose
+        // rather than failing outright, but never raw braces and quotes.
+        $prose = stylist_text_to_prose($text);
+        $verdictData = ['verdict' => 'caution', 'headline' => 'A stylist\'s read on this photo', 'detail' => $prose ?: "Couldn't get a clear read on that photo — try a clearer, well-lit shot.", 'suggestion' => ''];
     }
     $verdict = in_array($verdictData['verdict'] ?? '', ['match', 'caution', 'mismatch'], true) ? $verdictData['verdict'] : 'caution';
 
