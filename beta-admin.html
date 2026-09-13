@@ -287,7 +287,8 @@
     })
       .then(function (res) { return res.json(); })
       .then(function (data) {
-        var summary = 'Sent ' + data.sent + ' link(s)' + (data.failed ? (', ' + data.failed + ' failed') : '') + '.';
+        var summary = 'Sent ' + data.sent + ' link(s)' + (data.failed ? (', ' + data.failed + ' failed') : '') +
+          (data.skipped ? (', ' + data.skipped + ' not attempted (ran out of time - press again)') : '') + '.';
         if (data.errors && data.errors.length) summary += ' — ' + data.errors.join(' | ');
         showMsg(summary, data.failed ? 'error' : 'success');
         load();

@@ -137,54 +137,27 @@ function require_owner(PDO $pdo, string $accountId, ?string $token): void {
  *
  * This exists because the previous code called @mail(...) directly, and that
  * "@" threw the failure reason away -- when sending broke, all anyone could
- * see was a bare "failed" count, with nothing in the PHP error log and
- * nothing in cPanel's delivery tracker to explain it. So: record the reason,
- * log it, and retry.
+ * see was a bare "failed" count. So: record the reason, log it, and hand it
+ * back via $GLOBALS['last_mail_error'] for the calling endpoint to report.
  *
- * Two retries, because shared-hosting MTAs refuse sends transiently (hourly
- * relay caps, brief greylisting) far more often than permanently. The last
- * attempt drops the "-f" envelope sender -- Exim on some shared hosts refuses
- * that flag for particular recipients even while accepting it for others, and
- * a message that arrives with a slightly worse envelope beats one that never
- * goes out at all.
- *
- * On failure the reason is left in $GLOBALS['last_mail_error'] so the calling
- * endpoint can hand it back to whoever pressed the button.
+ * Deliberately a single attempt, no retries. An earlier version retried
+ * twice on the theory that failures were transient; in practice the failure
+ * mode on this host is mail() BLOCKING for tens of seconds rather than
+ * returning false promptly, so retrying tripled a hang and pushed the whole
+ * request past PHP's execution limit. A slow failure must fail once.
  */
 function send_mail_tracked(string $to, string $subject, string $body, string $headers): bool {
     $GLOBALS['last_mail_error'] = null;
 
-    $attempts = [
-        ['params' => '-f' . MAIL_FROM, 'label' => 'envelope sender'],
-        ['params' => '-f' . MAIL_FROM, 'label' => 'envelope sender, retry'],
-        ['params' => null,             'label' => 'no envelope sender'],
-    ];
+    $before = error_get_last();
+    $ok = @mail($to, $subject, $body, $headers, '-f' . MAIL_FROM);
+    if ($ok) return true;
 
-    $reason = 'unknown';
-    foreach ($attempts as $i => $attempt) {
-        if ($i > 0) usleep(400000); // 0.4s, let a transient limit clear
-
-        $before = error_get_last();
-        $ok = $attempt['params'] === null
-            ? @mail($to, $subject, $body, $headers)
-            : @mail($to, $subject, $body, $headers, $attempt['params']);
-
-        if ($ok) {
-            if ($i > 0) {
-                error_log('[style-lore mail] recovered on attempt ' . ($i + 1)
-                    . ' (' . $attempt['label'] . ') to=' . $to);
-            }
-            return true;
-        }
-
-        $after = error_get_last();
-        $reason = ($after && $after !== $before)
-            ? $after['message']
-            : 'mail() returned false without raising a PHP error - the local MTA refused to accept the message.';
-        error_log('[style-lore mail] attempt ' . ($i + 1) . ' (' . $attempt['label']
-            . ') FAILED to=' . $to . ' subject=' . $subject . ' reason=' . $reason);
-    }
-
+    $after = error_get_last();
+    $reason = ($after && $after !== $before)
+        ? $after['message']
+        : 'mail() returned false without raising a PHP error - the local MTA refused, or timed out accepting, the message.';
+    error_log('[style-lore mail] FAILED to=' . $to . ' subject=' . $subject . ' reason=' . $reason);
     $GLOBALS['last_mail_error'] = $reason;
     return false;
 }

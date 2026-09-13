@@ -70,8 +70,16 @@ if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST') {
         $testers = $pdo->query("SELECT id, email, name FROM beta_testers WHERE status = 'synced'")->fetchAll();
         $sent = 0;
         $failed = 0;
+        $skipped = 0;
         $errors = [];
+        // Budget the loop so a slow mail() can't eat the whole request. If one
+        // send blocks for a long time, stop before PHP's execution limit kills
+        // us mid-loop with no response at all; unsent testers stay 'synced'
+        // and are picked up next time the button is pressed.
+        $started = microtime(true);
+        $budgetSeconds = 20;
         foreach ($testers as $t) {
+            if (microtime(true) - $started > $budgetSeconds) { $skipped++; continue; }
             $safeName = htmlspecialchars($t['name'] !== '' ? $t['name'] : 'there');
             $html = style_lore_email_html(
                 "You're in! Download Style-LORE",
@@ -97,7 +105,7 @@ if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST') {
                 $errors[] = $t['email'] . ': ' . ($GLOBALS['last_mail_error'] ?? 'unknown error');
             }
         }
-        json_response(['ok' => true, 'sent' => $sent, 'failed' => $failed, 'errors' => $errors]);
+        json_response(['ok' => true, 'sent' => $sent, 'failed' => $failed, 'skipped' => $skipped, 'errors' => $errors]);
     }
 
     // Remove a tester outright -- test rows, typos, someone asking to be taken
