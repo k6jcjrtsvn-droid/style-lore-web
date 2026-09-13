@@ -1,0 +1,7 @@
+User-agent: *
+Allow: /
+Disallow: /api/
+Disallow: /includes/
+Disallow: /uploads/
+Disallow: /beta-admin.html
+Sitemap: https://style-lore.com/sitemap.xml

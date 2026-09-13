@@ -1500,6 +1500,127 @@ function OutfitCard({ closet, profile, compact, onNavigate }){
   );
 }
 
+
+/* =====================================================================
+   HISTORY (Premium keeps everything; free keeps the last 3) — every text
+   check, photo check and AI Stylist read, stored on this device.
+===================================================================== */
+const HISTORY_KEY = "lore_history";
+const HISTORY_FREE_LIMIT = 3, HISTORY_MAX = 200;
+function loadHistory(){ return loadLocal(HISTORY_KEY, []) || []; }
+function pushHistory(entry){
+  const list = [Object.assign({ id: uid(), at: Date.now() }, entry), ...loadHistory()].slice(0, HISTORY_MAX);
+  saveLocal(HISTORY_KEY, list);
+  return list;
+}
+function thumbFromDataUrl(dataUrl, size){
+  return new Promise(resolve => {
+    try{
+      const img = new Image();
+      img.onload = () => { const c = document.createElement("canvas"); const r = Math.min(1, (size || 160) / Math.max(img.width, img.height)); c.width = Math.round(img.width * r); c.height = Math.round(img.height * r); c.getContext("2d").drawImage(img, 0, 0, c.width, c.height); resolve(c.toDataURL("image/jpeg", 0.7)); };
+      img.onerror = () => resolve(null);
+      img.src = dataUrl;
+    }catch(err){ resolve(null); }
+  });
+}
+function HistoryList({ isPremium, onUpgrade, version }){
+  const all = useMemo(() => loadHistory(), [version]);
+  if (!all.length) return null;
+  const shown = isPremium ? all : all.slice(0, HISTORY_FREE_LIMIT);
+  const hidden = all.length - shown.length;
+  const kindLabel = { text:"Text check", photo:"Photo check", ai:"AI Stylist" };
+  return e("div", { style:{ marginTop:28 } },
+    e("div", { className:"eyebrow", style:{ marginBottom:10 } }, "Your checks"),
+    e("div", { className:"row-list" },
+      shown.map(h => e("div", { key:h.id, className:"row-list-item", style:{ alignItems:"flex-start" } },
+        h.thumb ? e("img", { src:h.thumb, alt:"", style:{ width:44, height:44, borderRadius:8, objectFit:"cover", flexShrink:0 } })
+          : e("span", { style:{ color:"var(--accent)", flexShrink:0, width:22, height:22 } }, Icon("check")),
+        e("span", { style:{ flex:1, minWidth:0 } },
+          e("div", { style:{ display:"flex", gap:8, alignItems:"center", marginBottom:2 } },
+            h.verdictPill ? e(VerdictPill, { verdict:h.verdictPill }) : null,
+            e("span", { style:{ fontSize:11.5, color:"var(--ink-soft)" } }, kindLabel[h.kind] || "Check", " · ", timeAgo(h.at))
+          ),
+          e("div", { style:{ fontWeight:600, fontSize:13.5 } }, h.headline),
+          h.input ? e("div", { style:{ fontSize:12.5, color:"var(--ink-soft)", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" } }, h.input) : null
+        )
+      ))
+    ),
+    hidden > 0 ? e("div", { className:"card", style:{ marginTop:10, padding:12, display:"flex", alignItems:"center", justifyContent:"space-between", gap:12, borderColor:"var(--accent)" } },
+      e("span", { style:{ fontSize:13 } }, hidden + " older " + (hidden === 1 ? "check is" : "checks are") + " kept for Premium — your shopping notebook, every verdict saved."),
+      e("button", { className:"btn btn-accent btn-sm", onClick:()=>onUpgrade && onUpgrade("history") }, "Unlock")
+    ) : null
+  );
+}
+
+/* =====================================================================
+   CAPSULE BUILDER (Premium) — picks the pieces from the closet that make
+   the most outfits together, weighted by how well each suits the type.
+===================================================================== */
+function buildCapsule(closet, profile, size){
+  const buckets = { dress:[], top:[], bottom:[], outerwear:[], shoes:[], accessory:[] };
+  for (const item of closet || []){
+    const cat = garmentCategory(item.description); if (!cat) continue;
+    let score = 50; try{ const v = styleCheckVerdict(item.description || "", profile); if (v && typeof v.score === "number") score = v.score; }catch(err){}
+    buckets[cat].push({ item, category:cat, score });
+  }
+  for (const k of Object.keys(buckets)) buckets[k].sort((a, b) => b.score - a.score);
+  const n = size || 12;
+  // Rough allocation for a 12-piece capsule: 4 tops, 3 bottoms, 1 dress, 2 layers, 2 shoes; anything missing goes to tops/bottoms.
+  const want = { top: Math.round(n * .33), bottom: Math.round(n * .25), dress: Math.max(1, Math.round(n * .08)), outerwear: Math.round(n * .17), shoes: Math.max(1, Math.round(n * .17)) };
+  const pick = {};
+  let total = 0;
+  for (const k of Object.keys(want)){ pick[k] = buckets[k].slice(0, want[k]); total += pick[k].length; }
+  // Fill any shortfall with the best remaining tops/bottoms.
+  for (const k of ["top", "bottom", "outerwear", "shoes", "dress"]){
+    while (total < n && buckets[k].length > pick[k].length){ pick[k].push(buckets[k][pick[k].length]); total++; }
+  }
+  const outfits = pick.top.length * pick.bottom.length * Math.max(1, pick.outerwear.length + 1) + pick.dress.length * Math.max(1, pick.outerwear.length + 1);
+  const pieces = [].concat(pick.top, pick.bottom, pick.dress, pick.outerwear, pick.shoes);
+  // A few concrete combinations to show.
+  const combos = [];
+  const seen = new Set();
+  for (let i = 0; i < 40 && combos.length < 5; i++){
+    const t = pick.top[i % Math.max(1, pick.top.length)], b = pick.bottom[Math.floor(i / 2) % Math.max(1, pick.bottom.length)];
+    const o = pick.outerwear.length ? pick.outerwear[i % pick.outerwear.length] : null, sh = pick.shoes.length ? pick.shoes[i % pick.shoes.length] : null;
+    const set = [t, b, o, sh].filter(Boolean);
+    if (set.length < 2) break;
+    const key = set.map(x => x.item.id).join("|"); if (seen.has(key)) continue; seen.add(key);
+    combos.push(set);
+  }
+  return { pieces, count: pieces.length, outfits, combos, missing: Object.keys(want).filter(k => pick[k].length === 0 && k !== "dress") };
+}
+function CapsuleCard({ closet, profile, isPremium, onUpgrade }){
+  const [open, setOpen] = useState(false);
+  const capsule = useMemo(() => buildCapsule(closet, profile, 12), [closet, profile]);
+  if (!closet || closet.length < 6) return null;
+  const labels = { dress:"Dress", top:"Top", bottom:"Bottom", outerwear:"Layer", shoes:"Shoes" };
+  return e("div", { className:"card", style:{ marginBottom:14, padding:14, borderColor: isPremium ? undefined : "var(--accent)" } },
+    e("div", { style:{ display:"flex", justifyContent:"space-between", alignItems:"baseline", marginBottom:6 } },
+      e("div", { className:"eyebrow", style:{ margin:0 } }, isPremium ? "Your capsule" : "Your capsule · Premium"),
+      isPremium ? e("button", { className:"btn-text", style:{ padding:0, fontSize:12.5 }, onClick:()=>setOpen(v => !v) }, open ? "Hide" : "Show pieces") : null
+    ),
+    e("div", { className:"display", style:{ fontSize:20, fontWeight:700, marginBottom:4 } }, capsule.count + " pieces, " + capsule.outfits + " outfits"),
+    e("p", { style:{ fontSize:13, color:"var(--ink-soft)", margin:"0 0 " + (isPremium ? 0 : 12) + "px" } },
+      isPremium ? "The pieces you own that work hardest together — pack these and you're covered."
+        : "Style-LORE found the " + capsule.count + " pieces in your closet that combine into " + capsule.outfits + " outfits. See which ones, and the combinations, with Premium."),
+    !isPremium ? e("button", { className:"btn btn-accent btn-sm", onClick:()=>onUpgrade && onUpgrade("capsule") }, "See my capsule") : null,
+    (isPremium && open) ? e("div", { style:{ marginTop:12 } },
+      e("div", { className:"outfit-row" },
+        capsule.pieces.map(p => e("div", { key:p.item.id, className:"outfit-piece" },
+          p.item.photo ? e("img", { src:p.item.photo, alt:"" }) : e("div", { className:"outfit-piece-blank" }, Icon("shirt")),
+          e("div", { className:"outfit-piece-label" }, labels[p.category]),
+          e("div", { className:"outfit-piece-desc" }, p.item.description)
+        ))
+      ),
+      capsule.combos.length ? e("div", { style:{ marginTop:12 } },
+        e("div", { className:"eyebrow", style:{ marginBottom:6 } }, "Five combinations to start"),
+        capsule.combos.map((set, i) => e("div", { key:i, style:{ fontSize:13, padding:"6px 0", borderTop:"1px solid var(--line-soft)" } }, set.map(x => x.item.description).join(" + ")))
+      ) : null,
+      capsule.missing.length ? e("p", { className:"footnote", style:{ marginTop:8 } }, "Add " + capsule.missing.map(k => ({ top:"a top", bottom:"a bottom", outerwear:"a layer", shoes:"shoes" })[k]).join(", ") + " to open up more combinations.") : null
+    ) : null
+  );
+}
+
 function ShopTheGap({ labels }){
   const unique = Array.from(new Set((labels || []).filter(Boolean))).slice(0, 3);
   if (unique.length === 0) return null;
@@ -4326,7 +4447,10 @@ function StyleQuizScreen({ kibbeResult, styleLanguageResult, onSaveKibbe, onSave
         ),
         e("p", { className:"footnote", style:{ marginTop:14, marginBottom:10 } },
           "This is a starting read, not a fixed label — treat it as a v1 to refine as you log your closet and try the checker."),
-        e("button", { className:"btn-text", onClick:retakeKibbe }, "Retake this part")
+        e("div", { style:{ display:"flex", gap:16, flexWrap:"wrap" } },
+          e("a", { className:"btn-text", style:{ textDecoration:"none" }, href:"https://style-lore.com/types/" + kibbeType.id + ".html", target:"_blank", rel:"noopener" }, "Read the full " + kibbeType.name + " guide →"),
+          e("button", { className:"btn-text", onClick:retakeKibbe }, "Retake this part")
+        )
       ) : e(React.Fragment, null,
         e("p", { className:"footnote", style:{ marginBottom:10 } }, "No result yet for this part."),
         e("button", { className:"btn-text", onClick:retakeKibbe }, "Take this part")
@@ -4689,6 +4813,7 @@ function ClosetScreen({ closet, setCloset, blend, styleWordBlend, kibbeTypeName,
     ) : null,
     capBanner,
     (blend || styleWordBlend) ? e(OutfitCard, { closet, profile }) : null,
+    (blend || styleWordBlend) ? e(CapsuleCard, { closet, profile, isPremium, onUpgrade }) : null,
     storageFull ? e(Banner, { kind:"error" },
       "This device is out of storage for closet photos, so the newest changes aren't being saved here. They're still synced to your account — but remove a few items with photos to save changes on this device again."
     ) : null,
@@ -4870,6 +4995,10 @@ function PaywallSheet({ reason, onClose, onPurchased }){
 
   const reasonCopy = reason === "closet"
     ? "Your free closet is full. Premium gives you room for your whole wardrobe — and everything else below."
+    : reason === "history"
+    ? "Premium keeps every check and every stylist read — a shopping notebook you can scroll back through."
+    : reason === "capsule"
+    ? "Your capsule is ready: the pieces you own that make the most outfits together. Premium shows you which ones, and the combinations."
     : reason === "checker"
       ? "A stylist's read on your photo is a Premium feature. Here's what comes with it."
       : "Know before you buy, and stop guessing in the fitting room.";
@@ -4903,7 +5032,8 @@ function PaywallSheet({ reason, onClose, onPurchased }){
       e("p", { style:{ fontSize:14, color:"var(--ink-soft)", marginBottom:16 } }, reasonCopy),
       e("ul", { style:{ margin:"0 0 20px", paddingLeft:20, fontSize:13.5, color:"var(--ink-soft)", display:"flex", flexDirection:"column", gap:6 } },
         e("li", null, e("strong", null, "AI Stylist"), " — send any photo and get specific feedback on the cut, the color and the fit, plus what to change."),
-        e("li", null, e("strong", null, "Your whole wardrobe"), " — a closet of up to 300 pieces, with the gap read that tells you what to buy next."),
+        e("li", null, e("strong", null, "Your whole wardrobe"), " — a closet of up to 300 pieces, the gap read that tells you what to buy next, and a capsule builder that finds the pieces that make the most outfits."),
+        e("li", null, e("strong", null, "A shopping notebook"), " — every check and stylist read saved, so you never wonder what the verdict was."),
         e("li", null, e("strong", null, "Still private"), " — your closet and quiz never leave your phone; only the photos you send to the AI Stylist do."),
         e("li", null, "Cancel anytime from your phone's subscription settings.")
       ),
@@ -4951,9 +5081,13 @@ function CheckerScreen({ blend, styleWordBlend, kibbeTypeName, topStyleWords, vi
   const [aiResult, setAiResult] = useState(null);
   const [aiError, setAiError] = useState(null);
 
+  const [historyVersion, setHistoryVersion] = useState(0);
+  function remember(entry){ pushHistory(entry); setHistoryVersion(v => v + 1); }
   function runCheck(){
     if (!description.trim()) return;
-    setChecked(styleCheckVerdict(description.trim(), profile));
+    const v = styleCheckVerdict(description.trim(), profile);
+    setChecked(v);
+    if (v && v.score !== null) remember({ kind:"text", input: description.trim(), headline: v.headline, score: v.score, verdictPill: v.verdictPill });
   }
 
   function pickCheckerPhoto(ev){
@@ -4976,7 +5110,9 @@ function CheckerScreen({ blend, styleWordBlend, kibbeTypeName, topStyleWords, vi
     setPhotoError(null);
     try{
       const { axes, usedBodyCrop } = await GarmentOnDeviceAnalyzer.analyzePhotoAxes(photoBlob);
-      setPhotoResult(photoStyleVerdict(axes, profile, usedBodyCrop));
+      const v = photoStyleVerdict(axes, profile, usedBodyCrop);
+      setPhotoResult(v);
+      if (v && v.score !== null){ const thumb = await thumbFromDataUrl(photoPreview, 160); remember({ kind:"photo", thumb, headline: v.headline, score: v.score, verdictPill: v.verdictPill }); }
     }catch(err){
       setPhotoError(err.message || "Couldn't run the photo check right now.");
     }finally{
@@ -4995,6 +5131,8 @@ function CheckerScreen({ blend, styleWordBlend, kibbeTypeName, topStyleWords, vi
       const result = await Api.checkPhoto({ visitorId, authToken, photoBlob, kibbeTypeName, topStyleWords });
       setAiResult(result);
       if(!isPremium && onFreeAiReadUsed) onFreeAiReadUsed();
+      const thumb = await thumbFromDataUrl(photoPreview, 160);
+      remember({ kind:"ai", thumb, headline: result.headline, input: result.suggestion || result.detail, verdictPill: result.verdict === "mismatch" ? "avoid" : result.verdict === "match" ? "match" : "neutral" });
     }catch(err){
       if(err.code === "premium_required"){
         if(onUpgrade) onUpgrade("checker");
@@ -5110,6 +5248,8 @@ function CheckerScreen({ blend, styleWordBlend, kibbeTypeName, topStyleWords, vi
         aiResult.suggestion ? e("p", { style:{ fontSize:13.5, color:"var(--accent)", marginBottom:0, fontWeight:500 } }, "✦ " + aiResult.suggestion) : null
       ) : null
     ) : null,
+
+    e(HistoryList, { isPremium, onUpgrade, version: historyVersion }),
 
     e("p", { className:"footnote", style:{ marginTop:8 } },
       "Private by default: the text and photo checks run on your phone and nothing is uploaded. Verdicts are a quick read against your type, not a stylist's opinion — that's what the AI Stylist is for.")
@@ -7069,7 +7209,7 @@ function App(){
     // The account is gone server-side; also clear every local key tied to
     // it so a shared/public device doesn't keep showing this person's quiz
     // results, closet, or style profile after they've deleted their account.
-    ["lore_profile", "lore_kibbe", "lore_style_blend", "lore_colorseason", "lore_closet"].forEach(removeLocal);
+    ["lore_profile", "lore_kibbe", "lore_style_blend", "lore_colorseason", "lore_closet", "lore_history"].forEach(removeLocal);
     setProfile(null);
     setKibbeResult(null);
     setStyleBlend(null);
