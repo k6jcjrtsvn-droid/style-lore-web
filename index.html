@@ -1749,8 +1749,12 @@ function loadLocal(key, fallback){
     return raw ? JSON.parse(raw) : fallback;
   }catch(err){ return fallback; }
 }
+// Returns false when the write didn't land — most often the ~5MB origin
+// quota, which a closet full of inline base64 photos can reach. Callers
+// that hold real user data check the result and say something.
 function saveLocal(key, value){
-  try{ localStorage.setItem(key, JSON.stringify(value)); }catch(err){ /* storage unavailable */ }
+  try{ localStorage.setItem(key, JSON.stringify(value)); return true; }
+  catch(err){ return false; }
 }
 function removeLocal(key){
   try{ localStorage.removeItem(key); }catch(err){ /* storage unavailable */ }
@@ -2170,6 +2174,26 @@ const REVENUECAT_ENTITLEMENT_ID = "premium";
 // Auth token travels in a header, never in the URL (keeps it out of logs/referrers).
 function authHeader(authToken){ return authToken ? { "Authorization": "Bearer " + authToken } : {}; }
 
+// Every failed response goes through this so the server's own message —
+// a 429 rate-limit notice, a 403 "verify your email first" — reaches the
+// user instead of being replaced by a generic string. A 401 is tagged so
+// App() can clear the dead session rather than failing silently forever.
+// A dead auth token can surface from anywhere in the tree, so App()
+// registers one handler here rather than threading a callback through
+// every screen. Call onAuthError(err) in any catch that talks to the API.
+let authErrorHandler = null;
+function onAuthError(err){
+  if(err && err.code === "unauthenticated" && authErrorHandler) authErrorHandler();
+}
+
+async function apiError(r, fallback){
+  const body = await r.json().catch(()=>({}));
+  const err = new Error(body.error || fallback);
+  err.status = r.status;
+  if(r.status === 401) err.code = "unauthenticated";
+  return err;
+}
+
 const Api = {
   async signup({ name, email, password }){
     const r = await fetch("/api/auth/signup", {
@@ -2198,15 +2222,12 @@ const Api = {
     if(opts && opts.authorId) params.set("authorId", opts.authorId);
     if(opts && opts.groupId) params.set("groupId", opts.groupId);
     const r = await fetch("/api/posts?" + params.toString());
-    if(!r.ok) throw new Error("Couldn't load the feed.");
+    if(!r.ok) throw await apiError(r, "Couldn't load the feed.");
     return r.json();
   },
   async createPost(formData){
     const r = await fetch("/api/posts", { method:"POST", body:formData });
-    if(!r.ok){
-      const body = await r.json().catch(()=>({}));
-      throw new Error(body.error || "Couldn't post right now.");
-    }
+    if(!r.ok) throw await apiError(r, "Couldn't post right now.");
     return r.json();
   },
   async like(id, visitorId, liked, authToken){
@@ -2214,7 +2235,7 @@ const Api = {
       method:"POST", headers:{ "Content-Type":"application/json" },
       body: JSON.stringify({ visitorId, liked, authToken }),
     });
-    if(!r.ok) throw new Error("Couldn't update like.");
+    if(!r.ok) throw await apiError(r, "Couldn't update like.");
     return r.json();
   },
   async comment(id, visitorId, authToken, text){
@@ -2222,7 +2243,7 @@ const Api = {
       method:"POST", headers:{ "Content-Type":"application/json" },
       body: JSON.stringify({ visitorId, authToken, text }),
     });
-    if(!r.ok) throw new Error("Couldn't post comment.");
+    if(!r.ok) throw await apiError(r, "Couldn't post comment.");
     return r.json();
   },
   async report(id, visitorId, authToken){
@@ -2230,7 +2251,7 @@ const Api = {
       method:"POST", headers:{ "Content-Type":"application/json" },
       body: JSON.stringify({ visitorId, authToken }),
     });
-    if(!r.ok) throw new Error("Couldn't report post.");
+    if(!r.ok) throw await apiError(r, "Couldn't report post.");
     return r.json();
   },
   async editPost(id, authorId, authToken, fields){
@@ -2238,10 +2259,7 @@ const Api = {
       method:"PUT", headers:{ "Content-Type":"application/json" },
       body: JSON.stringify(Object.assign({ authorId, authToken }, fields)),
     });
-    if(!r.ok){
-      const body = await r.json().catch(()=>({}));
-      throw new Error(body.error || "Couldn't update your post.");
-    }
+    if(!r.ok) throw await apiError(r, "Couldn't update your post.");
     return r.json();
   },
   async deletePost(id, authorId, authToken){
@@ -2249,10 +2267,7 @@ const Api = {
       method:"DELETE", headers:{ "Content-Type":"application/json" },
       body: JSON.stringify({ authorId, authToken }),
     });
-    if(!r.ok){
-      const body = await r.json().catch(()=>({}));
-      throw new Error(body.error || "Couldn't delete your post.");
-    }
+    if(!r.ok) throw await apiError(r, "Couldn't delete your post.");
     return r.json();
   },
   async getFollows(followerId){
@@ -2265,14 +2280,14 @@ const Api = {
       method:"POST", headers:{ "Content-Type":"application/json" },
       body: JSON.stringify({ followerId, followerName, followingId, followingName, authToken }),
     });
-    if(!r.ok) throw new Error("Couldn't follow.");
+    if(!r.ok) throw await apiError(r, "Couldn't follow.");
   },
   async unfollow(followerId, followingId, authToken){
     const r = await fetch("/api/follows/"+encodeURIComponent(followerId)+"/"+encodeURIComponent(followingId), {
       method:"DELETE", headers:{ "Content-Type":"application/json" },
       body: JSON.stringify({ authToken }),
     });
-    if(!r.ok) throw new Error("Couldn't unfollow.");
+    if(!r.ok) throw await apiError(r, "Couldn't unfollow.");
   },
   async getFollowers(id){
     const r = await fetch("/api/follows?followingId="+encodeURIComponent(id));
@@ -2281,7 +2296,7 @@ const Api = {
   },
   async getProfile(id){
     const r = await fetch("/api/profiles/"+encodeURIComponent(id));
-    if(!r.ok) throw new Error("Couldn't load that profile.");
+    if(!r.ok) throw await apiError(r, "Couldn't load that profile.");
     return r.json();
   },
   async saveProfile(id, { name, bio, avatarBlob, authToken }){
@@ -2291,10 +2306,7 @@ const Api = {
     if(avatarBlob) fd.append("avatar", avatarBlob, "avatar.jpg");
     if(authToken) fd.append("authToken", authToken);
     const r = await fetch("/api/profiles/"+encodeURIComponent(id), { method:"POST", body:fd });
-    if(!r.ok){
-      const body = await r.json().catch(()=>({}));
-      throw new Error(body.error || "Couldn't save your profile.");
-    }
+    if(!r.ok) throw await apiError(r, "Couldn't save your profile.");
     return r.json();
   },
   async updateStyleSummary(id, { kibbeTypeName, styleWords, kibbeResult, styleBlend, authToken }){
@@ -2327,10 +2339,7 @@ const Api = {
       method:"POST", headers:{ "Content-Type":"application/json" },
       body: JSON.stringify({ id, password }),
     });
-    if(!r.ok){
-      const body = await r.json().catch(()=>({}));
-      throw new Error(body.error || "Couldn't delete your account — try again.");
-    }
+    if(!r.ok) throw await apiError(r, "Couldn't delete your account — try again.");
     return r.json();
   },
   async forgotPassword(email){
@@ -2374,7 +2383,7 @@ const Api = {
   async getNotifications(visitorId, authToken){
     const params = new URLSearchParams({ visitorId });
     const r = await fetch("/api/notifications?" + params.toString(), { headers: authHeader(authToken) });
-    if(!r.ok) throw new Error("Couldn't load notifications.");
+    if(!r.ok) throw await apiError(r, "Couldn't load notifications.");
     return r.json(); // { notifications, unreadCount }
   },
   async markNotificationsRead(visitorId, authToken){
@@ -2382,7 +2391,7 @@ const Api = {
       method:"POST", headers:{ "Content-Type":"application/json" },
       body: JSON.stringify({ visitorId, authToken, markAllRead:true }),
     });
-    if(!r.ok) throw new Error("Couldn't update notifications.");
+    if(!r.ok) throw await apiError(r, "Couldn't update notifications.");
     return r.json();
   },
 
@@ -2393,7 +2402,7 @@ const Api = {
       method:"POST", headers:{ "Content-Type":"application/json" },
       body: JSON.stringify({ visitorId, authToken, token, platform }),
     });
-    if(!r.ok) throw new Error("Couldn't register this device for notifications.");
+    if(!r.ok) throw await apiError(r, "Couldn't register this device for notifications.");
     return r.json();
   },
   async unregisterDeviceToken(visitorId, authToken, token){
@@ -2401,7 +2410,7 @@ const Api = {
       method:"DELETE", headers:{ "Content-Type":"application/json" },
       body: JSON.stringify({ visitorId, authToken, token }),
     });
-    if(!r.ok) throw new Error("Couldn't unregister this device.");
+    if(!r.ok) throw await apiError(r, "Couldn't unregister this device.");
     return r.json();
   },
 
@@ -2409,7 +2418,7 @@ const Api = {
   async getConversations(visitorId, authToken){
     const params = new URLSearchParams({ visitorId });
     const r = await fetch("/api/conversations?" + params.toString(), { headers: authHeader(authToken) });
-    if(!r.ok) throw new Error("Couldn't load your messages.");
+    if(!r.ok) throw await apiError(r, "Couldn't load your messages.");
     return r.json();
   },
   async startConversation({ visitorId, visitorName, authToken, otherId, otherName }){
@@ -2417,16 +2426,13 @@ const Api = {
       method:"POST", headers:{ "Content-Type":"application/json" },
       body: JSON.stringify({ visitorId, visitorName, authToken, otherId, otherName }),
     });
-    if(!r.ok){
-      const body = await r.json().catch(()=>({}));
-      throw new Error(body.error || "Couldn't start that conversation.");
-    }
+    if(!r.ok) throw await apiError(r, "Couldn't start that conversation.");
     return r.json(); // { id }
   },
   async getMessages(conversationId, visitorId, authToken){
     const params = new URLSearchParams({ conversationId, visitorId });
     const r = await fetch("/api/messages?" + params.toString(), { headers: authHeader(authToken) });
-    if(!r.ok) throw new Error("Couldn't load that conversation.");
+    if(!r.ok) throw await apiError(r, "Couldn't load that conversation.");
     return r.json();
   },
   async sendMessage({ conversationId, visitorId, authToken, text }){
@@ -2434,10 +2440,7 @@ const Api = {
       method:"POST", headers:{ "Content-Type":"application/json" },
       body: JSON.stringify({ conversationId, visitorId, authToken, text }),
     });
-    if(!r.ok){
-      const body = await r.json().catch(()=>({}));
-      throw new Error(body.error || "Couldn't send that message.");
-    }
+    if(!r.ok) throw await apiError(r, "Couldn't send that message.");
     return r.json();
   },
 
@@ -2445,7 +2448,7 @@ const Api = {
   async getStories(visitorId, authToken){
     const params = new URLSearchParams({ visitorId });
     const r = await fetch("/api/stories?" + params.toString(), { headers: authHeader(authToken) });
-    if(!r.ok) throw new Error("Couldn't load stories.");
+    if(!r.ok) throw await apiError(r, "Couldn't load stories.");
     return r.json();
   },
   async createStory({ authorId, authToken, photoBlob, videoFile, caption }){
@@ -2456,10 +2459,7 @@ const Api = {
     if(videoFile) fd.append("video", videoFile, videoFile.name || "story.mp4");
     else if(photoBlob) fd.append("photo", photoBlob, "story.jpg");
     const r = await fetch("/api/stories", { method:"POST", body:fd });
-    if(!r.ok){
-      const body = await r.json().catch(()=>({}));
-      throw new Error(body.error || "Couldn't share that story.");
-    }
+    if(!r.ok) throw await apiError(r, "Couldn't share that story.");
     return r.json();
   },
   async viewStory(storyId, visitorId, authToken){
@@ -2504,7 +2504,7 @@ const Api = {
   async getGroups(visitorId){
     const params = visitorId ? ("?visitorId="+encodeURIComponent(visitorId)) : "";
     const r = await fetch("/api/groups"+params);
-    if(!r.ok) throw new Error("Couldn't load groups.");
+    if(!r.ok) throw await apiError(r, "Couldn't load groups.");
     return r.json();
   },
   async createGroup({ name, description, topicKibbe, topicStyle, creatorId, creatorName, authToken }){
@@ -2512,10 +2512,7 @@ const Api = {
       method:"POST", headers:{ "Content-Type":"application/json" },
       body: JSON.stringify({ name, description, topicKibbe, topicStyle, creatorId, creatorName, authToken }),
     });
-    if(!r.ok){
-      const body = await r.json().catch(()=>({}));
-      throw new Error(body.error || "Couldn't create that group.");
-    }
+    if(!r.ok) throw await apiError(r, "Couldn't create that group.");
     return r.json();
   },
   async joinGroup(groupId, visitorId, visitorName, authToken){
@@ -2523,7 +2520,7 @@ const Api = {
       method:"POST", headers:{ "Content-Type":"application/json" },
       body: JSON.stringify({ visitorId, visitorName, authToken }),
     });
-    if(!r.ok) throw new Error("Couldn't join that group.");
+    if(!r.ok) throw await apiError(r, "Couldn't join that group.");
     return r.json();
   },
   async leaveGroup(groupId, visitorId, authToken){
@@ -2531,7 +2528,7 @@ const Api = {
       method:"POST", headers:{ "Content-Type":"application/json" },
       body: JSON.stringify({ visitorId, authToken }),
     });
-    if(!r.ok) throw new Error("Couldn't leave that group.");
+    if(!r.ok) throw await apiError(r, "Couldn't leave that group.");
     return r.json();
   },
 
@@ -2557,7 +2554,7 @@ const Api = {
       method:"POST", headers:{ "Content-Type":"application/json" },
       body: JSON.stringify({ visitorId, visitorName, authToken, items }),
     });
-    if(!r.ok) throw new Error("Couldn't sync your closet.");
+    if(!r.ok) throw await apiError(r, "Couldn't sync your closet.");
     return r.json();
   },
 };
@@ -3313,6 +3310,7 @@ function AccountGate({ onComplete }){
 }
 
 function LegalSheet({ title, text, onClose }){
+  useBackClose(onClose);
   return e("div", { className:"sheet-backdrop", onClick: onClose },
     e("div", { className:"sheet", onClick: ev => ev.stopPropagation() },
       e("div", { className:"sheet-handle" }),
@@ -4015,7 +4013,7 @@ function ColorScreen({ colorResult, onSaveColor }){
    already lived only in this browser's localStorage, no size cap)
 ===================================================================== */
 
-function ClosetScreen({ closet, setCloset, blend, styleWordBlend, kibbeTypeName, topStyleWords, profile:viewer, isPremium, closetFreeLimit, onUpgrade, syncStatus, onRetrySync }){
+function ClosetScreen({ closet, setCloset, blend, styleWordBlend, kibbeTypeName, topStyleWords, profile:viewer, isPremium, closetFreeLimit, onUpgrade, syncStatus, onRetrySync, storageFull }){
   const [showAdd, setShowAdd] = useState(false);
   const profile = { kibbeBlend: blend, styleWordBlend, kibbeTypeName, topStyleWords };
   const atCap = !isPremium && closet.length >= closetFreeLimit;
@@ -4093,6 +4091,9 @@ function ClosetScreen({ closet, setCloset, blend, styleWordBlend, kibbeTypeName,
 
     !blend ? e(Banner, { kind:"info" }, "Take the body & Kibbe quiz first to start building a picture of your capsule against it.") : null,
     capBanner,
+    storageFull ? e(Banner, { kind:"error" },
+      "This device is out of storage for closet photos, so the newest changes aren't being saved here. They're still synced to your account — but remove a few items with photos to save changes on this device again."
+    ) : null,
     syncBanner,
 
     closet.length === 0
@@ -4545,6 +4546,7 @@ function CommunityScreen({ profile, blend, onOpenProfile }){
   const [groupFeed, setGroupFeed] = useState(null);
   const [showCreateGroup, setShowCreateGroup] = useState(false);
   const [groupBusy, setGroupBusy] = useState(false);
+  const [groupError, setGroupError] = useState(null);
 
   const [stories, setStories] = useState(null);
   const [viewingStoryAuthor, setViewingStoryAuthor] = useState(null);
@@ -4626,15 +4628,17 @@ function CommunityScreen({ profile, blend, onOpenProfile }){
   async function joinCurrentGroup(){
     if(!groupDetail || groupBusy) return;
     setGroupBusy(true);
+    setGroupError(null);
     try{ await Api.joinGroup(groupDetail.id, profile.visitorId, profile.name, profile.token); refreshGroups(); }
-    catch(err){ /* ignore — button just stays as-is */ }
+    catch(err){ onAuthError(err); setGroupError(err.message || "Couldn't join that group — try again."); }
     finally{ setGroupBusy(false); }
   }
   async function leaveCurrentGroup(){
     if(!groupDetail || groupBusy) return;
     setGroupBusy(true);
+    setGroupError(null);
     try{ await Api.leaveGroup(groupDetail.id, profile.visitorId, profile.token); refreshGroups(); }
-    catch(err){ /* ignore */ }
+    catch(err){ onAuthError(err); setGroupError(err.message || "Couldn't leave that group — try again."); }
     finally{ setGroupBusy(false); }
   }
 
@@ -4763,7 +4767,9 @@ function CommunityScreen({ profile, blend, onOpenProfile }){
       }) : null,
       showAddStory ? e(AddStorySheet, {
         profile,
-        onCreated: s => { setStories(prev => prev ? [...prev, s] : [s]); setShowAddStory(false); },
+        // Newest first — the tray and viewer both treat index 0 as the
+        // latest story, which is what the server's own ordering gives.
+        onCreated: s => { setStories(prev => prev ? [s, ...prev] : [s]); setShowAddStory(false); },
         onClose: () => setShowAddStory(false),
       }) : null,
       viewingStoryAuthor ? e(StoryViewerOverlay, {
@@ -4829,6 +4835,7 @@ function CommunityScreen({ profile, blend, onOpenProfile }){
       : (kibbeInfo ? e("p", { className:"screen-lede", style:{ marginBottom:16 } }, kibbeInfo.desc) : e("div", { style:{ marginBottom:16 } })),
 
     loadError ? e(Banner, { kind:"error" }, loadError) : null,
+    groupError ? e(Banner, { kind:"error" }, groupError) : null,
     e(Banner, { kind:"info" }, "Keep it kind: no abusive language, photos, or videos. Report anything that breaks the guidelines."),
 
     feedLoading ? e("div", { style:{ padding:"20px 0" } }, e(Thinking, { label:"Loading feed…" }))
@@ -5030,26 +5037,33 @@ function PostCard({ post, profile, followingIds, onToggleFollow, onOpenProfile, 
     const nextLiked = !liked;
     onPatch({ likes: Object.assign({}, post.likes || {}, { [profile.visitorId]: nextLiked }) });
     try{ await Api.like(post.id, profile.visitorId, nextLiked, profile.token); }
-    catch(err){ /* transient — next poll resyncs */ }
+    catch(err){
+      onAuthError(err);
+      // A rate limit is worth saying out loud; anything else is transient
+      // and the next poll resyncs it.
+      if(err.status === 429) setActionError(err.message);
+    }
   }
 
   async function submitComment(){
     if(!commentText.trim()) return;
     setBusy(true);
     try{
+      setActionError(null);
       const updated = await Api.comment(post.id, profile.visitorId, profile.token, commentText.trim());
       if(updated) onPatch({ comments: updated.comments });
       setCommentText("");
-    }catch(err){ /* ignore */ }
+    }catch(err){ onAuthError(err); setActionError(err.message || "Couldn't post that comment — try again."); }
     finally{ setBusy(false); }
   }
 
   async function report(){
     setBusy(true);
     try{
+      setActionError(null);
       await Api.report(post.id, profile.visitorId, profile.token);
       onRemove();
-    }catch(err){ /* ignore */ }
+    }catch(err){ onAuthError(err); setActionError(err.message || "Couldn't report that post — try again."); }
     finally{ setBusy(false); setConfirmReport(false); }
   }
 
@@ -5132,7 +5146,7 @@ function PostCard({ post, profile, followingIds, onToggleFollow, onOpenProfile, 
     post.videoFileUrl ? e("video", { className:"post-video", src:post.videoFileUrl, controls:true, playsInline:true, preload:"metadata" })
       : post.videoUrl ? e(VideoEmbed, { url:post.videoUrl })
       : null,
-    post.photoUrl ? e("img", { className:"post-photo", src:post.photoUrl, alt:"" }) : null,
+    post.photoUrl ? e("img", { className:"post-photo", src:post.photoUrl, alt:"", loading:"lazy", decoding:"async" }) : null,
     e("div", { className:"post-actions" },
       e("button", { className:"post-action", "aria-pressed":liked, disabled:busy, onClick:toggleLike }, Icon("heart"), likeCount || ""),
       e("button", { className:"post-action", onClick:()=>setShowComments(!showComments) }, Icon("comment"), (post.comments||[]).length || ""),
@@ -5180,11 +5194,13 @@ function ProfileScreen({ id, viewer, onBack, onOpenProfile, onNameChange, onMess
   const [showCompare, setShowCompare] = useState(false);
   const [loadError, setLoadError] = useState(null);
   const [closetItems, setClosetItems] = useState(null); // this account's Public closet items, null while loading
+  const [messageError, setMessageError] = useState(null);
+  const [messageBusy, setMessageBusy] = useState(false);
 
   const isMe = id === viewer.visitorId;
 
   const load = useCallback(() => {
-    Api.getProfile(id).then(setProfileRow).catch(() => setLoadError("Couldn't load this profile."));
+    Api.getProfile(id).then(setProfileRow).catch(err => { onAuthError(err); setLoadError("Couldn't load this profile."); });
     Api.getPosts({ authorId:id }).then(setPosts).catch(() => setPosts([]));
     Api.getFollowers(id).then(ids => setFollowerIds(new Set(ids))).catch(() => setFollowerIds(new Set()));
     Api.getFollows(id).then(ids => setFollowingCount(ids.length)).catch(() => setFollowingCount(0));
@@ -5260,10 +5276,22 @@ function ProfileScreen({ id, viewer, onBack, onOpenProfile, onNameChange, onMess
           // .styleWordBlend), plus the viewer's own quiz data passed down
           // from App(). No extra network call to open it.
           !isMe ? e("button", { className:"btn btn-ghost btn-sm", onClick:()=>setShowCompare(true) }, "Compare styles") : null,
-          (!isMe && onMessage) ? e("button", { className:"btn btn-ghost btn-sm", onClick:()=>onMessage(id, displayName) }, "Message") : null
+          (!isMe && onMessage) ? e("button", {
+            className:"btn btn-ghost btn-sm",
+            disabled: messageBusy,
+            onClick: async () => {
+              setMessageError(null);
+              setMessageBusy(true);
+              try{ await onMessage(id, displayName); }
+              catch(err){ setMessageError(err.message || "Couldn't start that conversation — try again."); }
+              finally{ setMessageBusy(false); }
+            }
+          }, messageBusy ? "Opening…" : "Message") : null
         )
       )
     ),
+
+    messageError ? e(Banner, { kind:"error" }, messageError) : null,
 
     hasStyleSummary ? e("div", { className:"profile-style-summary", style:{ margin:"14px 0" } },
       (profileRow && profileRow.kibbeTypeName) ? e("span", { className:"tab-chip", style:{ marginRight:6, marginBottom:6, display:"inline-block" } }, profileRow.kibbeTypeName) : null,
@@ -5322,6 +5350,7 @@ function ProfileScreen({ id, viewer, onBack, onOpenProfile, onNameChange, onMess
    hand (the viewer's own from App()'s state, the other person's already
    fetched by ProfileScreen's normal profile load). */
 function CompareSheet({ myName, theirName, me, them, onClose }){
+  useBackClose(onClose);
   if(!them){
     return e("div", { className:"sheet-backdrop", onClick:onClose },
       e("div", { className:"sheet", onClick: ev=>ev.stopPropagation() },
@@ -5462,6 +5491,7 @@ function EditProfileSheet({ viewer, currentProfile, onSaved, onClose }){
 }
 
 function DeleteAccountSheet({ viewer, onDeleted, onClose }){
+  useBackClose(onClose);
   const [password, setPassword] = useState("");
   const [confirmText, setConfirmText] = useState("");
   const [busy, setBusy] = useState(false);
@@ -5934,6 +5964,7 @@ function ConversationScreen({ profile, conversationId, otherName, onBack }){
 
 function App(){
   const [profile, setProfile] = useState(() => loadLocal("lore_profile", null));
+  const [sessionExpired, setSessionExpired] = useState(false);
   const [kibbeResult, setKibbeResult] = useState(() => loadLocal("lore_kibbe", null));
   const [styleBlend, setStyleBlend] = useState(() => loadLocal("lore_style_blend", null));
   const [colorResult, setColorResult] = useState(() => loadLocal("lore_colorseason", null));
@@ -6072,10 +6103,22 @@ function App(){
   const topStyleWords = styleBlend ? topWords(styleBlend, STYLE_WORDS, 5).map(w => w.id) : [];
 
   useEffect(() => { if(profile) saveLocal("lore_profile", profile); }, [profile]);
+
+  // Any 401 from the API means this device's token was rotated or revoked
+  // (logging in elsewhere rotates it). Without this the app kept using a
+  // dead token forever: every write failed and the polls swallowed it.
+  useEffect(() => {
+    authErrorHandler = () => setSessionExpired(true);
+    return () => { authErrorHandler = null; };
+  }, []);
   useEffect(() => { if(kibbeResult) saveLocal("lore_kibbe", kibbeResult); }, [kibbeResult]);
   useEffect(() => { if(styleBlend) saveLocal("lore_style_blend", styleBlend); }, [styleBlend]);
   useEffect(() => { if(colorResult) saveLocal("lore_colorseason", colorResult); }, [colorResult]);
-  useEffect(() => { saveLocal("lore_closet", closet); }, [closet]);
+  // Closet photos are inline base64, so a large closet can exhaust the
+  // browser's ~5MB origin quota. When that happens the write silently
+  // failed and the closet would revert on reload — say so instead.
+  const [closetStorageFull, setClosetStorageFull] = useState(false);
+  useEffect(() => { setClosetStorageFull(!saveLocal("lore_closet", closet)); }, [closet]);
 
   // Mirrors the local closet up to the server (see api/closet.php) so
   // whichever items are marked Public can be shown on the profile and in
@@ -6342,6 +6385,7 @@ function App(){
   }
   function completeReset(newProfile){
     setProfile(newProfile);
+    setSessionExpired(false);
     setPendingLinkAction(null);
   }
   function signOut(){
@@ -6349,6 +6393,7 @@ function App(){
       Api.unregisterDeviceToken(profile.visitorId, profile.token, deviceTokenRef.current).catch(()=>{});
     }
     setProfile(null);
+    setSessionExpired(false);
     removeLocal("lore_profile"); // clear now that logging back in requires a real password
   }
   function handleAccountDeleted(){
@@ -6389,7 +6434,12 @@ function App(){
       });
       setViewingProfileId(null);
       setViewingConversation({ id, otherId, otherName });
-    }catch(err){ /* rare — leave them on the profile */ }
+    }catch(err){
+      onAuthError(err);
+      // Rethrow so the profile screen can show why — an unverified
+      // account gets a 403 here and used to see nothing happen at all.
+      throw err;
+    }
   }
   function closeConversation(){
     setViewingConversation(null);
@@ -6427,7 +6477,7 @@ function App(){
   else if(screen === "home") body = e(HomeScreen, { profile, blend, styleBlend, onNavigate:goTo, onSignOut:signOut, onOpenProfile:openProfile, onAccountDeleted:handleAccountDeleted });
   else if(screen === "quiz") body = e(StyleQuizScreen, { kibbeResult, styleLanguageResult:styleBlend, onSaveKibbe:setKibbeResult, onSaveStyle:setStyleBlend });
   else if(screen === "color") body = e(ColorScreen, { colorResult, onSaveColor:setColorResult });
-  else if(screen === "closet") body = e(ClosetScreen, { closet, setCloset, blend, styleWordBlend:styleBlend, kibbeTypeName, topStyleWords, profile, isPremium, closetFreeLimit, onUpgrade:openPaywall, syncStatus:closetSyncStatus, onRetrySync:runClosetSync });
+  else if(screen === "closet") body = e(ClosetScreen, { closet, setCloset, blend, styleWordBlend:styleBlend, kibbeTypeName, topStyleWords, profile, isPremium, closetFreeLimit, onUpgrade:openPaywall, syncStatus:closetSyncStatus, onRetrySync:runClosetSync, storageFull:closetStorageFull });
   else if(screen === "checker") body = e(CheckerScreen, { blend, styleWordBlend:styleBlend, kibbeTypeName, topStyleWords, visitorId: profile.visitorId, authToken: profile.token, isPremium, onUpgrade:openPaywall });
   else if(screen === "community") body = e(CommunityScreen, { profile, blend, onOpenProfile:openProfile });
   else if(screen === "notifications") body = e(NotificationsScreen, { profile, onBack:()=>goTo("home"), onOpenProfile:openProfile, onOpenConversation:openConversation });
@@ -6451,6 +6501,12 @@ function App(){
         )
       )
     ),
+    sessionExpired ? e("div", { className:"app-main", style:{ paddingBottom:0 } },
+      e("div", { className:"card", style:{ marginBottom:0 } },
+        e(Banner, { kind:"error" }, "You've been signed out — your session expired or you logged in on another device."),
+        e("button", { className:"btn-text", style:{ padding:0, fontSize:12.5, marginTop:8 }, onClick:signOut }, "Log in again")
+      )
+    ) : null,
     e("main", { className:"app-main" }, body),
     e(BottomNav, { screen, onNavigate:goTo }),
     paywallReason ? e(PaywallSheet, {
