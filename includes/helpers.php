@@ -385,6 +385,17 @@ function has_premium(PDO $pdo, string $accountId): bool {
     return true;
 }
 
+/** HMAC token for the one-click weekly-email unsubscribe link. */
+function digest_unsub_token(string $accountId): string {
+    $secret = defined('CRON_KEY') && CRON_KEY !== '' ? CRON_KEY : (defined('DB_PASS') ? DB_PASS : 'style-lore');
+    return substr(hash_hmac('sha256', 'digest:' . $accountId, $secret), 0, 32);
+}
+
+function digest_opt_out(PDO $pdo, string $accountId): bool {
+    try { $st = $pdo->prepare('SELECT digest_opt_out FROM accounts WHERE id = ?'); $st->execute([$accountId]); return (bool)$st->fetchColumn(); }
+    catch (Throwable $e) { return false; }
+}
+
 const FREE_AI_READS = 1;
 
 /** How many free AI Stylist reads this account still has (see ai_reads). */

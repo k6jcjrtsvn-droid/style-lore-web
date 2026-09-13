@@ -3019,6 +3019,11 @@ const Api = {
   },
 
   // ---- Style-LORE Premium (RevenueCat-backed subscription) -------------
+  async setDigestPrefs(visitorId, authToken, optOut){
+    const r = await fetch("/api/digest_prefs.php", { method:"POST", headers:{ "Content-Type":"application/json" }, body: JSON.stringify({ visitorId, authToken, optOut: optOut ? 1 : 0 }) });
+    if(!r.ok) throw await apiError(r, "Couldn't save that setting.");
+    return r.json();
+  },
   async getSubscriptionStatus(accountId){
     const r = await fetch("/api/subscription/status?accountId=" + encodeURIComponent(accountId));
     if(!r.ok) return { isPremium:false, closetFreeLimit:20 };
@@ -4035,7 +4040,7 @@ function BottomNav({ screen, onNavigate }){
    HOME
 ===================================================================== */
 
-function HomeScreen({ profile, blend, styleBlend, kibbeResult, colorResult, closetCount, closet, onNavigate, onSignOut, onOpenProfile, onAccountDeleted, onSignIn }){
+function HomeScreen({ profile, blend, styleBlend, kibbeResult, colorResult, closetCount, closet, digestOptOut, onToggleDigest, onNavigate, onSignOut, onOpenProfile, onAccountDeleted, onSignIn }){
   const homeType = (kibbeResult && kibbeResult.kibbeTypeId && KIBBE_BY_ID[kibbeResult.kibbeTypeId]) || null;
   const homeWords = styleBlend ? topWords(styleBlend, STYLE_WORDS, 4) : [];
   const homeSeason = (colorResult && colorResult.seasonId && COLOR_SEASON_BY_ID[colorResult.seasonId]) || null;
@@ -4144,6 +4149,10 @@ function HomeScreen({ profile, blend, styleBlend, kibbeResult, colorResult, clos
         e("button", { className:"btn-text", style:{ padding:0, fontSize:12.5, color:"var(--danger)" }, onClick:onSignOut }, "Confirm"),
         e("button", { className:"btn-text", style:{ padding:0, fontSize:12.5 }, onClick:()=>setConfirmingSignOut(false) }, "Cancel")
       ) : null,
+      e("label", { className:"checkline", style:{ marginTop:12, fontSize:12.5 } },
+        e("input", { type:"checkbox", checked: !digestOptOut, onChange: onToggleDigest }),
+        e("span", null, "Weekly email — one tip for your type, every week")
+      ),
       e("div", { style:{ marginTop:10 } },
         e("button", { className:"btn-text", style:{ padding:0, fontSize:12, color:"var(--ink-soft)" }, onClick:()=>setShowDeleteAccount(true) }, "Delete my account")
       )
@@ -6767,6 +6776,13 @@ function App(){
   // Free AI Stylist reads left on this account (one, ever) — the taste
   // that sells Premium. Server-enforced; this just shapes the button.
   const [freeAiReadsLeft, setFreeAiReadsLeft] = useState(0);
+  const [digestOptOut, setDigestOptOut] = useState(false);
+  async function toggleDigest(){
+    if(!profile) return;
+    const next = !digestOptOut;
+    setDigestOptOut(next);
+    try{ await Api.setDigestPrefs(profile.visitorId, profile.token, next); }catch(err){ setDigestOptOut(!next); onAuthError(err); }
+  }
   // null, or a short string saying why the paywall was opened ("closet",
   // "checker") purely for the paywall's own copy — never used for access
   // control (the server checks that independently on every call).
@@ -7084,11 +7100,12 @@ function App(){
   useEffect(() => {
     if(!profile || !profile.visitorId){ setIsPremium(false); return; }
     let cancelled = false;
-    Api.getSubscriptionStatus(profile.visitorId).then(({ isPremium, closetFreeLimit, freeAiReadsLeft }) => {
+    Api.getSubscriptionStatus(profile.visitorId).then(({ isPremium, closetFreeLimit, freeAiReadsLeft, digestOptOut }) => {
       if(cancelled) return;
       setIsPremium(!!isPremium);
       if(closetFreeLimit) setClosetFreeLimit(closetFreeLimit);
       setFreeAiReadsLeft(typeof freeAiReadsLeft === "number" ? freeAiReadsLeft : 0);
+      setDigestOptOut(!!digestOptOut);
     }).catch(()=>{});
     return () => { cancelled = true; };
   }, [profile && profile.visitorId, paywallReason === null]);
@@ -7294,7 +7311,7 @@ function App(){
       viewerKibbeBlend: blend, viewerStyleWordBlend: styleBlend, viewerKibbeTypeName: kibbeTypeName, viewerTopStyleWords: topStyleWords
     });
   }
-  else if(screen === "home") body = e(HomeScreen, { profile, blend, styleBlend, kibbeResult, colorResult, closetCount: closet.length, closet, onNavigate:goTo, onSignOut:signOut, onOpenProfile:openProfile, onAccountDeleted:handleAccountDeleted, onSignIn:leaveGuestForGate });
+  else if(screen === "home") body = e(HomeScreen, { profile, blend, styleBlend, kibbeResult, colorResult, closetCount: closet.length, closet, digestOptOut, onToggleDigest: toggleDigest, onNavigate:goTo, onSignOut:signOut, onOpenProfile:openProfile, onAccountDeleted:handleAccountDeleted, onSignIn:leaveGuestForGate });
   else if(screen === "quiz") body = e(StyleQuizScreen, { kibbeResult, styleLanguageResult:styleBlend, onSaveKibbe:setKibbeResult, onSaveStyle:setStyleBlend, onSignIn: profile ? null : leaveGuestForGate, colorResult });
   else if(screen === "color") body = e(ColorScreen, { colorResult, onSaveColor:setColorResult });
   else if(screen === "closet") body = e(ClosetScreen, { closet, setCloset, blend, styleWordBlend:styleBlend, kibbeTypeName, topStyleWords, profile, isPremium, closetFreeLimit, onUpgrade:openPaywall, syncStatus:closetSyncStatus, onRetrySync:retryClosetSync, storageFull:closetStorageFull });

@@ -23,4 +23,5 @@ json_response([
     'isPremium' => has_premium($pdo, $accountId),
     'closetFreeLimit' => CLOSET_FREE_LIMIT,
     'freeAiReadsLeft' => free_ai_reads_left($pdo, $accountId),
+    'digestOptOut' => digest_opt_out($pdo, $accountId),
 ]);
