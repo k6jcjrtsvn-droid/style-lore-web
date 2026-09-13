@@ -81,7 +81,11 @@ try {
         $pdo->prepare('DELETE FROM reports WHERE visitor_id = ?')->execute([$id]);
         $pdo->prepare('DELETE FROM follows WHERE follower_id = ? OR following_id = ?')->execute([$id, $id]);
         $pdo->prepare('DELETE FROM closet_items WHERE account_id = ?')->execute([$id]);
-        $pdo->prepare('DELETE FROM comments WHERE author_id = ?')->execute([$id]);
+        try {
+            $pdo->prepare('DELETE FROM comments WHERE author_id = ?')->execute([$id]);
+        } catch (PDOException $e) {
+            error_log('comments.author_id missing? run MIGRATE-2026-09-17.sql — ' . $e->getMessage());
+        }
         $pdo->prepare('DELETE FROM posts WHERE author_id = ?')->execute([$id]);
 
         // Stories + who viewed them, and this account's own views of others'.

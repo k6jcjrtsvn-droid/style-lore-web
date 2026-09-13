@@ -28,8 +28,16 @@ $check->execute([$postId]);
 $post = $check->fetch();
 if (!$post) error_response('Post not found.', 404);
 
-$ins = $pdo->prepare('INSERT INTO comments (post_id, author_id, author_name, text, created_at) VALUES (?, ?, ?, ?, ?)');
-$ins->execute([$postId, $visitorId, $authorName, mb_substr($text, 0, 180), current_time_ms()]);
+try {
+    $ins = $pdo->prepare('INSERT INTO comments (post_id, author_id, author_name, text, created_at) VALUES (?, ?, ?, ?, ?)');
+    $ins->execute([$postId, $visitorId, $authorName, mb_substr($text, 0, 180), current_time_ms()]);
+} catch (PDOException $e) {
+    // MIGRATE-2026-09-17.sql (comments.author_id) not run yet — keep
+    // comments working, just without the author id, and say so in the log.
+    error_log('comments.author_id missing? run MIGRATE-2026-09-17.sql — ' . $e->getMessage());
+    $ins = $pdo->prepare('INSERT INTO comments (post_id, author_name, text, created_at) VALUES (?, ?, ?, ?)');
+    $ins->execute([$postId, $authorName, mb_substr($text, 0, 180), current_time_ms()]);
+}
 
 if ($post['author_id'] !== $visitorId) {
     create_notification(
