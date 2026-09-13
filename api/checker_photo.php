@@ -37,8 +37,16 @@ if (!$visitorId || !$authToken) {
 $pdo = db();
 require_owner($pdo, $visitorId, $authToken);
 
-if (!has_premium($pdo, $visitorId)) {
+// One free read per account, ever: the best paywall is a taste of the
+// real thing. After that it's Premium. Premium reads are rate-limited
+// per day too, purely to cap abuse of a per-call-cost feature.
+$isPremium = has_premium($pdo, $visitorId);
+$freeLeft = free_ai_reads_left($pdo, $visitorId);
+if (!$isPremium && $freeLeft <= 0) {
     json_response(['error' => 'The AI Stylist is a Style-LORE Premium feature.', 'code' => 'premium_required'], 402);
+}
+if ($isPremium) {
+    rate_limit($pdo, 'ai_read:' . $visitorId, 40, 86400, "That's a lot of stylist reads for one day — try again tomorrow.");
 }
 
 // Defensive: config.sample.php doesn't (yet) declare these constants, and
@@ -179,7 +187,9 @@ try {
     }
     $verdict = in_array($verdictData['verdict'] ?? '', ['match', 'caution', 'mismatch'], true) ? $verdictData['verdict'] : 'caution';
 
+    record_ai_read($pdo, $visitorId);
     json_response([
+        'freeReadsLeft' => $isPremium ? null : max(0, $freeLeft - 1),
         'verdict' => $verdict,
         'headline' => mb_substr((string)($verdictData['headline'] ?? ''), 0, 140),
         'detail' => mb_substr((string)($verdictData['detail'] ?? ''), 0, 800),

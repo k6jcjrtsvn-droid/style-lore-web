@@ -8,6 +8,7 @@ deployment:
     - /bin/cp -f beta-admin.html $DEPLOYPATH
     - /bin/cp -f MIGRATE-2026-09-16.sql $DEPLOYPATH
     - /bin/cp -f MIGRATE-2026-09-17.sql $DEPLOYPATH
+    - /bin/cp -f MIGRATE-2026-09-18.sql $DEPLOYPATH
     - /bin/cp -f .htaccess $DEPLOYPATH
     - /bin/cp -f config.sample.php $DEPLOYPATH
     - /bin/cp -f schema.sql $DEPLOYPATH

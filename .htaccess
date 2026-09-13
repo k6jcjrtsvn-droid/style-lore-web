@@ -83,6 +83,14 @@ RewriteRule ^api/closet/?$ api/closet.php [L,QSA]
 <Files "schema.sql">
     Require all denied
 </Files>
+# Migration scripts, deploy config, logs and notes ride along in the
+# repo — none of them should ever be served.
+<FilesMatch "\.(sql|ya?ml|log|md)$">
+    Require all denied
+</FilesMatch>
+<Files "error_log">
+    Require all denied
+</Files>
 
 # Never let anything under includes/ be requested directly.
 RewriteRule ^includes/ - [F,L]

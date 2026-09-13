@@ -385,6 +385,32 @@ function has_premium(PDO $pdo, string $accountId): bool {
     return true;
 }
 
+const FREE_AI_READS = 1;
+
+/** How many free AI Stylist reads this account still has (see ai_reads). */
+function free_ai_reads_left(PDO $pdo, string $accountId): int {
+    if ($accountId === '') return 0;
+    try {
+        $stmt = $pdo->prepare('SELECT used FROM ai_reads WHERE account_id = ?');
+        $stmt->execute([$accountId]);
+        $used = (int)($stmt->fetchColumn() ?: 0);
+    } catch (Throwable $e) {
+        error_log('free_ai_reads_left: ' . $e->getMessage());
+        return 0;
+    }
+    return max(0, FREE_AI_READS - $used);
+}
+
+function record_ai_read(PDO $pdo, string $accountId): void {
+    try {
+        $pdo->prepare('INSERT INTO ai_reads (account_id, used, last_at) VALUES (?, 1, ?)
+                       ON DUPLICATE KEY UPDATE used = used + 1, last_at = VALUES(last_at)')
+            ->execute([$accountId, current_time_ms()]);
+    } catch (Throwable $e) {
+        error_log('record_ai_read: ' . $e->getMessage());
+    }
+}
+
 /**
  * Saves an uploaded file (one $_FILES entry) into web/uploads/$subdir with
  * a random filename, mirroring the local Node app's multer config (30MB

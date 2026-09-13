@@ -670,6 +670,12 @@
   .browse-row::-webkit-scrollbar{ display:none; }
   .browse-row .tab-chip{ flex:0 0 auto; white-space:nowrap; }
   .home-grid{ display:grid; grid-template-columns:repeat(2,1fr); gap:10px; }
+  .outfit-row{ display:flex; gap:10px; overflow-x:auto; padding-bottom:4px; scrollbar-width:none; }
+  .outfit-row::-webkit-scrollbar{ display:none; }
+  .outfit-piece{ flex:0 0 108px; }
+  .outfit-piece img, .outfit-piece-blank{ width:108px; height:108px; border-radius:var(--radius-m); object-fit:cover; display:flex; align-items:center; justify-content:center; background:var(--accent-soft); color:var(--accent); }
+  .outfit-piece-label{ font-size:10.5px; text-transform:uppercase; letter-spacing:.06em; color:var(--ink-soft); margin-top:6px; }
+  .outfit-piece-desc{ font-size:12.5px; line-height:1.35; overflow:hidden; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; }
   .home-tile{
     display:flex; flex-direction:column; align-items:flex-start; gap:4px; text-align:left;
     padding:14px; border:1px solid var(--line); border-radius:var(--radius-m); background:var(--paper-raised);
@@ -1387,6 +1393,113 @@ function shopQueryFromAxisLabel(label){
 // labels (e.g. from a closet gap-analysis miss, or a checker verdict's
 // non-aligned axes) — dedups and caps at 3 so this never crowds out the
 // actual verdict/analysis above it.
+
+/* =====================================================================
+   OUTFITS — on-device. Reads each closet item's description for a garment
+   category, then assembles a wearable combination (dress, or top +
+   bottom, plus optional outerwear and shoes), preferring pieces that
+   score well against the person's type. Seeded by the date so "today's
+   outfit" stays put all day; Shuffle re-rolls it.
+===================================================================== */
+const GARMENT_CATEGORY_WORDS = {
+  dress:     ["dress","gown","jumpsuit","romper","playsuit","kaftan","caftan","overalls","dungarees"],
+  top:       ["top","tee","t shirt","tshirt","shirt","blouse","sweater","jumper","cardigan","knit","hoodie","sweatshirt","tank","cami","camisole","bodysuit","turtleneck","polo","henley","tunic","bralette","crop top","vest top","pullover"],
+  bottom:    ["jeans","jean","pants","trousers","trouser","skirt","shorts","leggings","legging","joggers","jogger","culottes","chinos","slacks","cargo pants","wide leg","palazzo","sweatpants","midi","mini skirt","maxi skirt","pencil skirt"],
+  outerwear: ["jacket","blazer","coat","trench","parka","puffer","bomber","overcoat","peacoat","pea coat","cape","poncho","shacket","gilet","duster","anorak","windbreaker","denim jacket","leather jacket","moto"],
+  shoes:     ["shoes","shoe","boots","boot","sneakers","sneaker","trainers","trainer","heels","heel","loafers","loafer","sandals","sandal","flats","flat","mules","mule","pumps","stiletto","oxfords","brogues","espadrilles","slides","clogs","ballet flat","platform"],
+  accessory: ["bag","tote","clutch","purse","belt","scarf","hat","cap","beanie","necklace","earrings","earring","bracelet","ring","sunglasses","watch","backpack","beret"],
+};
+const GARMENT_CATEGORY_PATTERNS = Object.fromEntries(Object.entries(GARMENT_CATEGORY_WORDS).map(([cat, words]) => [cat,
+  words.map(w => new RegExp("(?:^|[^a-z])" + w.replace(/[\s-]+/g, "[\\s-]?") + "(?:s|es)?(?![a-z])", "i"))]));
+// Order matters: "denim jacket" must read as outerwear, not "denim" (bottom).
+const GARMENT_CATEGORY_ORDER = ["outerwear","dress","shoes","accessory","bottom","top"];
+function garmentCategory(description){
+  const t = " " + String(description || "").toLowerCase().replace(/[‐-―]/g, "-") + " ";
+  for (const cat of GARMENT_CATEGORY_ORDER){
+    if (GARMENT_CATEGORY_PATTERNS[cat].some(re => re.test(t))) return cat;
+  }
+  return null;
+}
+function seededRandom(seed){
+  let x = seed >>> 0 || 1;
+  return () => { x ^= x << 13; x >>>= 0; x ^= x >>> 17; x ^= x << 5; x >>>= 0; return x / 4294967296; };
+}
+function dateSeed(){ const d = new Date(); return d.getFullYear() * 10000 + (d.getMonth() + 1) * 100 + d.getDate(); }
+// Returns { pieces:[{item, category}], why, ready } or { ready:false, need }.
+function buildOutfit(closet, profile, seed){
+  const rnd = seededRandom(seed);
+  const buckets = { dress:[], top:[], bottom:[], outerwear:[], shoes:[], accessory:[] };
+  for (const item of closet || []){
+    const cat = garmentCategory(item.description);
+    if (!cat) continue;
+    let score = 50;
+    try{
+      const v = styleCheckVerdict(item.description || "", profile);
+      if (v && typeof v.score === "number") score = v.score;
+    }catch(err){}
+    buckets[cat].push({ item, category:cat, score });
+  }
+  const canDress = buckets.dress.length > 0;
+  const canSeparates = buckets.top.length > 0 && buckets.bottom.length > 0;
+  if (!canDress && !canSeparates){
+    return { ready:false, need: buckets.top.length && !buckets.bottom.length ? "a bottom (jeans, a skirt, trousers)"
+      : buckets.bottom.length && !buckets.top.length ? "a top" : "a top and a bottom, or a dress" };
+  }
+  // Weighted pick: better-scoring pieces come up more often, but nothing is
+  // excluded — a closet should feel used, not judged.
+  function pick(list){
+    if (!list.length) return null;
+    const weights = list.map(x => 1 + Math.max(0, x.score - 40) / 20);
+    let r = rnd() * weights.reduce((a, b) => a + b, 0);
+    for (let i = 0; i < list.length; i++){ r -= weights[i]; if (r <= 0) return list[i]; }
+    return list[list.length - 1];
+  }
+  const pieces = [];
+  const useDress = canDress && (!canSeparates || rnd() < 0.4);
+  if (useDress) pieces.push(pick(buckets.dress));
+  else { pieces.push(pick(buckets.top)); pieces.push(pick(buckets.bottom)); }
+  if (buckets.outerwear.length && rnd() < 0.7) pieces.push(pick(buckets.outerwear));
+  if (buckets.shoes.length) pieces.push(pick(buckets.shoes));
+  if (buckets.accessory.length && rnd() < 0.5) pieces.push(pick(buckets.accessory));
+  const avg = Math.round(pieces.reduce((a, p) => a + p.score, 0) / pieces.length);
+  const why = avg >= 70 ? "Every piece here sits well with your lines."
+    : avg >= 45 ? "A solid everyday combination — one piece leans away from your type, which can read as intentional contrast."
+    : "Built from what you own. As you log more pieces that suit your type, these get sharper.";
+  return { ready:true, pieces, avg, why };
+}
+
+function OutfitCard({ closet, profile, compact, onNavigate }){
+  const [seed, setSeed] = useState(() => dateSeed());
+  const outfit = useMemo(() => buildOutfit(closet, profile, seed), [closet, profile, seed]);
+  const labels = { dress:"Dress", top:"Top", bottom:"Bottom", outerwear:"Layer", shoes:"Shoes", accessory:"Finish" };
+  if (!closet || closet.length === 0){
+    if (compact) return null;
+    return e("div", { className:"card", style:{ marginBottom:14, padding:14 } },
+      e("div", { className:"eyebrow", style:{ marginBottom:4 } }, "Today's outfit"),
+      e("div", { style:{ fontSize:13.5, color:"var(--ink-soft)" } }, "Log a few pieces and Style-LORE will put an outfit together for you every morning."));
+  }
+  if (!outfit.ready){
+    return e("div", { className:"card", style:{ marginBottom:14, padding:14 } },
+      e("div", { className:"eyebrow", style:{ marginBottom:4 } }, "Today's outfit"),
+      e("div", { style:{ fontSize:13.5, color:"var(--ink-soft)" } }, "Almost there — add " + outfit.need + " and there's an outfit here every day."),
+      onNavigate ? e("button", { className:"btn-text", style:{ padding:0, marginTop:8 }, onClick:()=>onNavigate("closet") }, "Open closet") : null);
+  }
+  return e("div", { className:"card", style:{ marginBottom:14, padding:14 } },
+    e("div", { style:{ display:"flex", justifyContent:"space-between", alignItems:"baseline", marginBottom:8 } },
+      e("div", { className:"eyebrow", style:{ margin:0 } }, "Today's outfit"),
+      e("button", { className:"btn-text", style:{ padding:0, fontSize:12.5 }, onClick:()=>{ haptic("light"); setSeed(s => (s * 31 + 7) >>> 0); } }, "Shuffle")
+    ),
+    e("div", { className:"outfit-row" },
+      outfit.pieces.map(p => e("div", { key:p.item.id, className:"outfit-piece" },
+        p.item.photo ? e("img", { src:p.item.photo, alt:"" }) : e("div", { className:"outfit-piece-blank" }, Icon("shirt")),
+        e("div", { className:"outfit-piece-label" }, labels[p.category]),
+        e("div", { className:"outfit-piece-desc" }, p.item.description)
+      ))
+    ),
+    e("p", { style:{ fontSize:13, color:"var(--ink-soft)", margin:"10px 0 0" } }, outfit.why)
+  );
+}
+
 function ShopTheGap({ labels }){
   const unique = Array.from(new Set((labels || []).filter(Boolean))).slice(0, 3);
   if (unique.length === 0) return null;
@@ -2288,7 +2401,97 @@ async function shareText(title, text){
   }catch(err){ /* user dismissed the sheet */ }
   return false;
 }
-function canShare(){ return !!(nativePlugin("Share") || navigator.share); }
+function canShare(){ return !!(nativePlugin("Share") || navigator.share || true); }
+/* ---------------------------------------------------------------------
+   Shareable result card — a 1080×1350 PNG drawn on a canvas (type name
+   on the type's color, style words, season swatches, site URL). Shared
+   as a file through the native sheet where possible, otherwise the Web
+   Share API, otherwise shown for a long-press save.
+--------------------------------------------------------------------- */
+function cssVar(name){
+  try{ return getComputedStyle(document.documentElement).getPropertyValue(name).trim(); }catch(err){ return ""; }
+}
+function resolveColor(c){
+  if(!c) return "#B8285A";
+  const m = /^var\((--[a-z0-9-]+)\)$/i.exec(c.trim());
+  return m ? (cssVar(m[1]) || "#B8285A") : c;
+}
+function roundRect(ctx, x, y, w, h, r){
+  ctx.beginPath(); ctx.moveTo(x + r, y); ctx.arcTo(x + w, y, x + w, y + h, r); ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r); ctx.closePath();
+}
+async function renderResultCard({ typeName, tag, color, words, seasonName, swatches }){
+  try{ if(document.fonts && document.fonts.load){ await Promise.all([document.fonts.load("700 96px 'Bodoni Moda'"), document.fonts.load("600 34px 'Work Sans'")]); } }catch(err){}
+  const W = 1080, H = 1350;
+  const c = document.createElement("canvas"); c.width = W; c.height = H;
+  const ctx = c.getContext("2d");
+  const bg = resolveColor(color);
+  ctx.fillStyle = bg; ctx.fillRect(0, 0, W, H);
+  // soft glow
+  const g = ctx.createRadialGradient(W * .8, H * .15, 40, W * .8, H * .15, 700);
+  g.addColorStop(0, "rgba(255,255,255,.18)"); g.addColorStop(1, "rgba(255,255,255,0)");
+  ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+  const serif = "'Bodoni Moda', Georgia, 'Times New Roman', serif";
+  const sans = "'Work Sans', -apple-system, 'Segoe UI', Roboto, sans-serif";
+  ctx.fillStyle = "#fff";
+  ctx.font = "700 44px " + serif; ctx.fillText("Style-LORE", 80, 120);
+  ctx.globalAlpha = .8; ctx.font = "600 26px " + sans; ctx.fillText((typeName ? "MY KIBBE TYPE" : "MY STYLE WORDS"), 80, 320); ctx.globalAlpha = 1;
+  // headline, wrapped
+  const headline = typeName || (words || []).slice(0, 3).join(" · ");
+  let size = typeName ? 132 : 96;
+  ctx.font = "700 " + size + "px " + serif;
+  const wrap = (text, maxW) => { const out = []; let line = ""; for (const w of text.split(" ")){ const t = line ? line + " " + w : w; if (ctx.measureText(t).width > maxW && line){ out.push(line); line = w; } else line = t; } if (line) out.push(line); return out; };
+  let lines = wrap(headline, W - 160);
+  while (lines.length > 3 && size > 70){ size -= 10; ctx.font = "700 " + size + "px " + serif; lines = wrap(headline, W - 160); }
+  let y = 320 + size + 10;
+  for (const ln of lines){ ctx.fillText(ln, 80, y); y += size * 1.05; }
+  if (tag){ ctx.globalAlpha = .92; ctx.font = "400 36px " + sans; for (const ln of wrap(tag, W - 160)){ ctx.fillText(ln, 80, y + 10); y += 46; } ctx.globalAlpha = 1; y += 20; }
+  // word chips
+  if (typeName && words && words.length){
+    y += 40; let x = 80; ctx.font = "600 30px " + sans;
+    for (const w of words.slice(0, 5)){
+      const tw = ctx.measureText(w).width + 48;
+      if (x + tw > W - 80){ x = 80; y += 72; }
+      ctx.fillStyle = "rgba(255,255,255,.18)"; roundRect(ctx, x, y - 44, tw, 60, 30); ctx.fill();
+      ctx.strokeStyle = "rgba(255,255,255,.5)"; ctx.lineWidth = 2; ctx.stroke();
+      ctx.fillStyle = "#fff"; ctx.fillText(w, x + 24, y);
+      x += tw + 14;
+    }
+    y += 60;
+  }
+  // season swatches
+  if (seasonName && swatches && swatches.length){
+    y += 50; ctx.globalAlpha = .8; ctx.font = "600 26px " + sans; ctx.fillText("MY COLOR SEASON · " + seasonName.toUpperCase(), 80, y); ctx.globalAlpha = 1;
+    y += 30; const sw = Math.min(140, (W - 160 - 12 * (swatches.length - 1)) / swatches.length);
+    swatches.slice(0, 6).forEach((hex, i) => { ctx.fillStyle = hex; roundRect(ctx, 80 + i * (sw + 12), y, sw, sw, 22); ctx.fill(); });
+    y += sw;
+  }
+  ctx.fillStyle = "#fff"; ctx.globalAlpha = .85; ctx.font = "500 30px " + sans;
+  ctx.fillText("Find yours at style-lore.com", 80, H - 80); ctx.globalAlpha = 1;
+  return c.toDataURL("image/png");
+}
+async function shareResultCard(opts, fallbackText){
+  let dataUrl;
+  try{ dataUrl = await renderResultCard(opts); }catch(err){ return shareText("My Style-LORE result", fallbackText); }
+  const blob = dataUrlToBlob(dataUrl);
+  const file = new File([blob], "style-lore-result.png", { type:"image/png" });
+  // Native: write to cache and hand the file to the share sheet.
+  const FS = nativePlugin("Filesystem"), S = nativePlugin("Share");
+  if (FS && S && FS.writeFile && S.share){
+    try{
+      const written = await FS.writeFile({ path:"style-lore-result.png", data: dataUrl.split(",")[1], directory:"CACHE" });
+      await S.share({ title:"My Style-LORE result", text: fallbackText, files:[written.uri], dialogTitle:"Share your result" });
+      return true;
+    }catch(err){ /* fall through */ }
+  }
+  try{
+    if (navigator.canShare && navigator.canShare({ files:[file] })){ await navigator.share({ files:[file], title:"My Style-LORE result", text: fallbackText }); return true; }
+  }catch(err){ if (err && err.name === "AbortError") return true; }
+  // Last resort: open the image so it can be saved / long-pressed.
+  try{ const w = window.open(); if (w){ w.document.write('<title>Your Style-LORE result</title><body style="margin:0;background:#111"><img src="' + dataUrl + '" style="max-width:100%;display:block;margin:0 auto"></body>'); return true; } }catch(err){}
+  return shareText("My Style-LORE result", fallbackText);
+}
+
 // Opens the native camera / photo-library chooser instead of the <input
 // type=file> when the app is native. Returns true if it took over — the
 // caller then preventDefault()s so the file input doesn't also open.
@@ -3711,7 +3914,7 @@ function BottomNav({ screen, onNavigate }){
    HOME
 ===================================================================== */
 
-function HomeScreen({ profile, blend, styleBlend, kibbeResult, colorResult, closetCount, onNavigate, onSignOut, onOpenProfile, onAccountDeleted, onSignIn }){
+function HomeScreen({ profile, blend, styleBlend, kibbeResult, colorResult, closetCount, closet, onNavigate, onSignOut, onOpenProfile, onAccountDeleted, onSignIn }){
   const homeType = (kibbeResult && kibbeResult.kibbeTypeId && KIBBE_BY_ID[kibbeResult.kibbeTypeId]) || null;
   const homeWords = styleBlend ? topWords(styleBlend, STYLE_WORDS, 4) : [];
   const homeSeason = (colorResult && colorResult.seasonId && COLOR_SEASON_BY_ID[colorResult.seasonId]) || null;
@@ -3745,6 +3948,7 @@ function HomeScreen({ profile, blend, styleBlend, kibbeResult, colorResult, clos
       ) : null,
       e("div", { className:"hero-actions" },
         e("button", { className:"btn btn-sm", onClick:()=>onNavigate("quiz") }, "See full result"),
+        e("button", { className:"btn btn-sm", onClick: () => shareResultCard({ typeName: homeType.name, tag: homeType.tag, color: homeType.color, words: homeWords.map(w => w.name), seasonName: homeSeason ? homeSeason.name : null, swatches: homeSeason ? homeSeason.swatches : null }, "I'm a " + homeType.name + " on Style-LORE. Find yours: https://style-lore.com") }, "Share"),
         !homeSeason ? e("button", { className:"btn btn-sm", onClick:()=>onNavigate("color") }, "Find my colors") : null
       )
     ) : e(React.Fragment, null,
@@ -3782,6 +3986,8 @@ function HomeScreen({ profile, blend, styleBlend, kibbeResult, colorResult, clos
       ),
       e("p", { className:"screen-lede", style:{ marginTop:6, fontSize:13.5, marginBottom:0 } }, "About two minutes on your shape and how you like to dress.")
     ),
+
+    blend ? e(OutfitCard, { closet: closet || [], profile: { kibbeBlend: blend, styleWordBlend: styleBlend, kibbeTypeName: homeType ? homeType.name : null, topStyleWords: homeWords.map(w => w.id) }, compact:true, onNavigate }) : null,
 
     e("div", { className:"eyebrow", style:{ marginTop:8, marginBottom:10 } }, "Jump in"),
     e("div", { className:"home-grid" },
@@ -3848,7 +4054,8 @@ function buildKibbeResult(bodyAnswers, modAnswers){
   return { familyBlend, modScore, kibbeBlend: match.blend, kibbeTypeId: match.typeId, confidence: match.confidence };
 }
 
-function StyleQuizScreen({ kibbeResult, styleLanguageResult, onSaveKibbe, onSaveStyle, onSignIn }){
+function StyleQuizScreen({ kibbeResult, styleLanguageResult, onSaveKibbe, onSaveStyle, onSignIn, colorResult }){
+  const colorSeasonForShare = (colorResult && colorResult.seasonId && COLOR_SEASON_BY_ID[colorResult.seasonId]) || null;
   const initialStage = (kibbeResult && kibbeResult.kibbeTypeId) || (styleLanguageResult) ? "result" : "intro";
   const [stage, setStage] = useState(initialStage); // intro | quiz | photo | style-intro | style-quiz | result
   const [bodyAnswers, setBodyAnswers] = useState({});
@@ -4094,10 +4301,13 @@ function StyleQuizScreen({ kibbeResult, styleLanguageResult, onSaveKibbe, onSave
       e("p", null, hasKibbe ? kibbeType.tag : "The words that fit how you dress."),
       (hasKibbe && hasStyle) ? e("div", { className:"result-words" }, words.slice(0, 4).map(w => e("span", { key:w.id }, w.name))) : null,
       e("div", { className:"hero-actions" },
-        canShare() ? e("button", { className:"btn btn-sm", onClick: () => shareText("My Style-LORE result",
+        e("button", { className:"btn btn-sm", onClick: () => shareResultCard({
+            typeName: hasKibbe ? kibbeType.name : null, tag: hasKibbe ? kibbeType.tag : null, color: hasKibbe ? kibbeType.color : "var(--accent)",
+            words: words.map(w => w.name), seasonName: colorSeasonForShare ? colorSeasonForShare.name : null, swatches: colorSeasonForShare ? colorSeasonForShare.swatches : null,
+          },
           (hasKibbe ? ("I'm a " + kibbeType.name + " on Style-LORE") : "I took the Style-LORE style quiz") +
           (styleQuizBlend ? (" — my style language is " + topWords(styleQuizBlend, STYLE_WORDS, 3).map(w => w.name || w.id).join(", ")) : "") +
-          ". Find yours:") }, "Share my result") : null
+          ". Find yours: https://style-lore.com") }, "Share my result")
       )
     ),
 
@@ -4356,7 +4566,7 @@ function ColorScreen({ colorResult, onSaveColor }){
       e("h1", null, season.name),
       e("p", null, season.blurb),
       e("div", { className:"hero-actions" },
-        canShare() ? e("button", { className:"btn btn-sm", style:{ color:"var(--ink)", borderColor:"rgba(0,0,0,.25)", background:"rgba(255,255,255,.45)" }, onClick: () => shareText("My color season", "I'm a " + season.name + " on Style-LORE. Find your best colors:") }, "Share") : null
+        e("button", { className:"btn btn-sm", style:{ color:"var(--ink)", borderColor:"rgba(0,0,0,.25)", background:"rgba(255,255,255,.45)" }, onClick: () => shareResultCard({ typeName:null, tag:null, color: season.swatches[0], words:[season.name], seasonName: season.name, swatches: season.swatches }, "I'm a " + season.name + " on Style-LORE. Find your best colors: https://style-lore.com") }, "Share")
       )
     ),
     e("div", { className:"eyebrow", style:{ marginBottom:10 } }, "Your best colors — hold one up to a garment"),
@@ -4478,6 +4688,7 @@ function ClosetScreen({ closet, setCloset, blend, styleWordBlend, kibbeTypeName,
       e("button", { className:"btn btn-accent btn-sm", onClick: () => (window.__loreGoTo ? window.__loreGoTo("quiz") : null) }, "Take it")
     ) : null,
     capBanner,
+    (blend || styleWordBlend) ? e(OutfitCard, { closet, profile }) : null,
     storageFull ? e(Banner, { kind:"error" },
       "This device is out of storage for closet photos, so the newest changes aren't being saved here. They're still synced to your account — but remove a few items with photos to save changes on this device again."
     ) : null,
@@ -4706,7 +4917,8 @@ function PaywallSheet({ reason, onClose, onPurchased }){
    CHECKER — on-device fit verdicts, no API key or network call
 ===================================================================== */
 
-function CheckerScreen({ blend, styleWordBlend, kibbeTypeName, topStyleWords, visitorId, authToken, isPremium, onUpgrade }){
+function CheckerScreen({ blend, styleWordBlend, kibbeTypeName, topStyleWords, visitorId, authToken, isPremium, freeAiReadsLeft, onFreeAiReadUsed, onSignIn, onUpgrade }){
+  const hasFreeRead = !isPremium && (freeAiReadsLeft || 0) > 0;
   const [description, setDescription] = useState("");
   const [checked, setChecked] = useState(null);
   const profile = { kibbeBlend: blend, styleWordBlend, kibbeTypeName, topStyleWords };
@@ -4774,13 +4986,15 @@ function CheckerScreen({ blend, styleWordBlend, kibbeTypeName, topStyleWords, vi
 
   async function runAiStylist(){
     if(!photoBlob || aiBusy) return;
-    if(!isPremium){ if(onUpgrade) onUpgrade("checker"); return; }
+    if(!visitorId){ if(onSignIn) onSignIn(); return; }
+    if(!isPremium && !hasFreeRead){ if(onUpgrade) onUpgrade("checker"); return; }
     setAiBusy(true);
     setAiResult(null);
     setAiError(null);
     try{
       const result = await Api.checkPhoto({ visitorId, authToken, photoBlob, kibbeTypeName, topStyleWords });
       setAiResult(result);
+      if(!isPremium && onFreeAiReadUsed) onFreeAiReadUsed();
     }catch(err){
       if(err.code === "premium_required"){
         if(onUpgrade) onUpgrade("checker");
@@ -4876,15 +5090,16 @@ function CheckerScreen({ blend, styleWordBlend, kibbeTypeName, topStyleWords, vi
     // "want more?" next step — not as a separate section three screens
     // down. Sold on what the person gets, not on how it's built.
     photoBlob ? e("div", { className:"card", style:{ padding:16, marginBottom:16, borderColor:"var(--accent)" } },
-      e("div", { className:"eyebrow", style:{ marginBottom:4 } }, isPremium ? "AI Stylist" : "AI Stylist · Premium"),
+      e("div", { className:"eyebrow", style:{ marginBottom:4 } }, isPremium ? "AI Stylist" : hasFreeRead ? "AI Stylist · your first read is free" : "AI Stylist · Premium"),
       e("div", { style:{ fontSize:15, fontWeight:600, marginBottom:6 } }, "Want a stylist's read on this photo?"),
       e("p", { style:{ fontSize:13.5, color:"var(--ink-soft)", marginBottom:12 } },
+        (visitorId ? "" : "Create a free account and your first read is on us. ") +
         "Specific feedback on the cut, the color and the fit — and what to change if it's not working. Uses the photo above; this is the one feature that sends it off your phone, to get the read."),
       e("button", {
         className:"btn btn-accent btn-block",
         disabled: aiBusy,
         onClick: runAiStylist
-      }, aiBusy ? "Reading your photo…" : isPremium ? "Get my stylist read" : "Unlock the AI Stylist"),
+      }, aiBusy ? "Reading your photo…" : !visitorId ? "Sign in for a free read" : isPremium ? "Get my stylist read" : hasFreeRead ? "Try it free — one read on us" : "Unlock the AI Stylist"),
       aiError ? e("div", { style:{ marginTop:10 } }, e(Banner, { kind:"error" }, aiError)) : null,
       aiResult ? e("div", { style:{ marginTop:14, paddingTop:14, borderTop:"1px solid var(--line-soft)" } },
         e("div", { style:{ display:"flex", alignItems:"center", gap:10, marginBottom:8 } },
@@ -6409,6 +6624,9 @@ function App(){
   // actually enforces.
   const [isPremium, setIsPremium] = useState(false);
   const [closetFreeLimit, setClosetFreeLimit] = useState(20);
+  // Free AI Stylist reads left on this account (one, ever) — the taste
+  // that sells Premium. Server-enforced; this just shapes the button.
+  const [freeAiReadsLeft, setFreeAiReadsLeft] = useState(0);
   // null, or a short string saying why the paywall was opened ("closet",
   // "checker") purely for the paywall's own copy — never used for access
   // control (the server checks that independently on every call).
@@ -6726,10 +6944,11 @@ function App(){
   useEffect(() => {
     if(!profile || !profile.visitorId){ setIsPremium(false); return; }
     let cancelled = false;
-    Api.getSubscriptionStatus(profile.visitorId).then(({ isPremium, closetFreeLimit }) => {
+    Api.getSubscriptionStatus(profile.visitorId).then(({ isPremium, closetFreeLimit, freeAiReadsLeft }) => {
       if(cancelled) return;
       setIsPremium(!!isPremium);
       if(closetFreeLimit) setClosetFreeLimit(closetFreeLimit);
+      setFreeAiReadsLeft(typeof freeAiReadsLeft === "number" ? freeAiReadsLeft : 0);
     }).catch(()=>{});
     return () => { cancelled = true; };
   }, [profile && profile.visitorId, paywallReason === null]);
@@ -6935,11 +7154,11 @@ function App(){
       viewerKibbeBlend: blend, viewerStyleWordBlend: styleBlend, viewerKibbeTypeName: kibbeTypeName, viewerTopStyleWords: topStyleWords
     });
   }
-  else if(screen === "home") body = e(HomeScreen, { profile, blend, styleBlend, kibbeResult, colorResult, closetCount: closet.length, onNavigate:goTo, onSignOut:signOut, onOpenProfile:openProfile, onAccountDeleted:handleAccountDeleted, onSignIn:leaveGuestForGate });
-  else if(screen === "quiz") body = e(StyleQuizScreen, { kibbeResult, styleLanguageResult:styleBlend, onSaveKibbe:setKibbeResult, onSaveStyle:setStyleBlend, onSignIn: profile ? null : leaveGuestForGate });
+  else if(screen === "home") body = e(HomeScreen, { profile, blend, styleBlend, kibbeResult, colorResult, closetCount: closet.length, closet, onNavigate:goTo, onSignOut:signOut, onOpenProfile:openProfile, onAccountDeleted:handleAccountDeleted, onSignIn:leaveGuestForGate });
+  else if(screen === "quiz") body = e(StyleQuizScreen, { kibbeResult, styleLanguageResult:styleBlend, onSaveKibbe:setKibbeResult, onSaveStyle:setStyleBlend, onSignIn: profile ? null : leaveGuestForGate, colorResult });
   else if(screen === "color") body = e(ColorScreen, { colorResult, onSaveColor:setColorResult });
   else if(screen === "closet") body = e(ClosetScreen, { closet, setCloset, blend, styleWordBlend:styleBlend, kibbeTypeName, topStyleWords, profile, isPremium, closetFreeLimit, onUpgrade:openPaywall, syncStatus:closetSyncStatus, onRetrySync:retryClosetSync, storageFull:closetStorageFull });
-  else if(screen === "checker") body = e(CheckerScreen, { blend, styleWordBlend:styleBlend, kibbeTypeName, topStyleWords, visitorId: profile ? profile.visitorId : null, authToken: profile ? profile.token : null, isPremium, onUpgrade:openPaywall });
+  else if(screen === "checker") body = e(CheckerScreen, { blend, styleWordBlend:styleBlend, kibbeTypeName, topStyleWords, visitorId: profile ? profile.visitorId : null, authToken: profile ? profile.token : null, isPremium, freeAiReadsLeft, onFreeAiReadUsed: () => setFreeAiReadsLeft(n => Math.max(0, n - 1)), onSignIn: profile ? null : leaveGuestForGate, onUpgrade:openPaywall });
   else if(screen === "community") body = e(CommunityScreen, { profile, blend, onOpenProfile:openProfile });
   else if(screen === "notifications") body = e(NotificationsScreen, { profile, onBack:()=>goTo("home"), onOpenProfile:openProfile, onOpenConversation:openConversation });
   else if(screen === "inbox") body = e(InboxScreen, { profile, onBack:()=>goTo("home"), onOpenConversation:openConversation });
