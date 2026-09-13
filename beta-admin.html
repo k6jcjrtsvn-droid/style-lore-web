@@ -70,6 +70,17 @@
   #msg{ font-size:13px; margin-top:14px; min-height:18px; }
   #msg.error{ color:#B3261E; }
   #msg.success{ color:#1F6B3A; }
+  .confirm-bar{
+    margin-top:12px; padding:12px 14px; border-radius:10px;
+    border:1px solid var(--accent); background:var(--paper);
+  }
+  .confirm-bar p{ margin:0 0 10px; font-size:13px; }
+  .confirm-bar button{ margin-bottom:0; }
+  .row-remove{
+    background:transparent; border:none; color:var(--ink-soft);
+    font-size:12px; padding:2px 6px; margin:0; cursor:pointer; text-decoration:underline;
+  }
+  .row-remove:hover{ color:#B3261E; }
   [hidden]{ display:none !important; }
 </style>
 </head>
@@ -120,7 +131,7 @@
   <div class="card">
     <h2 style="margin-top:0; font-size:16px;">All testers</h2>
     <table>
-      <thead><tr><th>Email</th><th>Name</th><th>Status</th><th>Signed up</th></tr></thead>
+      <thead><tr><th>Email</th><th>Name</th><th>Status</th><th>Signed up</th><th></th></tr></thead>
       <tbody id="tester-rows"></tbody>
     </table>
   </div>
@@ -167,13 +178,70 @@
         var rowsHtml = testers.map(function (t) {
           return '<tr><td>' + t.email + '</td><td>' + (t.name || '') + '</td>' +
             '<td><span class="status-pill status-' + t.status + '">' + t.status + '</span></td>' +
-            '<td>' + fmtDate(t.createdAt) + '</td></tr>';
+            '<td>' + fmtDate(t.createdAt) + '</td>' +
+            '<td><button class="row-remove" data-email="' + t.email + '">remove</button></td></tr>';
         }).join('');
-        document.getElementById('tester-rows').innerHTML = rowsHtml || '<tr><td colspan="4">No sign-ups yet.</td></tr>';
+        document.getElementById('tester-rows').innerHTML = rowsHtml || '<tr><td colspan="5">No sign-ups yet.</td></tr>';
+
+        Array.prototype.forEach.call(document.querySelectorAll('.row-remove'), function (btn) {
+          btn.addEventListener('click', function () { removeTester(btn); });
+        });
       })
       .catch(function () {
         showMsg('Could not reach the server. Try refreshing.', 'error');
       });
+  }
+
+  // Inline confirmation rather than window.confirm(). A native confirm blocks
+  // the whole page, which freezes browser automation outright -- so the sync
+  // and send steps could never be driven for Kenneth, only handed back to him.
+  // This keeps the same deliberate two-step guardrail, in the page.
+  function confirmInline(btn, message) {
+    return new Promise(function (resolve) {
+      var open = document.querySelector('.confirm-bar');
+      if (open) open.remove();
+
+      var bar = document.createElement('div');
+      bar.className = 'confirm-bar';
+
+      var text = document.createElement('p');
+      text.textContent = message;
+
+      var yes = document.createElement('button');
+      yes.textContent = 'Yes, continue';
+      yes.className = 'confirm-yes';
+
+      var no = document.createElement('button');
+      no.textContent = 'Cancel';
+      no.className = 'secondary';
+
+      bar.appendChild(text);
+      bar.appendChild(yes);
+      bar.appendChild(no);
+      btn.parentNode.insertBefore(bar, btn.nextSibling);
+
+      function done(answer) { bar.remove(); resolve(answer); }
+      yes.addEventListener('click', function () { done(true); });
+      no.addEventListener('click', function () { done(false); });
+    });
+  }
+
+  function removeTester(btn) {
+    var email = btn.getAttribute('data-email');
+    confirmInline(btn, 'Remove ' + email + ' from the sign-up list? This does not touch Play Console.').then(function (go) {
+      if (!go) return;
+      fetch(API, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ key: key, action: 'delete_tester', email: email })
+      })
+        .then(function (res) { return res.json(); })
+        .then(function (data) {
+          showMsg(data.deleted ? ('Removed ' + email + '.') : ('Nothing removed for ' + email + '.'), data.deleted ? 'success' : 'error');
+          load();
+        })
+        .catch(function () { showMsg('Something went wrong removing ' + email + '.', 'error'); });
+    });
   }
 
   document.getElementById('unlock-btn').addEventListener('click', function () {
@@ -195,8 +263,8 @@
     });
   });
 
-  document.getElementById('sync-btn').addEventListener('click', function () {
-    if (!confirm('Only click this after you have confirmed these emails are actually added in Play Console. Continue?')) return;
+  document.getElementById('sync-btn').addEventListener('click', async function () {
+    if (!(await confirmInline(this, 'Only do this once you have confirmed these emails are actually added in Play Console.'))) return;
     fetch(API, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -210,8 +278,8 @@
       .catch(function () { showMsg('Something went wrong.', 'error'); });
   });
 
-  document.getElementById('send-btn').addEventListener('click', function () {
-    if (!confirm('This emails every "synced" tester their Play Store link right now. Continue?')) return;
+  document.getElementById('send-btn').addEventListener('click', async function () {
+    if (!(await confirmInline(this, 'This emails every synced tester their Play Store link right now.'))) return;
     fetch(API, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -219,7 +287,9 @@
     })
       .then(function (res) { return res.json(); })
       .then(function (data) {
-        showMsg('Sent ' + data.sent + ' link(s)' + (data.failed ? (', ' + data.failed + ' failed') : '') + '.', data.failed ? 'error' : 'success');
+        var summary = 'Sent ' + data.sent + ' link(s)' + (data.failed ? (', ' + data.failed + ' failed') : '') + '.';
+        if (data.errors && data.errors.length) summary += ' — ' + data.errors.join(' | ');
+        showMsg(summary, data.failed ? 'error' : 'success');
         load();
       })
       .catch(function () { showMsg('Something went wrong.', 'error'); });

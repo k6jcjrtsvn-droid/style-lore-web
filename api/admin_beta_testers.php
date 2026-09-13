@@ -70,6 +70,7 @@ if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST') {
         $testers = $pdo->query("SELECT id, email, name FROM beta_testers WHERE status = 'synced'")->fetchAll();
         $sent = 0;
         $failed = 0;
+        $errors = [];
         foreach ($testers as $t) {
             $safeName = htmlspecialchars($t['name'] !== '' ? $t['name'] : 'there');
             $html = style_lore_email_html(
@@ -90,9 +91,24 @@ if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST') {
                 $sent++;
             } else {
                 $failed++;
+                // Hand the real reason back to the admin page. Without this a
+                // failure is just a count, which is exactly how a broken send
+                // went undiagnosed before.
+                $errors[] = $t['email'] . ': ' . ($GLOBALS['last_mail_error'] ?? 'unknown error');
             }
         }
-        json_response(['ok' => true, 'sent' => $sent, 'failed' => $failed]);
+        json_response(['ok' => true, 'sent' => $sent, 'failed' => $failed, 'errors' => $errors]);
+    }
+
+    // Remove a tester outright -- test rows, typos, someone asking to be taken
+    // off. Previously this needed a throwaway PHP script deployed to the server
+    // and then deleted again, which is far too much ceremony for deleting a row.
+    if ($action === 'delete_tester') {
+        $email = normalize_email($body['email'] ?? '');
+        if ($email === '') error_response('No email given.', 400);
+        $stmt = $pdo->prepare('DELETE FROM beta_testers WHERE email = ?');
+        $stmt->execute([$email]);
+        json_response(['ok' => true, 'deleted' => $stmt->rowCount()]);
     }
 
     error_response('Unknown action.', 400);

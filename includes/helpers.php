@@ -132,11 +132,67 @@ function require_owner(PDO $pdo, string $accountId, ?string $token): void {
  * that to the client for auth emails (see auth_forgot.php's
  * anti-enumeration note).
  */
+/**
+ * The single place mail actually leaves the app.
+ *
+ * This exists because the previous code called @mail(...) directly, and that
+ * "@" threw the failure reason away -- when sending broke, all anyone could
+ * see was a bare "failed" count, with nothing in the PHP error log and
+ * nothing in cPanel's delivery tracker to explain it. So: record the reason,
+ * log it, and retry.
+ *
+ * Two retries, because shared-hosting MTAs refuse sends transiently (hourly
+ * relay caps, brief greylisting) far more often than permanently. The last
+ * attempt drops the "-f" envelope sender -- Exim on some shared hosts refuses
+ * that flag for particular recipients even while accepting it for others, and
+ * a message that arrives with a slightly worse envelope beats one that never
+ * goes out at all.
+ *
+ * On failure the reason is left in $GLOBALS['last_mail_error'] so the calling
+ * endpoint can hand it back to whoever pressed the button.
+ */
+function send_mail_tracked(string $to, string $subject, string $body, string $headers): bool {
+    $GLOBALS['last_mail_error'] = null;
+
+    $attempts = [
+        ['params' => '-f' . MAIL_FROM, 'label' => 'envelope sender'],
+        ['params' => '-f' . MAIL_FROM, 'label' => 'envelope sender, retry'],
+        ['params' => null,             'label' => 'no envelope sender'],
+    ];
+
+    $reason = 'unknown';
+    foreach ($attempts as $i => $attempt) {
+        if ($i > 0) usleep(400000); // 0.4s, let a transient limit clear
+
+        $before = error_get_last();
+        $ok = $attempt['params'] === null
+            ? @mail($to, $subject, $body, $headers)
+            : @mail($to, $subject, $body, $headers, $attempt['params']);
+
+        if ($ok) {
+            if ($i > 0) {
+                error_log('[style-lore mail] recovered on attempt ' . ($i + 1)
+                    . ' (' . $attempt['label'] . ') to=' . $to);
+            }
+            return true;
+        }
+
+        $after = error_get_last();
+        $reason = ($after && $after !== $before)
+            ? $after['message']
+            : 'mail() returned false without raising a PHP error - the local MTA refused to accept the message.';
+        error_log('[style-lore mail] attempt ' . ($i + 1) . ' (' . $attempt['label']
+            . ') FAILED to=' . $to . ' subject=' . $subject . ' reason=' . $reason);
+    }
+
+    $GLOBALS['last_mail_error'] = $reason;
+    return false;
+}
+
 function send_app_email(string $to, string $subject, string $body): bool {
     $headers = "From: Style-LORE <" . MAIL_FROM . ">\r\n" .
         "Content-Type: text/plain; charset=utf-8\r\n";
-    $envelopeSender = '-f' . MAIL_FROM;
-    return @mail($to, $subject, $body, $headers, $envelopeSender);
+    return send_mail_tracked($to, $subject, $body, $headers);
 }
 
 /**
@@ -159,8 +215,7 @@ function send_app_html_email(string $to, string $subject, string $html, string $
         $html . "\r\n\r\n" .
         "--$boundary--";
 
-    $envelopeSender = '-f' . MAIL_FROM;
-    return @mail($to, $subject, $body, $headers, $envelopeSender);
+    return send_mail_tracked($to, $subject, $body, $headers);
 }
 
 /**
