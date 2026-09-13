@@ -191,7 +191,7 @@ function require_owner(PDO $pdo, string $accountId, ?string $token): void {
  * table is missing (pre-migration) so a forgotten migration can't lock
  * everyone out — it just logs once per request.
  */
-function rate_limit(PDO $pdo, string $key, int $max, int $windowSeconds, string $message = 'Too many attempts — please wait a bit and try again.'): void {
+function rate_limit(PDO $pdo, string $key, int $max, int $windowSeconds, string $message = 'Too many attempts — please wait a bit and try again.', bool $retried = false): void {
     $key = substr($key, 0, 160);
     $now = time();
     $ownTxn = !$pdo->inTransaction();
@@ -219,6 +219,21 @@ function rate_limit(PDO $pdo, string $key, int $max, int $windowSeconds, string 
         }
     } catch (PDOException $e) {
         if ($ownTxn && $pdo->inTransaction()) $pdo->rollBack();
+        // An older rate_limits table (bucket/identifier/created_at, from the
+        // pre-hardening limiter) makes MIGRATE-2026-09-17's CREATE TABLE IF
+        // NOT EXISTS a no-op, so the new columns never appear. The counters
+        // are throwaway, so rebuild the table once and carry on.
+        if (!$retried && strpos($e->getMessage(), "Unknown column") !== false) {
+            try {
+                $pdo->exec('DROP TABLE IF EXISTS rate_limits');
+                $pdo->exec('CREATE TABLE rate_limits (rl_key VARCHAR(160) NOT NULL PRIMARY KEY, hits INT NOT NULL DEFAULT 0, window_start BIGINT NOT NULL) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4');
+                error_log('rate_limit: rebuilt rate_limits with the hardened schema');
+                rate_limit($pdo, $key, $max, $windowSeconds, $message, true);
+                return;
+            } catch (PDOException $e2) {
+                error_log('rate_limit rebuild failed: ' . $e2->getMessage());
+            }
+        }
         error_log('rate_limit unavailable (' . $key . '): ' . $e->getMessage());
     }
 }
