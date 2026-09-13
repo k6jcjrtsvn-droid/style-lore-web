@@ -871,6 +871,45 @@ function startPolling(fn, ms){
   return () => { clearInterval(id); document.removeEventListener("visibilitychange", onVisible); };
 }
 
+/* Makes a sheet behave like a real dialog for keyboard and screen-reader
+   users: Escape closes it, focus moves into it on open and returns to
+   whatever was focused before when it closes, and Tab is kept inside it
+   instead of wandering onto the page behind. Pair with role="dialog" +
+   aria-modal on the sheet element (see useDialog's returned ref). */
+function useDialog(onClose){
+  const ref = useRef(null);
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
+  useEffect(() => {
+    const previouslyFocused = document.activeElement;
+    const node = ref.current;
+    const FOCUSABLE = 'a[href],button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])';
+    if(node){
+      const first = node.querySelector(FOCUSABLE);
+      if(first) try{ first.focus(); }catch(err){}
+    }
+    function onKeyDown(ev){
+      if(ev.key === "Escape"){
+        ev.stopPropagation();
+        if(onCloseRef.current) onCloseRef.current();
+        return;
+      }
+      if(ev.key !== "Tab" || !node) return;
+      const items = Array.prototype.filter.call(node.querySelectorAll(FOCUSABLE), el => el.offsetParent !== null);
+      if(!items.length) return;
+      const firstItem = items[0], lastItem = items[items.length - 1];
+      if(ev.shiftKey && document.activeElement === firstItem){ ev.preventDefault(); lastItem.focus(); }
+      else if(!ev.shiftKey && document.activeElement === lastItem){ ev.preventDefault(); firstItem.focus(); }
+    }
+    document.addEventListener("keydown", onKeyDown, true);
+    return () => {
+      document.removeEventListener("keydown", onKeyDown, true);
+      if(previouslyFocused && previouslyFocused.focus) try{ previouslyFocused.focus(); }catch(err){}
+    };
+  }, []);
+  return ref;
+}
+
 function useBackClose(onClose){
   const onCloseRef = useRef(onClose);
   onCloseRef.current = onClose;
@@ -3339,9 +3378,10 @@ function AccountGate({ onComplete }){
 }
 
 function LegalSheet({ title, text, onClose }){
+  const dialogRef = useDialog(onClose);
   useBackClose(onClose);
   return e("div", { className:"sheet-backdrop", onClick: onClose },
-    e("div", { className:"sheet", onClick: ev => ev.stopPropagation() },
+    e("div", { className:"sheet", ref:dialogRef, role:"dialog", "aria-modal":"true", onClick: ev=>ev.stopPropagation() },
       e("div", { className:"sheet-handle" }),
       e("div", { className:"sheet-head" },
         e("h2", { className:"display", style:{ fontSize:20, fontWeight:700 } }, title),
@@ -3870,6 +3910,7 @@ function PhotoColorSampler({ onDone }){
   const [dataUrl, setDataUrl] = useState(null);
   const [step, setStep] = useState(0);
   const [points, setPoints] = useState([]);
+  const [cursor, setCursor] = useState(null); // keyboard crosshair, CSS px within the image
   const [error, setError] = useState(null);
   const imgRef = useRef(null);
   const canvasRef = useRef(null);
@@ -3895,23 +3936,51 @@ function PhotoColorSampler({ onDone }){
     }).catch(() => setError("Couldn't read that photo — try another."));
   }
 
-  function handleClick(ev){
+  // Sample at a point given in CSS pixels relative to the displayed image.
+  // Both the pointer path and the keyboard path go through here.
+  function sampleAt(rx, ry){
     const canvas = canvasRef.current;
     if(!imgRef.current || !canvas.width || step >= SAMPLE_STEPS.length) return;
     const rect = imgRef.current.getBoundingClientRect();
-    const scaleX = canvas.width / rect.width;
-    const scaleY = canvas.height / rect.height;
-    const x = (ev.clientX - rect.left) * scaleX;
-    const y = (ev.clientY - rect.top) * scaleY;
-    const rgb = samplePixel(canvas, x, y, 5);
-    const key = SAMPLE_STEPS[step].key;
-    samplesRef.current[key] = rgb;
-    setPoints(prev => [...prev, { x: ev.clientX - rect.left, y: ev.clientY - rect.top }]);
+    const rgb = samplePixel(canvas, rx * (canvas.width / rect.width), ry * (canvas.height / rect.height), 5);
+    samplesRef.current[SAMPLE_STEPS[step].key] = rgb;
+    setPoints(prev => [...prev, { x: rx, y: ry }]);
     if(step === SAMPLE_STEPS.length - 1){
       const s = samplesRef.current;
       onDone(featuresFromSamples(s.skin, s.hair, s.eye));
     } else {
       setStep(step + 1);
+    }
+  }
+
+  function handleClick(ev){
+    if(!imgRef.current) return;
+    const rect = imgRef.current.getBoundingClientRect();
+    setCursor({ x: ev.clientX - rect.left, y: ev.clientY - rect.top });
+    sampleAt(ev.clientX - rect.left, ev.clientY - rect.top);
+  }
+
+  // Keyboard path: this was the only way through the colour quiz's photo
+  // route and it was mouse-only, so a keyboard user simply couldn't finish
+  // it. Arrows move the crosshair (hold Shift for fine steps), Enter or
+  // Space takes the sample.
+  function handleKeyDown(ev){
+    if(!imgRef.current) return;
+    const rect = imgRef.current.getBoundingClientRect();
+    const stepPx = ev.shiftKey ? 1 : 8;
+    const deltas = { ArrowLeft:[-stepPx,0], ArrowRight:[stepPx,0], ArrowUp:[0,-stepPx], ArrowDown:[0,stepPx] };
+    if(deltas[ev.key]){
+      ev.preventDefault();
+      setCursor(c => ({
+        x: Math.max(0, Math.min(rect.width, (c ? c.x : rect.width / 2) + deltas[ev.key][0])),
+        y: Math.max(0, Math.min(rect.height, (c ? c.y : rect.height / 2) + deltas[ev.key][1])),
+      }));
+      return;
+    }
+    if(ev.key === "Enter" || ev.key === " "){
+      ev.preventDefault();
+      const c = cursor || { x: rect.width / 2, y: rect.height / 2 };
+      sampleAt(c.x, c.y);
     }
   }
 
@@ -3932,8 +4001,17 @@ function PhotoColorSampler({ onDone }){
           e("p", { className:"field-hint", style:{ marginBottom:12 } }, SAMPLE_STEPS[step].sub)
         )
       : e("p", { style:{ fontWeight:600, marginBottom:12 } }, "Got it — reading your colors…"),
-    e("div", { className:"sample-frame" },
-      e("img", { ref:imgRef, src:dataUrl, alt:"", onClick:handleClick }),
+    e("div", {
+        className:"sample-frame",
+        tabIndex:0,
+        role:"application",
+        "aria-label": step < SAMPLE_STEPS.length
+          ? (SAMPLE_STEPS[step].label + ". Click the photo, or move the crosshair with the arrow keys and press Enter to sample.")
+          : "Reading your colors",
+        onKeyDown: handleKeyDown
+      },
+      e("img", { ref:imgRef, src:dataUrl, alt:"The photo you uploaded, for picking colors from", onClick:handleClick }),
+      cursor ? e("span", { className:"sample-dot", style:{ left:cursor.x, top:cursor.y, outline:"2px solid #fff", boxShadow:"0 0 0 2px rgba(0,0,0,.5)" } }) : null,
       points.map((p,i) => e("span", { key:i, className:"sample-dot", style:{ left:p.x, top:p.y } }))
     )
   );
@@ -4151,6 +4229,7 @@ function ClosetScreen({ closet, setCloset, blend, styleWordBlend, kibbeTypeName,
 }
 
 function AddItemSheet({ onAdd, onClose }){
+  const dialogRef = useDialog(onClose);
   useBackClose(onClose);
   const [description, setDescription] = useState("");
   const [photoPreview, setPhotoPreview] = useState(null);
@@ -4171,14 +4250,14 @@ function AddItemSheet({ onAdd, onClose }){
   }
 
   return e("div", { className:"sheet-backdrop", onClick:onClose },
-    e("div", { className:"sheet", onClick: ev=>ev.stopPropagation() },
+    e("div", { className:"sheet", ref:dialogRef, role:"dialog", "aria-modal":"true", onClick: ev=>ev.stopPropagation() },
       e("div", { className:"sheet-handle" }),
       e("div", { className:"sheet-head" },
         e("h2", { className:"display", style:{ fontSize:20, fontWeight:700 } }, "Add to closet"),
         e("button", { className:"close-btn", onClick:onClose, "aria-label":"Close" }, Icon("x"))
       ),
       e("div", { className:"photo-frame", style:{ aspectRatio:"16/10" } },
-        photoPreview ? e("img", { src:photoPreview, alt:"" })
+        photoPreview ? e("img", { src:photoPreview, alt:"Preview of the photo you selected" })
           : e("label", { className:"photo-frame-label", htmlFor:"closet-photo-input" }, Icon("shirt"), e("span", null, "Add a photo (optional)"))
       ),
       e("input", { id:"closet-photo-input", type:"file", accept:"image/*", className:"visually-hidden", onChange:pickPhoto }),
@@ -4254,6 +4333,7 @@ function ClosetFeedRow({ item, onOpenProfile }){
 }
 
 function PaywallSheet({ reason, onClose, onPurchased }){
+  const dialogRef = useDialog(onClose);
   useBackClose(onClose);
   const [offerings, setOfferings] = useState(null);
   const [busy, setBusy] = useState(null); // a package identifier, "restore", or null
@@ -4330,7 +4410,7 @@ function PaywallSheet({ reason, onClose, onPurchased }){
   }
 
   return e("div", { className:"sheet-backdrop", onClick:onClose },
-    e("div", { className:"sheet", onClick: ev=>ev.stopPropagation() },
+    e("div", { className:"sheet", ref:dialogRef, role:"dialog", "aria-modal":"true", onClick: ev=>ev.stopPropagation() },
       e("div", { className:"sheet-handle" }),
       e("div", { className:"sheet-head" },
         e("h2", { className:"display", style:{ fontSize:20, fontWeight:700 } }, "Style-LORE Premium"),
@@ -4488,7 +4568,7 @@ function CheckerScreen({ blend, styleWordBlend, kibbeTypeName, topStyleWords, vi
     ),
 
     e("div", { className:"photo-frame", style:{ aspectRatio:"4/3", marginBottom:12 } },
-      photoPreview ? e("img", { src:photoPreview, alt:"" })
+      photoPreview ? e("img", { src:photoPreview, alt:"Preview of the photo you selected" })
         : e("label", { className:"photo-frame-label", htmlFor:"checker-photo-input" }, Icon("shirt"), e("span", null, "Add a photo"))
     ),
     e("input", { id:"checker-photo-input", type:"file", accept:"image/*", className:"visually-hidden", onChange:pickCheckerPhoto }),
@@ -4893,6 +4973,7 @@ function CommunityScreen({ profile, blend, onOpenProfile }){
 }
 
 function ComposeSheet({ profile, defaults, onPosted, onClose }){
+  const dialogRef = useDialog(onClose);
   useBackClose(onClose);
   const [caption, setCaption] = useState("");
   const [photoFile, setPhotoFile] = useState(null);
@@ -4990,7 +5071,7 @@ function ComposeSheet({ profile, defaults, onPosted, onClose }){
   }
 
   return e("div", { className:"sheet-backdrop", onClick:onClose },
-    e("div", { className:"sheet", onClick: ev=>ev.stopPropagation() },
+    e("div", { className:"sheet", ref:dialogRef, role:"dialog", "aria-modal":"true", onClick: ev=>ev.stopPropagation() },
       e("div", { className:"sheet-handle" }),
       e("div", { className:"sheet-head" },
         e("h2", { className:"display", style:{ fontSize:20, fontWeight:700 } }, "New post"),
@@ -5003,7 +5084,7 @@ function ComposeSheet({ profile, defaults, onPosted, onClose }){
           onChange: ev=>setCaption(ev.target.value) })
       ),
       e("div", { className:"photo-frame", style:{ aspectRatio:"16/10" } },
-        photoPreview ? e("img", { src:photoPreview, alt:"" })
+        photoPreview ? e("img", { src:photoPreview, alt:"Preview of the photo you selected" })
           : e("label", { className:"photo-frame-label", htmlFor:"post-photo-input" }, Icon("camera"), e("span", null, "Add a photo (optional)"))
       ),
       e("input", { id:"post-photo-input", type:"file", accept:"image/*", className:"visually-hidden", onChange:pickPhoto }),
@@ -5191,7 +5272,7 @@ function PostCard({ post, profile, followingIds, onToggleFollow, onOpenProfile, 
     post.videoFileUrl ? e("video", { className:"post-video", src:post.videoFileUrl, controls:true, playsInline:true, preload:"metadata" })
       : post.videoUrl ? e(VideoEmbed, { url:post.videoUrl })
       : null,
-    post.photoUrl ? e("img", { className:"post-photo", src:post.photoUrl, alt:"", loading:"lazy", decoding:"async" }) : null,
+    post.photoUrl ? e("img", { className:"post-photo", src:post.photoUrl, alt: post.caption ? ("Photo shared with the caption: " + post.caption) : ("Photo shared by " + (post.authorName || "a member")), loading:"lazy", decoding:"async" }) : null,
     e("div", { className:"post-actions" },
       e("button", { className:"post-action", "aria-pressed":liked, disabled:busy, onClick:toggleLike }, Icon("heart"), likeCount || ""),
       e("button", { className:"post-action", onClick:()=>setShowComments(!showComments) }, Icon("comment"), (post.comments||[]).length || ""),
@@ -5395,10 +5476,11 @@ function ProfileScreen({ id, viewer, onBack, onOpenProfile, onNameChange, onMess
    hand (the viewer's own from App()'s state, the other person's already
    fetched by ProfileScreen's normal profile load). */
 function CompareSheet({ myName, theirName, me, them, onClose }){
+  const dialogRef = useDialog(onClose);
   useBackClose(onClose);
   if(!them){
     return e("div", { className:"sheet-backdrop", onClick:onClose },
-      e("div", { className:"sheet", onClick: ev=>ev.stopPropagation() },
+      e("div", { className:"sheet", ref:dialogRef, role:"dialog", "aria-modal":"true", onClick: ev=>ev.stopPropagation() },
         e("div", { className:"sheet-handle" }),
         e("div", { className:"sheet-head" },
           e("h2", { className:"display", style:{ fontSize:20, fontWeight:700 } }, "Compare styles"),
@@ -5412,7 +5494,7 @@ function CompareSheet({ myName, theirName, me, them, onClose }){
   const result = compareProfiles(me, them);
 
   return e("div", { className:"sheet-backdrop", onClick:onClose },
-    e("div", { className:"sheet", onClick: ev=>ev.stopPropagation() },
+    e("div", { className:"sheet", ref:dialogRef, role:"dialog", "aria-modal":"true", onClick: ev=>ev.stopPropagation() },
       e("div", { className:"sheet-handle" }),
       e("div", { className:"sheet-head" },
         e("h2", { className:"display", style:{ fontSize:20, fontWeight:700 } }, "Compare styles"),
@@ -5471,6 +5553,7 @@ function CompareSheet({ myName, theirName, me, them, onClose }){
 }
 
 function EditProfileSheet({ viewer, currentProfile, onSaved, onClose }){
+  const dialogRef = useDialog(onClose);
   useBackClose(onClose);
   const [name, setName] = useState((currentProfile && currentProfile.name) || viewer.name || "");
   const [bio, setBio] = useState((currentProfile && currentProfile.bio) || "");
@@ -5503,7 +5586,7 @@ function EditProfileSheet({ viewer, currentProfile, onSaved, onClose }){
   }
 
   return e("div", { className:"sheet-backdrop", onClick:onClose },
-    e("div", { className:"sheet", onClick: ev=>ev.stopPropagation() },
+    e("div", { className:"sheet", ref:dialogRef, role:"dialog", "aria-modal":"true", onClick: ev=>ev.stopPropagation() },
       e("div", { className:"sheet-handle" }),
       e("div", { className:"sheet-head" },
         e("h2", { className:"display", style:{ fontSize:20, fontWeight:700 } }, "Edit profile"),
@@ -5512,7 +5595,7 @@ function EditProfileSheet({ viewer, currentProfile, onSaved, onClose }){
 
       e("label", { htmlFor:"avatar-input", className:"avatar-picker" },
         avatarPreview
-          ? e("img", { src:avatarPreview, alt:"" })
+          ? e("img", { src:avatarPreview, alt:"Preview of your new profile picture" })
           : e("span", { className:"avatar-picker-label" }, Icon("camera"), e("span", null, "Add photo")),
         e("span", { className:"avatar-picker-edit-badge" }, Icon("camera"))
       ),
@@ -5536,6 +5619,7 @@ function EditProfileSheet({ viewer, currentProfile, onSaved, onClose }){
 }
 
 function DeleteAccountSheet({ viewer, onDeleted, onClose }){
+  const dialogRef = useDialog(onClose);
   useBackClose(onClose);
   const [password, setPassword] = useState("");
   const [confirmText, setConfirmText] = useState("");
@@ -5557,7 +5641,7 @@ function DeleteAccountSheet({ viewer, onDeleted, onClose }){
   }
 
   return e("div", { className:"sheet-backdrop", onClick: busy ? undefined : onClose },
-    e("div", { className:"sheet", onClick: ev=>ev.stopPropagation() },
+    e("div", { className:"sheet", ref:dialogRef, role:"dialog", "aria-modal":"true", onClick: ev=>ev.stopPropagation() },
       e("div", { className:"sheet-handle" }),
       e("div", { className:"sheet-head" },
         e("h2", { className:"display", style:{ fontSize:20, fontWeight:700 } }, "Delete your account"),
@@ -5637,6 +5721,7 @@ function StoryTray({ stories, profile, onOpenStory, onAddStory }){
 }
 
 function StoryViewerOverlay({ stories, authorId, profile, onClose, onRequestAdd }){
+  const dialogRef = useDialog(onClose);
   useBackClose(onClose);
   const authorStories = (stories || []).filter(s => s.authorId === authorId);
   const [idx, setIdx] = useState(0);
@@ -5659,7 +5744,7 @@ function StoryViewerOverlay({ stories, authorId, profile, onClose, onRequestAdd 
   const isMine = authorId === profile.visitorId;
 
   return e("div", { className:"story-overlay", onClick:onClose },
-    e("div", { className:"story-overlay-inner", onClick: ev=>ev.stopPropagation() },
+    e("div", { className:"story-overlay-inner", ref:dialogRef, role:"dialog", "aria-modal":"true", "aria-label":"Story", onClick: ev=>ev.stopPropagation() },
       e("div", { className:"story-progress-row" },
         authorStories.map((s, i) => e("div", { key:s.id, className:"story-progress-seg" + (i <= idx ? " story-progress-seg-filled" : "") }))
       ),
@@ -5671,7 +5756,7 @@ function StoryViewerOverlay({ stories, authorId, profile, onClose, onRequestAdd 
       ),
       current.mediaType === "video"
         ? e("video", { className:"story-media", src:current.mediaUrl, autoPlay:true, playsInline:true, controls:false, onEnded:next })
-        : e("img", { className:"story-media", src:current.mediaUrl, alt:"" }),
+        : e("img", { className:"story-media", src:current.mediaUrl, alt: current.caption ? ("Story: " + current.caption) : ("Story by " + (current.authorName || "a member")) }),
       current.caption ? e("p", { className:"story-caption" }, current.caption) : null,
       e("div", { className:"story-tap-zones" },
         e("button", { className:"story-tap-zone", "aria-label":"Previous story", onClick:prev }),
@@ -5683,6 +5768,7 @@ function StoryViewerOverlay({ stories, authorId, profile, onClose, onRequestAdd 
 }
 
 function AddStorySheet({ profile, onCreated, onClose }){
+  const dialogRef = useDialog(onClose);
   useBackClose(onClose);
   const [photoPreview, setPhotoPreview] = useState(null);
   const [photoFile, setPhotoFile] = useState(null);
@@ -5749,7 +5835,7 @@ function AddStorySheet({ profile, onCreated, onClose }){
   }
 
   return e("div", { className:"sheet-backdrop", onClick:onClose },
-    e("div", { className:"sheet", onClick: ev=>ev.stopPropagation() },
+    e("div", { className:"sheet", ref:dialogRef, role:"dialog", "aria-modal":"true", onClick: ev=>ev.stopPropagation() },
       e("div", { className:"sheet-handle" }),
       e("div", { className:"sheet-head" },
         e("h2", { className:"display", style:{ fontSize:20, fontWeight:700 } }, "Add to your story"),
@@ -5757,7 +5843,7 @@ function AddStorySheet({ profile, onCreated, onClose }){
       ),
       e("p", { style:{ fontSize:12.5, color:"var(--ink-soft)", marginBottom:12 } }, "Visible to your followers for 24 hours, then it disappears."),
       e("div", { className:"photo-frame", style:{ aspectRatio:"9/14", maxHeight:320 } },
-        photoPreview ? e("img", { src:photoPreview, alt:"" })
+        photoPreview ? e("img", { src:photoPreview, alt:"Preview of the photo you selected" })
           : videoPreviewUrl ? e("video", { src:videoPreviewUrl, controls:true, playsInline:true, style:{ width:"100%", height:"100%", objectFit:"cover" } })
           : e("label", { className:"photo-frame-label", htmlFor:"story-photo-input" }, Icon("camera"), e("span", null, "Add a photo or clip"))
       ),
@@ -5783,6 +5869,7 @@ function AddStorySheet({ profile, onCreated, onClose }){
 ===================================================================== */
 
 function CreateGroupSheet({ profile, onCreated, onClose }){
+  const dialogRef = useDialog(onClose);
   useBackClose(onClose);
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
@@ -5810,7 +5897,7 @@ function CreateGroupSheet({ profile, onCreated, onClose }){
   }
 
   return e("div", { className:"sheet-backdrop", onClick:onClose },
-    e("div", { className:"sheet", onClick: ev=>ev.stopPropagation() },
+    e("div", { className:"sheet", ref:dialogRef, role:"dialog", "aria-modal":"true", onClick: ev=>ev.stopPropagation() },
       e("div", { className:"sheet-handle" }),
       e("div", { className:"sheet-head" },
         e("h2", { className:"display", style:{ fontSize:20, fontWeight:700 } }, "New group"),
