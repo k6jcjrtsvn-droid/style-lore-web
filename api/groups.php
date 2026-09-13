@@ -57,11 +57,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $topicKibbe = trim((string)($body['topicKibbe'] ?? '')) ?: null;
     $topicStyle = trim((string)($body['topicStyle'] ?? '')) ?: null;
     $creatorId = (string)($body['creatorId'] ?? '');
-    $creatorName = mb_substr(trim((string)($body['creatorName'] ?? '')), 0, 60);
 
     if (!$name) error_response('Give the group a name.', 400);
     if (!$creatorId) error_response('Missing creatorId.', 400);
     require_owner($pdo, $creatorId, (string)($body['authToken'] ?? ''));
+    require_verified($pdo, $creatorId);
+    rate_limit($pdo, 'group_create:' . $creatorId, 5, 86400, 'You can create up to 5 groups a day.');
+    $creatorName = profile_identity($pdo, $creatorId)['name'];
 
     $newId = uuidv4();
     $now = current_time_ms();

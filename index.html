@@ -2167,6 +2167,9 @@ const REVENUECAT_PUBLIC_SDK_KEY_ANDROID = "goog_SffETjRYZnPArhWaaEXEgSYzyca";
 // products to.
 const REVENUECAT_ENTITLEMENT_ID = "premium";
 
+// Auth token travels in a header, never in the URL (keeps it out of logs/referrers).
+function authHeader(authToken){ return authToken ? { "Authorization": "Bearer " + authToken } : {}; }
+
 const Api = {
   async signup({ name, email, password }){
     const r = await fetch("/api/auth/signup", {
@@ -2214,10 +2217,10 @@ const Api = {
     if(!r.ok) throw new Error("Couldn't update like.");
     return r.json();
   },
-  async comment(id, authorName, text){
+  async comment(id, visitorId, authToken, text){
     const r = await fetch("/api/posts/"+id+"/comments", {
       method:"POST", headers:{ "Content-Type":"application/json" },
-      body: JSON.stringify({ authorName, text }),
+      body: JSON.stringify({ visitorId, authToken, text }),
     });
     if(!r.ok) throw new Error("Couldn't post comment.");
     return r.json();
@@ -2369,8 +2372,8 @@ const Api = {
 
   // ---- Notifications --------------------------------------------------
   async getNotifications(visitorId, authToken){
-    const params = new URLSearchParams({ visitorId, authToken: authToken || "" });
-    const r = await fetch("/api/notifications?" + params.toString());
+    const params = new URLSearchParams({ visitorId });
+    const r = await fetch("/api/notifications?" + params.toString(), { headers: authHeader(authToken) });
     if(!r.ok) throw new Error("Couldn't load notifications.");
     return r.json(); // { notifications, unreadCount }
   },
@@ -2404,8 +2407,8 @@ const Api = {
 
   // ---- Direct messages --------------------------------------------------
   async getConversations(visitorId, authToken){
-    const params = new URLSearchParams({ visitorId, authToken: authToken || "" });
-    const r = await fetch("/api/conversations?" + params.toString());
+    const params = new URLSearchParams({ visitorId });
+    const r = await fetch("/api/conversations?" + params.toString(), { headers: authHeader(authToken) });
     if(!r.ok) throw new Error("Couldn't load your messages.");
     return r.json();
   },
@@ -2421,8 +2424,8 @@ const Api = {
     return r.json(); // { id }
   },
   async getMessages(conversationId, visitorId, authToken){
-    const params = new URLSearchParams({ conversationId, visitorId, authToken: authToken || "" });
-    const r = await fetch("/api/messages?" + params.toString());
+    const params = new URLSearchParams({ conversationId, visitorId });
+    const r = await fetch("/api/messages?" + params.toString(), { headers: authHeader(authToken) });
     if(!r.ok) throw new Error("Couldn't load that conversation.");
     return r.json();
   },
@@ -2440,8 +2443,8 @@ const Api = {
 
   // ---- Stories ----------------------------------------------------------
   async getStories(visitorId, authToken){
-    const params = new URLSearchParams({ visitorId, authToken: authToken || "" });
-    const r = await fetch("/api/stories?" + params.toString());
+    const params = new URLSearchParams({ visitorId });
+    const r = await fetch("/api/stories?" + params.toString(), { headers: authHeader(authToken) });
     if(!r.ok) throw new Error("Couldn't load stories.");
     return r.json();
   },
@@ -5034,7 +5037,7 @@ function PostCard({ post, profile, followingIds, onToggleFollow, onOpenProfile, 
     if(!commentText.trim()) return;
     setBusy(true);
     try{
-      const updated = await Api.comment(post.id, profile.name, commentText.trim());
+      const updated = await Api.comment(post.id, profile.visitorId, profile.token, commentText.trim());
       if(updated) onPatch({ comments: updated.comments });
       setCommentText("");
     }catch(err){ /* ignore */ }

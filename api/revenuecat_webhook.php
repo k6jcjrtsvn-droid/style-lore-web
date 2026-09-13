@@ -44,13 +44,29 @@ if ($accountId === '' || strpos($accountId, '$RCAnonymousID') === 0) {
 
 $pdo = db();
 
+// Only entitlement-changing events touch the subscription row. TEST is
+// the dashboard's "send test event" button, SUBSCRIBER_ALIAS / TRANSFER
+// are identity bookkeeping — none of them prove a purchase, so they must
+// never grant premium.
+$ignored = ['TEST', 'SUBSCRIBER_ALIAS', 'TRANSFER'];
+if (in_array($type, $ignored, true)) {
+    json_response(['ok' => true, 'skipped' => 'non-entitlement event ' . $type]);
+}
 // EXPIRATION means access has genuinely ended (grace period/billing retry
-// exhausted, or the subscription simply lapsed) — every other event type
-// RevenueCat sends (INITIAL_PURCHASE, RENEWAL, PRODUCT_CHANGE,
-// UNCANCELLATION, ...) means the account has, or still has mid-
-// cancellation, active access through expiration_at_ms.
-$isPremium = ($type === 'EXPIRATION') ? 0 : 1;
+// exhausted, or the subscription simply lapsed); SUBSCRIPTION_PAUSED means
+// the user paused (Play) and has no access until resumed. Every other
+// event type (INITIAL_PURCHASE, RENEWAL, PRODUCT_CHANGE, UNCANCELLATION,
+// CANCELLATION, BILLING_ISSUE, ...) means the account has, or still has
+// mid-cancellation, active access through expiration_at_ms — and
+// has_premium() re-checks expires_at on every read, so a stale row can't
+// keep granting access past that time.
+$isPremium = in_array($type, ['EXPIRATION', 'SUBSCRIPTION_PAUSED'], true) ? 0 : 1;
 $expiresAtMs = isset($event['expiration_at_ms']) ? (int)$event['expiration_at_ms'] : null;
+// Belt and braces: an event whose expiration is already in the past can't
+// be granting access, whatever its type says.
+if ($isPremium && $expiresAtMs !== null && $expiresAtMs < current_time_ms()) {
+    $isPremium = 0;
+}
 $productId = isset($event['product_id']) ? mb_substr((string)$event['product_id'], 0, 120) : null;
 
 $stmt = $pdo->prepare(

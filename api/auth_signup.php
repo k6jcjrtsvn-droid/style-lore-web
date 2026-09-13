@@ -13,6 +13,7 @@ if (!is_valid_email($email)) error_response('Enter a valid email address.', 400)
 if (strlen($password) < 8) error_response('Password must be at least 8 characters.', 400);
 
 $pdo = db();
+rate_limit($pdo, 'signup:ip:' . client_ip(), 5, 3600, 'Too many sign-ups from this connection — please try again later.');
 
 $check = $pdo->prepare('SELECT id FROM accounts WHERE email = ?');
 $check->execute([$email]);

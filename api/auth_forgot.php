@@ -16,6 +16,8 @@ $email = normalize_email($body['email'] ?? '');
 if (is_valid_email($email)) {
     try {
         $pdo = db();
+        rate_limit($pdo, 'forgot:ip:' . client_ip(), 10, 3600);
+        rate_limit($pdo, 'forgot:email:' . $email, 3, 3600);
         $stmt = $pdo->prepare('SELECT id, email FROM accounts WHERE email = ?');
         $stmt->execute([$email]);
         $account = $stmt->fetch();

@@ -16,6 +16,7 @@ if (strlen($password) < 8) error_response('Password must be at least 8 character
 
 try {
     $pdo = db();
+    rate_limit($pdo, 'reset:ip:' . client_ip(), 10, 3600);
     $stmt = $pdo->prepare('SELECT id, email, reset_token_hash, reset_token_expires FROM accounts WHERE reset_token_hash = ?');
     $stmt->execute([hash_token($token)]);
     $account = $stmt->fetch();

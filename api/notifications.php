@@ -14,7 +14,7 @@ $pdo = db();
 
 if ($_SERVER['REQUEST_METHOD'] === 'GET') {
     $visitorId = (string)($_GET['visitorId'] ?? '');
-    require_owner($pdo, $visitorId, (string)($_GET['authToken'] ?? ''));
+    require_owner($pdo, $visitorId, bearer_token());
 
     $stmt = $pdo->prepare('SELECT * FROM notifications WHERE recipient_id = ? ORDER BY created_at DESC LIMIT 50');
     $stmt->execute([$visitorId]);

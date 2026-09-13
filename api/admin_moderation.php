@@ -25,8 +25,13 @@
 require_once __DIR__ . '/../includes/helpers.php';
 
 function require_admin_secret(): void {
-    $sent = $_SERVER['HTTP_X_ADMIN_SECRET'] ?? '';
-    if (!defined('ADMIN_SECRET') || ADMIN_SECRET === '' || !hash_equals(ADMIN_SECRET, (string)$sent)) {
+    $sent = (string)($_SERVER['HTTP_X_ADMIN_SECRET'] ?? '');
+    // ADMIN_SECRET is what admin.html sends; fall back to ADMIN_KEY (the
+    // secret every other admin endpoint uses) so a config.php that only
+    // defines one of them still works. An empty secret never matches.
+    $secret = (defined('ADMIN_SECRET') && ADMIN_SECRET !== '') ? ADMIN_SECRET
+            : ((defined('ADMIN_KEY') && ADMIN_KEY !== '') ? ADMIN_KEY : '');
+    if ($secret === '' || $sent === '' || !hash_equals($secret, $sent)) {
         error_response('Not authorized.', 401);
     }
 }

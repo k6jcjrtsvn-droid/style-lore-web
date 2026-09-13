@@ -45,6 +45,9 @@ define('RESEND_API_KEY', '');
 // word — for example, generate one with:
 //   php -r "echo bin2hex(random_bytes(24));"
 define('ADMIN_KEY', '');
+// Optional: the moderation queue page (admin.html) sends X-Admin-Secret.
+// Leave empty to reuse ADMIN_KEY for it.
+define('ADMIN_SECRET', '');
 
 // Powers the "AI Stylist" (api/checker_photo.php) — Style-LORE Premium's
 // flagship paid feature: a real server-side call to Anthropic's Claude API

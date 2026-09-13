@@ -6,9 +6,16 @@
 <IfModule mod_php8.c>
     php_flag engine off
 </IfModule>
-<FilesMatch "\.(php|php\d|phtml|pl|py|cgi|sh)$">
+<IfModule mod_php.c>
+    php_flag engine off
+</IfModule>
+RemoveHandler .php .php3 .php4 .php5 .php7 .php8 .phtml .phar .pl .py .cgi .shtml
+RemoveType .php .php3 .php4 .php5 .php7 .php8 .phtml .phar
+<FilesMatch "\.(php|php\d|phtml|phar|pl|py|cgi|sh|shtml|htaccess|ini)$">
     Require all denied
 </FilesMatch>
-Options -ExecCGI
-AddHandler cgi-script .php .php3 .php4 .php5 .php7 .phtml .pl .py .cgi
-RemoveHandler .php .php3 .php4 .php5 .php7 .phtml
+# Serve everything here as a plain download-able static asset with no sniffing.
+<IfModule mod_headers.c>
+    Header set X-Content-Type-Options "nosniff"
+</IfModule>
+Options -Indexes -ExecCGI -Includes

@@ -12,6 +12,8 @@ $email = normalize_email($body['email'] ?? '');
 if (is_valid_email($email)) {
     try {
         $pdo = db();
+        rate_limit($pdo, 'resend:ip:' . client_ip(), 10, 3600);
+        rate_limit($pdo, 'resend:email:' . $email, 3, 3600);
         $stmt = $pdo->prepare('SELECT a.id, a.email, p.name FROM accounts a JOIN profiles p ON p.id = a.id WHERE a.email = ? AND a.email_verified = 0');
         $stmt->execute([$email]);
         $account = $stmt->fetch();

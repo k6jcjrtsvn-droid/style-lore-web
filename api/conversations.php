@@ -18,7 +18,7 @@ $pdo = db();
 
 if ($_SERVER['REQUEST_METHOD'] === 'GET') {
     $visitorId = (string)($_GET['visitorId'] ?? '');
-    require_owner($pdo, $visitorId, (string)($_GET['authToken'] ?? ''));
+    require_owner($pdo, $visitorId, bearer_token());
 
     $stmt = $pdo->prepare(
         'SELECT c.id, c.last_message_at, c.last_message_preview, cm.last_read_at,
@@ -49,12 +49,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $body = request_json();
     $visitorId = (string)($body['visitorId'] ?? '');
-    $visitorName = mb_substr(trim((string)($body['visitorName'] ?? '')), 0, 60);
     $otherId = (string)($body['otherId'] ?? '');
-    $otherName = mb_substr(trim((string)($body['otherName'] ?? '')), 0, 60);
 
     if (!$otherId || $otherId === $visitorId) error_response('Invalid conversation request.', 400);
     require_owner($pdo, $visitorId, (string)($body['authToken'] ?? ''));
+    require_verified($pdo, $visitorId);
+    rate_limit($pdo, 'convo:' . $visitorId, 20, 3600);
+
+    $otherExists = $pdo->prepare('SELECT id FROM accounts WHERE id = ?');
+    $otherExists->execute([$otherId]);
+    if (!$otherExists->fetch()) error_response('That account no longer exists.', 404);
+
+    // Names come from the profiles table, never from the client.
+    $visitorName = profile_identity($pdo, $visitorId)['name'];
+    $otherName = profile_identity($pdo, $otherId)['name'];
 
     // Reuse an existing 1:1 conversation between these two accounts if
     // one already exists, rather than creating a second thread.

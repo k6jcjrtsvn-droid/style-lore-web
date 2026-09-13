@@ -22,6 +22,7 @@ const ADMIN_NOTIFY_EMAIL = 'kgoodman96@gmail.com';
 require_method('POST');
 
 $pdo = db();
+rate_limit($pdo, 'beta:ip:' . client_ip(), 5, 3600, 'Too many sign-ups from this connection — please try again later.');
 $body = request_json();
 $email = normalize_email($body['email'] ?? '');
 $name = mb_substr(trim((string)($body['name'] ?? '')), 0, 60);

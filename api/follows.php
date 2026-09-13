@@ -25,9 +25,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $body = request_json();
     $followerId = (string)($body['followerId'] ?? '');
-    $followerName = (string)($body['followerName'] ?? '');
     $followingId = (string)($body['followingId'] ?? '');
-    $followingName = (string)($body['followingName'] ?? '');
 
     if (!$followerId || !$followingId || $followerId === $followingId) {
         error_response('Invalid follow request.', 400);
@@ -35,6 +33,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     // Ownership check — only the follower themself can create the edge.
     require_owner($pdo, $followerId, (string)($body['authToken'] ?? ''));
+
+    // Names come from the profiles table, never from the client.
+    $followerName = profile_identity($pdo, $followerId)['name'];
+    $followingName = profile_identity($pdo, $followingId)['name'];
 
     $id = $followerId . '__' . $followingId;
     $check = $pdo->prepare('SELECT id FROM follows WHERE id = ?');
@@ -49,7 +51,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $avatarStmt = $pdo->prepare('SELECT avatar_url FROM profiles WHERE id = ?');
     $avatarStmt->execute([$followerId]);
     $followerAvatar = ($row = $avatarStmt->fetch()) ? $row['avatar_url'] : null;
-    create_notification($pdo, $followingId, $followerId, $followerName ?: 'Someone', $followerAvatar, 'follow', ($followerName ?: 'Someone') . ' started following you.', ['actorId' => $followerId]);
+    create_notification($pdo, $followingId, $followerId, $followerName, $followerAvatar, 'follow', $followerName . ' started following you.', ['actorId' => $followerId], 86400);
 
     json_response(['ok' => true], 201);
 }

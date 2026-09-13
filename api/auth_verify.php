@@ -10,6 +10,7 @@ if (!$token) error_response('That verification link is invalid or has expired.',
 
 try {
     $pdo = db();
+    rate_limit($pdo, 'verify:ip:' . client_ip(), 20, 3600);
     $stmt = $pdo->prepare('SELECT id, verify_token_hash, verify_token_expires FROM accounts WHERE verify_token_hash = ?');
     $stmt->execute([hash_token($token)]);
     $account = $stmt->fetch();

@@ -14,7 +14,7 @@ $pdo = db();
 
 if ($_SERVER['REQUEST_METHOD'] === 'GET') {
     $visitorId = (string)($_GET['visitorId'] ?? '');
-    require_owner($pdo, $visitorId, (string)($_GET['authToken'] ?? ''));
+    require_owner($pdo, $visitorId, bearer_token());
 
     $followStmt = $pdo->prepare('SELECT following_id FROM follows WHERE follower_id = ?');
     $followStmt->execute([$visitorId]);

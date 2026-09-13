@@ -22,11 +22,11 @@ function require_conversation_member(PDO $pdo, string $conversationId, string $v
 if ($_SERVER['REQUEST_METHOD'] === 'GET') {
     $conversationId = (string)($_GET['conversationId'] ?? '');
     $visitorId = (string)($_GET['visitorId'] ?? '');
-    require_owner($pdo, $visitorId, (string)($_GET['authToken'] ?? ''));
+    require_owner($pdo, $visitorId, bearer_token());
     if (!$conversationId) error_response('Missing conversationId.', 400);
     require_conversation_member($pdo, $conversationId, $visitorId);
 
-    $stmt = $pdo->prepare('SELECT * FROM messages WHERE conversation_id = ? ORDER BY created_at ASC LIMIT 300');
+    $stmt = $pdo->prepare('SELECT * FROM (SELECT * FROM messages WHERE conversation_id = ? ORDER BY created_at DESC LIMIT 300) AS recent ORDER BY created_at ASC');
     $stmt->execute([$conversationId]);
     $rows = $stmt->fetchAll();
 
@@ -44,6 +44,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     if (!$conversationId || !$text) error_response('Missing conversationId or text.', 400);
     require_owner($pdo, $visitorId, (string)($body['authToken'] ?? ''));
+    require_verified($pdo, $visitorId);
+    rate_limit($pdo, 'msg:' . $visitorId, 60, 60);
     require_conversation_member($pdo, $conversationId, $visitorId);
 
     $senderStmt = $pdo->prepare('SELECT account_name FROM conversation_members WHERE conversation_id = ? AND account_id = ?');

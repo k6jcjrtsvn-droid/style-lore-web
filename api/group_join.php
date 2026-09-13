@@ -10,10 +10,11 @@ require_method('POST');
 $groupId = (string)($_GET['id'] ?? '');
 $body = request_json();
 $visitorId = (string)($body['visitorId'] ?? '');
-$visitorName = mb_substr(trim((string)($body['visitorName'] ?? '')), 0, 60);
 
 $pdo = db();
 require_owner($pdo, $visitorId, (string)($body['authToken'] ?? ''));
+require_verified($pdo, $visitorId);
+$visitorName = profile_identity($pdo, $visitorId)['name'];
 
 $groupStmt = $pdo->prepare('SELECT id, name, creator_id FROM interest_groups WHERE id = ?');
 $groupStmt->execute([$groupId]);
@@ -28,9 +29,10 @@ if (!$check->fetch()) {
     $pdo->prepare('UPDATE interest_groups SET member_count = member_count + 1 WHERE id = ?')->execute([$groupId]);
 
     create_notification(
-        $pdo, $group['creator_id'], $visitorId, $visitorName ?: 'Someone', null,
-        'group_join', ($visitorName ?: 'Someone') . ' joined ' . $group['name'] . '.',
-        ['groupId' => $groupId]
+        $pdo, $group['creator_id'], $visitorId, $visitorName, null,
+        'group_join', ($visitorName) . ' joined ' . $group['name'] . '.',
+        ['groupId' => $groupId],
+        86400
     );
 }
 

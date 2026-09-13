@@ -8,6 +8,8 @@ $password = (string)($body['password'] ?? '');
 
 try {
     $pdo = db();
+    rate_limit($pdo, 'login:ip:' . client_ip(), 20, 300);
+    rate_limit($pdo, 'login:email:' . $email, 10, 300);
     $stmt = $pdo->prepare('SELECT id, email, password_hash, email_verified FROM accounts WHERE email = ?');
     $stmt->execute([$email]);
     $account = $stmt->fetch();

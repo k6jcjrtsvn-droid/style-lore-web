@@ -33,7 +33,8 @@ if ($liked && $post['author_id'] !== $visitorId) {
     $visitorName = ($visitorProfile && $visitorProfile['name']) ? $visitorProfile['name'] : 'Someone';
     create_notification(
         $pdo, $post['author_id'], $visitorId, $visitorName, $visitorProfile ? $visitorProfile['avatar_url'] : null,
-        'like', $visitorName . ' liked your post.', ['actorId' => $visitorId, 'postId' => $postId]
+        'like', $visitorName . ' liked your post.', ['actorId' => $visitorId, 'postId' => $postId],
+        86400
     );
 }
 
