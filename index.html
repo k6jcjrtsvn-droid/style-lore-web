@@ -828,7 +828,7 @@
 (function(){
 "use strict";
 const e = React.createElement;
-const { useState, useEffect, useRef, useCallback } = React;
+const { useState, useEffect, useRef, useCallback, useMemo } = React;
 
 /* =====================================================================
    BACK BUTTON — makes the phone/tablet's hardware or browser back button
@@ -858,6 +858,19 @@ window.addEventListener("popstate", () => {
   const top = _backStack.pop();
   if(top) top.close();
 });
+/* Polling that respects a backgrounded tab. A hidden tab was still
+   re-fetching the whole feed every 4 seconds — the user's battery and our
+   shared-hosting CPU paying for updates nobody is looking at. Ticks are
+   skipped while hidden, and one fires immediately when the tab comes back
+   so the first thing you see on return is current. */
+function startPolling(fn, ms){
+  const tick = () => { if(!document.hidden) fn(); };
+  const id = setInterval(tick, ms);
+  const onVisible = () => { if(!document.hidden) fn(); };
+  document.addEventListener("visibilitychange", onVisible);
+  return () => { clearInterval(id); document.removeEventListener("visibilitychange", onVisible); };
+}
+
 function useBackClose(onClose){
   const onCloseRef = useRef(onClose);
   onCloseRef.current = onClose;
@@ -2178,6 +2191,22 @@ function authHeader(authToken){ return authToken ? { "Authorization": "Bearer " 
 // a 429 rate-limit notice, a 403 "verify your email first" — reaches the
 // user instead of being replaced by a generic string. A 401 is tagged so
 // App() can clear the dead session rather than failing silently forever.
+// No request should be able to hang forever: a stalled upload used to
+// leave its button stuck on "Checking…" with no cancel and no error.
+// 45s is generous enough for a photo upload on a bad connection.
+const REQUEST_TIMEOUT_MS = 45000;
+const _rawFetch = window.fetch.bind(window);
+window.fetch = function(input, init){
+  init = init || {};
+  if(init.signal) return _rawFetch(input, init);
+  try{
+    if(typeof AbortSignal !== "undefined" && AbortSignal.timeout){
+      init = Object.assign({}, init, { signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) });
+    }
+  }catch(err){ /* older browser — no timeout, same as before */ }
+  return _rawFetch(input, init);
+};
+
 // A dead auth token can surface from anywhere in the tree, so App()
 // registers one handler here rather than threading a callback through
 // every screen. Call onAuthError(err) in any catch that talks to the API.
@@ -4038,7 +4067,14 @@ function ClosetScreen({ closet, setCloset, blend, styleWordBlend, kibbeTypeName,
     setShowAdd(true);
   }
 
-  const gapAnalysis = (blend || styleWordBlend) ? styleGapAnalysis(closet, profile) : null;
+  // Scans every item's description against ~90 style keywords, so it runs
+  // only when the closet or the profile it's compared against changes —
+  // not on every unrelated re-render (the badge poll re-renders App every
+  // 10 seconds).
+  const gapAnalysis = useMemo(
+    () => (blend || styleWordBlend) ? styleGapAnalysis(closet, profile) : null,
+    [closet, blend, styleWordBlend, profile]
+  );
   let gapBanner = null;
   if (gapAnalysis){
     if (gapAnalysis.itemsWithSignal === 0){
@@ -4118,12 +4154,15 @@ function AddItemSheet({ onAdd, onClose }){
   useBackClose(onClose);
   const [description, setDescription] = useState("");
   const [photoPreview, setPhotoPreview] = useState(null);
+  const [photoError, setPhotoError] = useState(null);
   const [visibility, setVisibility] = useState("hidden");
 
   function pickPhoto(ev){
     const file = ev.target.files && ev.target.files[0];
     if(!file) return;
-    downscaleImage(file, 480, 0.72).then(setPhotoPreview).catch(()=>{});
+    setPhotoError(null);
+    downscaleImage(file, 480, 0.72).then(setPhotoPreview)
+      .catch(() => setPhotoError("Couldn't read that photo — try another."));
   }
 
   function submit(){
@@ -4143,6 +4182,7 @@ function AddItemSheet({ onAdd, onClose }){
           : e("label", { className:"photo-frame-label", htmlFor:"closet-photo-input" }, Icon("shirt"), e("span", null, "Add a photo (optional)"))
       ),
       e("input", { id:"closet-photo-input", type:"file", accept:"image/*", className:"visually-hidden", onChange:pickPhoto }),
+      photoError ? e(Banner, { kind:"error" }, photoError) : null,
       e("div", { className:"field" },
         e("label", { htmlFor:"closet-desc" }, "Describe the item"),
         e("textarea", { id:"closet-desc", value:description, maxLength:200,
@@ -4165,7 +4205,10 @@ function AddItemSheet({ onAdd, onClose }){
 
 function ClosetRow({ item, profile, onRemove, onToggleVisibility }){
   const [confirmDelete, setConfirmDelete] = useState(false);
-  const verdict = profile && (profile.kibbeBlend || profile.styleWordBlend) ? styleCheckVerdict(item.description, profile) : null;
+  const verdict = useMemo(
+    () => profile && (profile.kibbeBlend || profile.styleWordBlend) ? styleCheckVerdict(item.description, profile) : null,
+    [item.description, profile]
+  );
   const isPublic = item.visibility === "public";
   return e("div", { className:"row-list-item" },
     item.photo ? e("img", { src:item.photo, alt:"", style:{ width:52, height:52, borderRadius:8, objectFit:"cover", flexShrink:0 } })
@@ -4578,26 +4621,24 @@ function CommunityScreen({ profile, blend, onOpenProfile }){
 
   useEffect(() => {
     refreshPosts();
-    const t = setInterval(refreshPosts, 4000); // polling stands in for realtime push
-    return () => clearInterval(t);
+    // 8s, not 4s: each tick refetches up to 100 posts with their comment
+    // arrays, which is the heaviest repeating request in the app.
+    return startPolling(refreshPosts, 8000);
   }, [refreshPosts]);
 
   useEffect(() => {
     refreshFollows();
-    const t = setInterval(refreshFollows, 6000);
-    return () => clearInterval(t);
+    return startPolling(refreshFollows, 6000);
   }, [refreshFollows]);
 
   useEffect(() => {
     refreshGroups();
-    const t = setInterval(refreshGroups, 15000);
-    return () => clearInterval(t);
+    return startPolling(refreshGroups, 15000);
   }, [refreshGroups]);
 
   useEffect(() => {
     refreshStories();
-    const t = setInterval(refreshStories, 15000);
-    return () => clearInterval(t);
+    return startPolling(refreshStories, 15000);
   }, [refreshStories]);
 
   // Group feed — a separate, group-scoped list of posts (main-feed `posts`
@@ -4608,8 +4649,7 @@ function CommunityScreen({ profile, blend, onOpenProfile }){
     if(!space || space.kind !== "group") { setGroupFeed(null); return; }
     const load = () => Api.getPosts({ groupId: space.id }).then(setGroupFeed).catch(()=>{});
     load();
-    const t = setInterval(load, 4000);
-    return () => clearInterval(t);
+    return startPolling(load, 8000);
   }, [space && space.kind, space && space.id]);
 
   useEffect(() => {
@@ -5018,7 +5058,12 @@ function PostCard({ post, profile, followingIds, onToggleFollow, onOpenProfile, 
   const [editCaption, setEditCaption] = useState(post.caption || "");
   const [confirmDeletePost, setConfirmDeletePost] = useState(false);
   const [actionError, setActionError] = useState(null);
+  // `busy` gates the destructive/edit controls. Commenting and reporting
+  // get their own flags — sharing one meant sending a comment briefly
+  // disabled Like and Delete on the same post, which read as broken.
   const [busy, setBusy] = useState(false);
+  const [commentBusy, setCommentBusy] = useState(false);
+  const [reportBusy, setReportBusy] = useState(false);
   const [followBusy, setFollowBusy] = useState(false);
 
   const liked = !!(post.likes && post.likes[profile.visitorId]);
@@ -5047,24 +5092,24 @@ function PostCard({ post, profile, followingIds, onToggleFollow, onOpenProfile, 
 
   async function submitComment(){
     if(!commentText.trim()) return;
-    setBusy(true);
+    setCommentBusy(true);
     try{
       setActionError(null);
       const updated = await Api.comment(post.id, profile.visitorId, profile.token, commentText.trim());
       if(updated) onPatch({ comments: updated.comments });
       setCommentText("");
     }catch(err){ onAuthError(err); setActionError(err.message || "Couldn't post that comment — try again."); }
-    finally{ setBusy(false); }
+    finally{ setCommentBusy(false); }
   }
 
   async function report(){
-    setBusy(true);
+    setReportBusy(true);
     try{
       setActionError(null);
       await Api.report(post.id, profile.visitorId, profile.token);
       onRemove();
     }catch(err){ onAuthError(err); setActionError(err.message || "Couldn't report that post — try again."); }
-    finally{ setBusy(false); setConfirmReport(false); }
+    finally{ setReportBusy(false); setConfirmReport(false); }
   }
 
   function startEditing(){
@@ -5159,7 +5204,7 @@ function PostCard({ post, profile, followingIds, onToggleFollow, onOpenProfile, 
     ),
     confirmReport ? e("div", { style:{ marginTop:10, display:"flex", alignItems:"center", gap:12 } },
       e("span", { style:{ fontSize:12.5, color:"var(--ink-soft)" } }, "Report and hide this post for everyone?"),
-      e("button", { className:"btn-text", style:{ padding:0, fontSize:12.5, color:"var(--danger)" }, disabled:busy, onClick:report }, "Report"),
+      e("button", { className:"btn-text", style:{ padding:0, fontSize:12.5, color:"var(--danger)" }, disabled:reportBusy, onClick:report }, reportBusy ? "Reporting…" : "Report"),
       e("button", { className:"btn-text", style:{ padding:0, fontSize:12.5 }, onClick:()=>setConfirmReport(false) }, "Cancel")
     ) : null,
     confirmDeletePost ? e("div", { style:{ marginTop:10, display:"flex", alignItems:"center", gap:12 } },
@@ -5174,7 +5219,7 @@ function PostCard({ post, profile, followingIds, onToggleFollow, onOpenProfile, 
         e("input", { type:"text", value:commentText, maxLength:180, placeholder:"Add a comment…",
           onChange: ev=>setCommentText(ev.target.value),
           onKeyDown: ev => { if(ev.key === "Enter") submitComment(); } }),
-        e("button", { className:"btn-text", disabled:busy || !commentText.trim(), onClick:submitComment }, "Send")
+        e("button", { className:"btn-text", disabled:commentBusy || !commentText.trim(), onClick:submitComment }, commentBusy ? "Sending…" : "Send")
       )
     ) : null
   );
@@ -5275,10 +5320,10 @@ function ProfileScreen({ id, viewer, onBack, onOpenProfile, onNameChange, onMess
           // call this screen already makes (profileRow.kibbeBlend /
           // .styleWordBlend), plus the viewer's own quiz data passed down
           // from App(). No extra network call to open it.
-          !isMe ? e("button", { className:"btn btn-ghost btn-sm", onClick:()=>setShowCompare(true) }, "Compare styles") : null,
-          (!isMe && onMessage) ? e("button", {
+          (!isMe && !loadError) ? e("button", { className:"btn btn-ghost btn-sm", disabled:!profileRow, onClick:()=>setShowCompare(true) }, "Compare styles") : null,
+          (!isMe && onMessage && !loadError) ? e("button", {
             className:"btn btn-ghost btn-sm",
-            disabled: messageBusy,
+            disabled: messageBusy || !profileRow,
             onClick: async () => {
               setMessageError(null);
               setMessageBusy(true);
@@ -5870,8 +5915,7 @@ function InboxScreen({ profile, onBack, onOpenConversation }){
 
   useEffect(() => {
     refresh();
-    const t = setInterval(refresh, 6000);
-    return () => clearInterval(t);
+    return startPolling(refresh, 6000);
   }, [refresh]);
 
   return e("div", null,
@@ -5914,8 +5958,7 @@ function ConversationScreen({ profile, conversationId, otherName, onBack }){
 
   useEffect(() => {
     refresh();
-    const t = setInterval(refresh, 3000);
-    return () => clearInterval(t);
+    return startPolling(refresh, 3000);
   }, [refresh]);
 
   useEffect(() => {
@@ -6155,13 +6198,23 @@ function App(){
   // "idle" (signed out / nothing synced yet) | "saving" | "saved" | "error".
   const [closetSyncStatus, setClosetSyncStatus] = useState("idle");
 
-  const runClosetSync = useCallback(() => {
+  // What was last successfully sent, so an edit that doesn't change the
+  // payload (reordering a screen, re-rendering) doesn't re-upload every
+  // item's inline photo — that was multiple megabytes on every tap.
+  const closetSyncedSnapshotRef = useRef(null);
+  const closetSyncDebounceRef = useRef(null);
+
+  const runClosetSync = useCallback((opts) => {
     if(!profile || !profile.visitorId) return;
+    const force = !!(opts && opts.force);
+    const payload = JSON.stringify(closetRef.current);
+    if(!force && payload === closetSyncedSnapshotRef.current) return;
     setClosetSyncStatus("saving");
     closetSyncChainRef.current = closetSyncChainRef.current.then(() =>
       Api.syncCloset(profile.visitorId, profile.name, profile.token, closetRef.current)
         .then(() => {
           closetSyncAttemptRef.current = 0;
+          closetSyncedSnapshotRef.current = payload;
           setClosetSyncStatus("saved");
         })
         .catch(() => {
@@ -6184,10 +6237,24 @@ function App(){
     if(!profile || !profile.visitorId) return;
     closetSyncAttemptRef.current = 0;
     if(closetSyncRetryTimerRef.current) clearTimeout(closetSyncRetryTimerRef.current);
-    runClosetSync();
+    // Coalesce a burst of edits (add three items quickly) into one upload.
+    if(closetSyncDebounceRef.current) clearTimeout(closetSyncDebounceRef.current);
+    closetSyncDebounceRef.current = setTimeout(() => runClosetSync(), 1000);
   }, [profile && profile.visitorId, profile && profile.name, profile && profile.token, closet]);
 
-  useEffect(() => () => { if(closetSyncRetryTimerRef.current) clearTimeout(closetSyncRetryTimerRef.current); }, []);
+  // "Retry now" must clear the backoff counter — without this, pressing it
+  // after 5 failures did one attempt and then silently gave up while the
+  // banner still promised it was retrying.
+  const retryClosetSync = useCallback(() => {
+    closetSyncAttemptRef.current = 0;
+    if(closetSyncRetryTimerRef.current) clearTimeout(closetSyncRetryTimerRef.current);
+    runClosetSync({ force: true });
+  }, [runClosetSync]);
+
+  useEffect(() => () => {
+    if(closetSyncRetryTimerRef.current) clearTimeout(closetSyncRetryTimerRef.current);
+    if(closetSyncDebounceRef.current) clearTimeout(closetSyncDebounceRef.current);
+  }, []);
 
   // Lightweight polling for the topbar's bell/mail unread badges — cheap
   // enough to run continuously since both endpoints are simple indexed
@@ -6204,8 +6271,8 @@ function App(){
       }).catch(()=>{});
     }
     poll();
-    const t = setInterval(poll, 10000);
-    return () => { cancelled = true; clearInterval(t); };
+    const stopPolling = startPolling(poll, 10000);
+    return () => { cancelled = true; stopPolling(); };
   }, [profile && profile.visitorId, profile && profile.token, screen, viewingConversation]);
 
   // Push notifications (Android, via Capacitor + Firebase Cloud Messaging).
@@ -6477,7 +6544,7 @@ function App(){
   else if(screen === "home") body = e(HomeScreen, { profile, blend, styleBlend, onNavigate:goTo, onSignOut:signOut, onOpenProfile:openProfile, onAccountDeleted:handleAccountDeleted });
   else if(screen === "quiz") body = e(StyleQuizScreen, { kibbeResult, styleLanguageResult:styleBlend, onSaveKibbe:setKibbeResult, onSaveStyle:setStyleBlend });
   else if(screen === "color") body = e(ColorScreen, { colorResult, onSaveColor:setColorResult });
-  else if(screen === "closet") body = e(ClosetScreen, { closet, setCloset, blend, styleWordBlend:styleBlend, kibbeTypeName, topStyleWords, profile, isPremium, closetFreeLimit, onUpgrade:openPaywall, syncStatus:closetSyncStatus, onRetrySync:runClosetSync, storageFull:closetStorageFull });
+  else if(screen === "closet") body = e(ClosetScreen, { closet, setCloset, blend, styleWordBlend:styleBlend, kibbeTypeName, topStyleWords, profile, isPremium, closetFreeLimit, onUpgrade:openPaywall, syncStatus:closetSyncStatus, onRetrySync:retryClosetSync, storageFull:closetStorageFull });
   else if(screen === "checker") body = e(CheckerScreen, { blend, styleWordBlend:styleBlend, kibbeTypeName, topStyleWords, visitorId: profile.visitorId, authToken: profile.token, isPremium, onUpgrade:openPaywall });
   else if(screen === "community") body = e(CommunityScreen, { profile, blend, onOpenProfile:openProfile });
   else if(screen === "notifications") body = e(NotificationsScreen, { profile, onBack:()=>goTo("home"), onOpenProfile:openProfile, onOpenConversation:openConversation });
