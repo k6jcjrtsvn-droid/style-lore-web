@@ -62,8 +62,15 @@ $log = dirname(__DIR__) . '/api/error_log';
 if (!is_file($log)) $log = __DIR__ . '/error_log';
 $recentAnthropic = false;
 if (is_file($log) && filemtime($log) > time() - 600) {
+    // Only lines stamped in the last 10 minutes count — the log keeps old
+    // entries, and an unrelated new warning must not resurface yesterday's.
     $tail = @file_get_contents($log, false, null, max(0, filesize($log) - 20000));
-    if ($tail && preg_match('/credit balance is too low|authentication_error/i', $tail)) $recentAnthropic = true;
+    foreach (preg_split('/\r?\n/', (string)$tail) as $line) {
+        if (!preg_match('/^\[([^\]]+)\]/', $line, $m)) continue;
+        $ts = strtotime($m[1]);
+        if ($ts === false || $ts < time() - 600) continue;
+        if (preg_match('/credit balance is too low|authentication_error/i', $line)) { $recentAnthropic = true; break; }
+    }
 }
 $checks['anthropic'] = [!$recentAnthropic, $recentAnthropic ? 'error_log shows an Anthropic credit/key error in the last 10 minutes' : 'ok'];
 

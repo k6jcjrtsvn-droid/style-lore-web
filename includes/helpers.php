@@ -629,7 +629,7 @@ function subscription_billing_source(PDO $pdo, string $accountId): ?string {
 
 /** For gift rows: when the free period ends (ms) and whether it's still active; null otherwise. */
 function subscription_gift_notice(PDO $pdo, string $accountId): ?array {
-    try { $st = $pdo->prepare('SELECT product_id, expires_at FROM subscriptions WHERE account_id = ?'); $st->execute([$accountId]); $row = $st->fetch(); }
+    try { $st = $pdo->prepare('SELECT product_id, expires_at, is_premium FROM subscriptions WHERE account_id = ?'); $st->execute([$accountId]); $row = $st->fetch(); }
     catch (Throwable $e) { return null; }
     $p = $row ? (string)$row['product_id'] : '';
     $paidActive = $row && $row['is_premium'] && ($row['expires_at'] === null || (int)$row['expires_at'] >= current_time_ms()) && strpos($p, 'stripe:sandbox-gift') !== 0 && strpos($p, 'gift:') !== 0;
