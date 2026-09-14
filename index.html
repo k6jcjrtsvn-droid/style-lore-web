@@ -12,6 +12,62 @@
   // tracking rules — so Analytics and AdSense are only loaded on the web.
   window.STYLE_LORE_NATIVE = !!(window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform());
   window.STYLE_LORE_API_BASE = window.STYLE_LORE_NATIVE ? "https://style-lore.com" : "";
+  // Bump this with every app release; it travels with every bug report so we
+  // know which build a problem came from.
+  window.STYLE_LORE_APP_VERSION = "1.2.0";
+
+  // Automatic bug reports. Anything that goes wrong in the page — an
+  // uncaught error, a promise nobody handled, a feature that could not load —
+  // is POSTed to /api/client_log.php, which stores it and emails support the
+  // first time a new problem appears. Only what's needed to reproduce is sent
+  // (error text, stack, screen, platform, app version, account id); never
+  // photos, closet contents, or message text. Capped per page load so a
+  // runaway loop can't flood the server.
+  (function(){
+    var sent = 0, seen = {};
+    function platform(){
+      try{
+        if(window.STYLE_LORE_NATIVE && window.Capacitor.getPlatform) return window.Capacitor.getPlatform(); // "android" | "ios"
+      }catch(err){}
+      return "web";
+    }
+    window.loreReport = function(kind, message, extra){
+      try{
+        message = String(message || "").slice(0, 500);
+        if(!message) return;
+        var key = kind + "|" + message.slice(0, 120);
+        if(seen[key] || sent >= 8) return;
+        seen[key] = true; sent++;
+        var body = {
+          kind: kind, message: message, page: window.STYLE_LORE_SCREEN || "",
+          platform: platform(), appVersion: window.STYLE_LORE_APP_VERSION,
+          accountId: window.STYLE_LORE_ACCOUNT_ID || null,
+          stack: extra && extra.stack ? String(extra.stack).slice(0, 4000) : "",
+          extra: extra ? Object.assign({}, extra, { stack: undefined, online: navigator.onLine, url: location.pathname + location.hash }) : { online: navigator.onLine, url: location.pathname + location.hash }
+        };
+        var url = (window.STYLE_LORE_API_BASE || "") + "/api/client_log.php";
+        var json = JSON.stringify(body);
+        var f = window.__loreRawFetch || window.fetch;
+        f(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: json, keepalive: true }).catch(function(){});
+      }catch(err){ /* reporting must never break the app */ }
+    };
+    window.addEventListener("error", function(e){
+      if(!e) return;
+      // Resource load failures (an <img> that 404s) arrive here too with no message; skip those.
+      if(!e.message && e.target && e.target !== window) return;
+      var err = e.error;
+      window.loreReport("js_error", e.message || (err && err.message) || "Unknown error", {
+        stack: err && err.stack, source: (e.filename || "") + ":" + (e.lineno || 0) + ":" + (e.colno || 0)
+      });
+    });
+    window.addEventListener("unhandledrejection", function(e){
+      var r = e && e.reason;
+      var msg = r && (r.message || String(r)) || "Unhandled promise rejection";
+      // AbortError = our own request timeout; user-facing screens already handle it.
+      if(r && r.name === "AbortError") return;
+      window.loreReport("unhandled_rejection", msg, { stack: r && r.stack, name: r && r.name, code: r && r.code });
+    });
+  })();
   window.dataLayer = window.dataLayer || [];
   function gtag(){dataLayer.push(arguments);}
   if(!window.STYLE_LORE_NATIVE){
@@ -2802,6 +2858,7 @@ function mediaUrl(u){
   return (API_BASE && u.charAt(0) === "/" && u.charAt(1) !== "/") ? API_BASE + u : u;
 }
 const _rawFetch = window.fetch.bind(window);
+window.__loreRawFetch = _rawFetch;
 window.fetch = function(input, init){
   init = init || {};
   if(API_BASE && typeof input === "string" && input.charAt(0) === "/" && input.charAt(1) !== "/"){
@@ -2828,6 +2885,9 @@ async function apiError(r, fallback){
   const body = await r.json().catch(()=>({}));
   const err = new Error(body.error || fallback);
   err.status = r.status;
+  if(r.status >= 500 && window.loreReport){
+    try{ window.loreReport("api_5xx", "HTTP " + r.status + " " + (new URL(r.url, location.href).pathname) + ": " + (body.error || fallback)); }catch(e){}
+  }
   if(r.status === 401) err.code = "unauthenticated";
   return err;
 }
@@ -3232,10 +3292,64 @@ const Api = {
    proportion tests that validated this scoring logic are written up in the
    "on-device-kibbe-photo-analysis" project doc.
 ===================================================================== */
+/* Shared MediaPipe loader for both on-device analyzers. The native apps
+   carry a copy of the vision bundle, wasm and pose model in
+   www/vendor/mediapipe (≈18 MB) so the analyzer works offline and does not
+   depend on a CDN fetch inside the WebView; the website keeps using the
+   CDN. Each source is tried in order and the first one that loads wins;
+   the failure reasons of the ones that didn't are attached to the final
+   error so a bug report says exactly what went wrong. */
+const LoreVision = (function(){
+  const VERSION = "1.0.1";
+  const CDN = {
+    name: "cdn",
+    bundle: "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@" + VERSION + "/vision_bundle.mjs",
+    wasm: "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@" + VERSION + "/wasm",
+    model: "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task",
+  };
+  const LOCAL = {
+    name: "bundled",
+    bundle: new URL("vendor/mediapipe/vision_bundle.js", location.href).href,
+    wasm: new URL("vendor/mediapipe/wasm", location.href).href,
+    model: new URL("vendor/mediapipe/pose_landmarker_lite.task", location.href).href,
+  };
+  const SOURCES = window.STYLE_LORE_NATIVE ? [LOCAL, CDN] : [CDN];
+  let promise = null;
+  let lastSource = "";
+  async function loadFrom(src){
+    const mod = await import(/* webpackIgnore: true */ src.bundle);
+    const FilesetResolver = mod.FilesetResolver || (mod.default && mod.default.FilesetResolver);
+    const PoseLandmarker = mod.PoseLandmarker || (mod.default && mod.default.PoseLandmarker);
+    if(!FilesetResolver || !PoseLandmarker) throw new Error("vision bundle loaded but has no FilesetResolver/PoseLandmarker");
+    const fileset = await FilesetResolver.forVisionTasks(src.wasm);
+    const landmarker = await PoseLandmarker.createFromOptions(fileset, {
+      baseOptions: { modelAssetPath: src.model },
+      runningMode: "IMAGE",
+      numPoses: 1,
+      outputSegmentationMasks: false,
+    });
+    lastSource = src.name;
+    return landmarker;
+  }
+  function getPoseLandmarker(){
+    if(!promise){
+      promise = (async () => {
+        const failures = [];
+        for(const src of SOURCES){
+          try{ return await loadFrom(src); }
+          catch(err){ failures.push(src.name + ": " + (err && (err.message || String(err)))); }
+        }
+        throw new Error(failures.join(" | "));
+      })().catch(err => { promise = null; throw err; }); // allow a retry on the next call
+    }
+    return promise;
+  }
+  const api = { getPoseLandmarker, get lastSource(){ return lastSource; } };
+  window.__loreVision = api; // for remote debugging (chrome://inspect) on a device
+  return api;
+})();
+
 const KibbeOnDeviceAnalyzer = (function(){
-  const VISION_BUNDLE_URL = "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@1.0.1/vision_bundle.mjs";
-  const WASM_BASE = "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@1.0.1/wasm";
-  const MODEL_URL = "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task";
 
   // ---- pose landmark indices (BlazePose topology) ----
   const LM = {
@@ -3367,23 +3481,8 @@ const KibbeOnDeviceAnalyzer = (function(){
     return { blend: scoreNormalizedPoint(normalized) };
   }
 
-  // ---- MediaPipe loading (lazy singleton -- never fetched until first use) ----
-  let landmarkerPromise = null;
-  async function getLandmarker(){
-    if(!landmarkerPromise){
-      landmarkerPromise = (async () => {
-        const { FilesetResolver, PoseLandmarker } = await import(VISION_BUNDLE_URL);
-        const filesetResolver = await FilesetResolver.forVisionTasks(WASM_BASE);
-        return PoseLandmarker.createFromOptions(filesetResolver, {
-          baseOptions: { modelAssetPath: MODEL_URL },
-          runningMode: "IMAGE",
-          numPoses: 1,
-          outputSegmentationMasks: false,
-        });
-      })().catch(err => { landmarkerPromise = null; throw err; }); // allow retry on next call if loading failed
-    }
-    return landmarkerPromise;
-  }
+  // ---- MediaPipe loading: shared lazy singleton (see LoreVision above) ----
+  function getLandmarker(){ return LoreVision.getPoseLandmarker(); }
 
   function blobToImage(blob){
     return new Promise((resolve, reject) => {
@@ -3401,7 +3500,9 @@ const KibbeOnDeviceAnalyzer = (function(){
       landmarker = await getLandmarker();
     }catch(err){
       URL.revokeObjectURL(img.src);
-      throw new Error("Couldn't load the on-device analyzer — check your connection and try again.");
+      const detail = err ? ((err.name ? err.name + ": " : "") + (err.message || String(err))) : "unknown";
+      if(window.loreReport) window.loreReport("analyzer_load_failed", detail, { stack: err && err.stack, stage: "kibbe", source: LoreVision.lastSource || "" });
+      throw new Error("Couldn't load the on-device analyzer — check your connection and try again. (" + detail.slice(0, 120) + ")");
     }
     let result;
     try{
@@ -3460,9 +3561,6 @@ const KibbeOnDeviceAnalyzer = (function(){
    writeup and known blind spots.
 ===================================================================== */
 const GarmentOnDeviceAnalyzer = (function(){
-  const VISION_BUNDLE_URL = "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@1.0.1/vision_bundle.mjs";
-  const WASM_BASE = "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@1.0.1/wasm";
-  const MODEL_URL = "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task";
   const MAX_DIM = 260; // small canvas keeps the Sobel/color passes fast even on low-end phones
 
   function clamp01(x){ return Math.max(0, Math.min(1, x)); }
@@ -3470,22 +3568,7 @@ const GarmentOnDeviceAnalyzer = (function(){
   // ---- lazy pose-landmarker singleton, independent from
   // KibbeOnDeviceAnalyzer's own so neither module depends on the other's
   // internals; jsdelivr/browser caching keeps a second load cheap ----
-  let landmarkerPromise = null;
-  async function getLandmarker(){
-    if(!landmarkerPromise){
-      landmarkerPromise = (async () => {
-        const { FilesetResolver, PoseLandmarker } = await import(VISION_BUNDLE_URL);
-        const filesetResolver = await FilesetResolver.forVisionTasks(WASM_BASE);
-        return PoseLandmarker.createFromOptions(filesetResolver, {
-          baseOptions: { modelAssetPath: MODEL_URL },
-          runningMode: "IMAGE",
-          numPoses: 1,
-          outputSegmentationMasks: false,
-        });
-      })().catch(err => { landmarkerPromise = null; throw err; });
-    }
-    return landmarkerPromise;
-  }
+  function getLandmarker(){ return LoreVision.getPoseLandmarker(); }
 
   function blobToImage(blob){
     return new Promise((resolve, reject) => {
@@ -3626,7 +3709,10 @@ const GarmentOnDeviceAnalyzer = (function(){
   // ---- optional person-silhouette pass ----
   async function trySilhouette(img){
     let landmarker;
-    try{ landmarker = await getLandmarker(); }catch(e){ return null; }
+    try{ landmarker = await getLandmarker(); }catch(e){
+      if(window.loreReport) window.loreReport("analyzer_load_failed", (e && (e.message || String(e))) || "unknown", { stage: "garment" });
+      return null;
+    }
     let result;
     try{ result = landmarker.detect(img); }catch(e){ return null; }
     const lm = result && result.landmarks && result.landmarks[0];
@@ -7154,6 +7240,9 @@ function App(){
   const topStyleWords = styleBlend ? topWords(styleBlend, STYLE_WORDS, 5).map(w => w.id) : [];
 
   useEffect(() => { if(profile) saveLocal("lore_profile", profile); }, [profile]);
+  // Context for automatic bug reports (see loreReport in the head script).
+  useEffect(() => { window.STYLE_LORE_ACCOUNT_ID = profile && profile.visitorId ? profile.visitorId : null; }, [profile]);
+  useEffect(() => { window.STYLE_LORE_SCREEN = screen; }, [screen]);
 
   // Any 401 from the API means this device's token was rotated or revoked
   // (logging in elsewhere rotates it). Without this the app kept using a
