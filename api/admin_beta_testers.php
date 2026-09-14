@@ -86,16 +86,24 @@ if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST') {
             $safeName = htmlspecialchars($t['name'] !== '' ? $t['name'] : 'there');
             $html = style_lore_email_html(
                 "You're in! Download Style-LORE",
-                "<p style=\"margin:0 0 16px;\">Hi $safeName,</p><p style=\"margin:0;\">You're approved as a Style-LORE beta tester. Tap the button below, accept as a tester on the Google Play page that opens, then install the app from the Play Store link that appears there.</p>",
+                "<p style=\"margin:0 0 16px;\">Hi $safeName,</p>"
+                . "<p style=\"margin:0 0 14px;\">You're approved as a Style-LORE beta tester. <b>Please open this email on your Android phone</b> — the link only works there, not on a computer.</p>"
+                . "<p style=\"margin:0 0 6px;\"><b>Three quick steps (about a minute):</b></p>"
+                . "<ol style=\"margin:0 0 14px 20px;padding:0;\">"
+                . "<li style=\"margin:0 0 6px;\">On your phone, tap <b>Get the beta</b> below (sign in with the Google account this email was sent to).</li>"
+                . "<li style=\"margin:0 0 6px;\">Tap <b>Become a tester</b> on the page that opens.</li>"
+                . "<li style=\"margin:0 0 6px;\">Then tap <b>Download it on Google Play</b> and install Style-LORE from the Play Store — you're not done until the app is on your phone.</li>"
+                . "</ol>"
+                . "<p style=\"margin:0;\">Once it's installed, use it like you normally would and reply to this email with anything confusing, broken, or missing. Thank you for helping us launch!</p>",
                 'Get the beta',
                 PLAY_STORE_TESTING_URL,
-                "This link only works with the email address you signed up with. Trouble installing? Just reply to this email."
+                "This link only works on an Android phone signed in with the email address this was sent to. Trouble installing? Just reply to this email."
             );
             $ok = send_app_html_email(
                 $t['email'],
                 "You're in! Download the Style-LORE beta",
                 $html,
-                "Hi " . ($t['name'] !== '' ? $t['name'] : 'there') . ",\n\nYou're approved as a Style-LORE beta tester. Open this link, accept as a tester, then install from the Play Store page that appears:\n\n" . PLAY_STORE_TESTING_URL . "\n\nThis link only works with the email address you signed up with.\n"
+                "Hi " . ($t['name'] !== '' ? $t['name'] : 'there') . ",\n\nYou're approved as a Style-LORE beta tester. PLEASE OPEN THIS EMAIL ON YOUR ANDROID PHONE - the link only works there, not on a computer.\n\nThree quick steps:\n1. On your phone, open this link (signed in with the Google account this email was sent to): " . PLAY_STORE_TESTING_URL . "\n2. Tap Become a tester.\n3. Tap Download it on Google Play and install Style-LORE from the Play Store - you're not done until the app is on your phone.\n\nThen use it like you normally would and reply to this email with anything confusing, broken or missing. Thank you for helping us launch!\n"
             );
             if ($ok) {
                 $pdo->prepare("UPDATE beta_testers SET status = 'sent', sent_at = ? WHERE id = ?")->execute([current_time_ms(), $t['id']]);
