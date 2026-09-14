@@ -1410,8 +1410,13 @@ function styleGapAnalysis(closet, profile){
    below stays exactly the same either way, since they only ever pass a
    style-axis label ("crisp & structured"), never a product.
 ===================================================================== */
+// Amazon Associates: every "Shop" link is an Amazon women's-fashion search
+// carrying Kenneth's tracking tag, so anything the person buys in that
+// session earns a commission. The FTC-required disclosure sits under the
+// links (ShopTheGap) and on the Terms page.
+const AMAZON_ASSOCIATE_TAG = "stylelore-20";
 function shopSearchUrl(query){
-  return "https://www.google.com/search?tbm=shop&q=" + encodeURIComponent(query + " women's fashion");
+  return "https://www.amazon.com/s?k=" + encodeURIComponent(query + " women") + "&i=fashion-womens&tag=" + AMAZON_ASSOCIATE_TAG + "&ref_=style_lore";
 }
 function shopQueryFromAxisLabel(label){
   return label.replace(/\s*&\s*/g, " ") + " clothing";
@@ -1696,12 +1701,15 @@ function CapsuleCard({ closet, profile, isPremium, onUpgrade }){
 function ShopTheGap({ labels }){
   const unique = Array.from(new Set((labels || []).filter(Boolean))).slice(0, 3);
   if (unique.length === 0) return null;
-  return e("div", { style:{ display:"flex", flexWrap:"wrap", gap:8, marginTop:10, marginBottom:16 } },
-    unique.map(label => e("a", {
-      key:label, href: shopSearchUrl(shopQueryFromAxisLabel(label)),
-      target:"_blank", rel:"noopener noreferrer",
-      style:{ padding:"6px 12px", border:"1px solid var(--line)", borderRadius:20, fontSize:12.5, color:"var(--ink)", textDecoration:"none" },
-    }, "Shop " + label))
+  return e("div", { style:{ marginTop:10, marginBottom:16 } },
+    e("div", { style:{ display:"flex", flexWrap:"wrap", gap:8 } },
+      unique.map(label => e("a", {
+        key:label, href: shopSearchUrl(shopQueryFromAxisLabel(label)),
+        target:"_blank", rel:"noopener noreferrer sponsored",
+        style:{ padding:"6px 12px", border:"1px solid var(--line)", borderRadius:20, fontSize:12.5, color:"var(--ink)", textDecoration:"none" },
+      }, "Shop " + label))
+    ),
+    e("div", { className:"footnote", style:{ marginTop:6, fontSize:11.5 } }, "Links open Amazon. As an Amazon Associate, Style-LORE earns from qualifying purchases — at no extra cost to you.")
   );
 }
 
