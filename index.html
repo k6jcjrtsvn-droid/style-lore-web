@@ -5226,6 +5226,7 @@ function CheckerScreen({ blend, styleWordBlend, kibbeTypeName, topStyleWords, vi
   // photoStyleVerdict above) — it no longer calls out to Anthropic's API,
   // so there's no "unavailable, no key configured" state to show anymore.
   const [photoPreview, setPhotoPreview] = useState(null);
+  const [photoHiRes, setPhotoHiRes] = useState(null);
   const [photoBlob, setPhotoBlob] = useState(null);
   const [photoBusy, setPhotoBusy] = useState(false);
   const [photoResult, setPhotoResult] = useState(null);
@@ -5259,8 +5260,12 @@ function CheckerScreen({ blend, styleWordBlend, kibbeTypeName, topStyleWords, vi
     setPhotoError(null);
     setAiResult(null);
     setAiError(null);
-    downscaleImage(file, 900, 0.8).then(dataUrl => {
+    // Two sizes from the original: 900px for the on-device check and the
+    // AI upload, and a sharper 1080px copy (encoded once, straight from the
+    // source) that the saved-checks list shows when a check is reopened.
+    Promise.all([downscaleImage(file, 900, 0.8), downscaleImage(file, 1080, 0.85)]).then(([dataUrl, hiRes]) => {
       setPhotoPreview(dataUrl);
+      setPhotoHiRes(hiRes);
       setPhotoBlob(dataUrlToBlob(dataUrl));
     }).catch(() => setPhotoError("Couldn't read that photo — try a different one."));
   }
@@ -5274,7 +5279,7 @@ function CheckerScreen({ blend, styleWordBlend, kibbeTypeName, topStyleWords, vi
       const { axes, usedBodyCrop } = await GarmentOnDeviceAnalyzer.analyzePhotoAxes(photoBlob);
       const v = photoStyleVerdict(axes, profile, usedBodyCrop);
       setPhotoResult(v);
-      if (v && v.score !== null){ const [thumb, photo] = await Promise.all([thumbFromDataUrl(photoPreview, 160), thumbFromDataUrl(photoPreview, 720)]); remember({ kind:"photo", thumb, photo, headline: v.headline, detail: v.detail || "", score: v.score, verdictPill: v.verdictPill }); }
+      if (v && v.score !== null){ const thumb = await thumbFromDataUrl(photoPreview, 160); const photo = photoHiRes || photoPreview; remember({ kind:"photo", thumb, photo, headline: v.headline, detail: v.detail || "", score: v.score, verdictPill: v.verdictPill }); }
     }catch(err){
       setPhotoError(err.message || "Couldn't run the photo check right now.");
     }finally{
@@ -5294,7 +5299,7 @@ function CheckerScreen({ blend, styleWordBlend, kibbeTypeName, topStyleWords, vi
       setAiResult(result);
       if(!isPremium && onFreeAiReadUsed) onFreeAiReadUsed();
       const thumb = await thumbFromDataUrl(photoPreview, 160);
-      const photo = await thumbFromDataUrl(photoPreview, 720);
+      const photo = photoHiRes || photoPreview;
       remember({ kind:"ai", thumb, photo, headline: result.headline, input: result.suggestion || result.detail, detail: result.detail || "", suggestion: result.suggestion || "", verdictPill: result.verdict === "mismatch" ? "avoid" : result.verdict === "match" ? "match" : "neutral" });
     }catch(err){
       if(err.code === "premium_required"){
