@@ -30,5 +30,10 @@ json_response([
     // Free thank-you period (sandbox-era upgrades): the app shows a notice
     // with the end date and a "keep Premium" button instead of "Manage".
     'giftNotice' => subscription_gift_notice($pdo, $accountId),
+    // Referral program: this account's invite code, how many friends joined,
+    // and when its banked free months run out (0 = none).
+    'referralCode' => referral_code_for($pdo, $accountId),
+    'referralCount' => (function() use ($pdo, $accountId) { try { $st = $pdo->prepare('SELECT referral_count FROM accounts WHERE id = ?'); $st->execute([$accountId]); return (int)$st->fetchColumn(); } catch (Throwable $e) { return 0; } })(),
+    'referralUntil' => referral_premium_until($pdo, $accountId),
     'webCheckout' => defined('STRIPE_SECRET_KEY') && STRIPE_SECRET_KEY !== '' && defined('STRIPE_PRICE_MONTHLY') && STRIPE_PRICE_MONTHLY !== '',
 ]);

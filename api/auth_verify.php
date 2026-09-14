@@ -21,6 +21,7 @@ try {
 
     $pdo->prepare('UPDATE accounts SET email_verified = 1, verify_token_hash = NULL, verify_token_expires = NULL WHERE id = ?')
         ->execute([$account['id']]);
+    referral_reward_referrer($pdo, (string)$account['id']);
 
     json_response(['ok' => true]);
 } catch (Throwable $e) {

@@ -2199,6 +2199,15 @@ function saveLocal(key, value){
   try{ localStorage.setItem(key, JSON.stringify(value)); return true; }
   catch(err){ return false; }
 }
+// Referral link (?ref=CODE): remember the code so sign-up can credit the
+// friend, even if the person explores first and signs up later.
+(function captureReferral(){
+  try{
+    const p = new URLSearchParams(window.location.search); const ref = (p.get("ref") || "").replace(/[^A-Za-z0-9]/g, "").toUpperCase();
+    if(ref){ localStorage.setItem("lore_ref", ref); const url = new URL(window.location.href); url.searchParams.delete("ref"); window.history.replaceState({}, "", url.pathname + url.search + url.hash); }
+  }catch(err){}
+})();
+function pendingReferral(){ try{ return localStorage.getItem("lore_ref") || ""; }catch(err){ return ""; } }
 function removeLocal(key){
   try{ localStorage.removeItem(key); }catch(err){ /* storage unavailable */ }
 }
@@ -2819,7 +2828,7 @@ const Api = {
   async signup({ name, email, password }){
     const r = await fetch("/api/auth/signup", {
       method:"POST", headers:{ "Content-Type":"application/json" },
-      body: JSON.stringify({ name, email, password }),
+      body: JSON.stringify({ name, email, password, ref: pendingReferral() || undefined }),
     });
     if(!r.ok){
       const body = await r.json().catch(()=>({}));
@@ -3887,6 +3896,10 @@ function AccountGate({ onComplete, onExplore, startWithForm }){
       e("div", { className:"wordmark", style:{ marginBottom:18, display:"flex", alignItems:"center", gap:"0.12em" } },
           e(LogoMark, { size:"0.85em" }), "Style-LORE"),
       e("div", { className:"eyebrow", style:{ marginBottom:10 } }, "Your body type · your colors · your closet"),
+      pendingReferral() ? e("div", { className:"card", style:{ marginBottom:16, padding:"12px 14px", borderColor:"var(--accent)" } },
+        e("div", { className:"eyebrow", style:{ marginBottom:2 } }, "A gift from a friend"),
+        e("div", { style:{ fontSize:14 } }, "Your friend gave you ", e("b", null, "a month of Premium, free"), ". Create an account and it's on your account the moment you do.")
+      ) : null,
       e("h1", { className:"display", style:{ fontSize:34, lineHeight:1.08, fontWeight:700, margin:"0 0 14px" } },
         "Dress for the body you actually have."),
       e("p", { className:"screen-lede", style:{ marginBottom:26, fontSize:16 } },
@@ -4133,7 +4146,34 @@ function BottomNav({ screen, onNavigate }){
    HOME
 ===================================================================== */
 
-function HomeScreen({ profile, blend, styleBlend, kibbeResult, colorResult, closetCount, closet, digestOptOut, onToggleDigest, isPremium, billing, giftNotice, onManageBilling, onUpgrade, onNavigate, onSignOut, onOpenProfile, onAccountDeleted, onSignIn }){
+function InviteCard({ code, count }){
+  const link = "https://style-lore.com/?ref=" + code;
+  const [copied, setCopied] = useState(false);
+  async function copy(){ try{ await navigator.clipboard.writeText(link); setCopied(true); setTimeout(()=>setCopied(false), 1800); }catch(err){ window.prompt("Copy your invite link", link); } }
+  async function share(){
+    const text = "I've been using Style-LORE to figure out what actually suits me — take the free quiz with my link and you get a month of Premium free: " + link;
+    const S = nativePlugin("Share");
+    try{
+      if(S && S.share){ await S.share({ title:"A month of Style-LORE Premium, free", text, url:link, dialogTitle:"Invite a friend" }); return; }
+      if(navigator.share){ await navigator.share({ title:"A month of Style-LORE Premium, free", text, url:link }); return; }
+    }catch(err){ return; }
+    copy();
+  }
+  return e("div", { className:"card", style:{ marginBottom:16 } },
+    e("div", { className:"eyebrow" }, "Invite a friend"),
+    e("div", { className:"display", style:{ fontSize:19, fontWeight:700, marginBottom:6 } }, "Give a month, get a month"),
+    e("p", { className:"screen-lede", style:{ fontSize:13.5, marginBottom:10 } },
+      "Anyone who joins with your link gets a month of Premium free. When they verify their email, a free month lands on your account too — up to twelve a year."),
+    e("div", { className:"mono", style:{ fontSize:12.5, padding:"9px 12px", background:"var(--paper)", border:"1px solid var(--line-soft)", borderRadius:10, marginBottom:10, wordBreak:"break-all" } }, link),
+    e("div", { style:{ display:"flex", gap:10, alignItems:"center", flexWrap:"wrap" } },
+      e("button", { className:"btn btn-accent btn-sm", onClick:share }, "Share my link"),
+      e("button", { className:"btn btn-ghost btn-sm", onClick:copy }, copied ? "Copied" : "Copy link"),
+      e("span", { className:"footnote", style:{ margin:0 } }, count ? count + (count === 1 ? " friend has" : " friends have") + " joined" : "No one yet — be the first to share")
+    )
+  );
+}
+
+function HomeScreen({ profile, blend, styleBlend, kibbeResult, colorResult, closetCount, closet, digestOptOut, onToggleDigest, isPremium, billing, giftNotice, referral, onManageBilling, onUpgrade, onNavigate, onSignOut, onOpenProfile, onAccountDeleted, onSignIn }){
   const homeType = (kibbeResult && kibbeResult.kibbeTypeId && KIBBE_BY_ID[kibbeResult.kibbeTypeId]) || null;
   const homeWords = styleBlend ? topWords(styleBlend, STYLE_WORDS, 4) : [];
   const homeSeason = (colorResult && colorResult.seasonId && COLOR_SEASON_BY_ID[colorResult.seasonId]) || null;
@@ -4191,12 +4231,14 @@ function HomeScreen({ profile, blend, styleBlend, kibbeResult, colorResult, clos
     ) : null,
 
     giftNotice ? e("div", { className:"card premium-card", style:{ marginBottom:16 } },
-      e("div", { className:"eyebrow" }, "Premium · on us"),
-      e("div", { className:"display", style:{ fontSize:19, fontWeight:700, marginBottom:6 } }, "Your card was never charged"),
+      e("div", { className:"eyebrow" }, giftNotice.kind === "referral" ? "Premium · free month" : "Premium · on us"),
+      e("div", { className:"display", style:{ fontSize:19, fontWeight:700, marginBottom:6 } }, giftNotice.kind === "referral" ? "Premium is on — a month from a friend" : "Your card was never charged"),
       e("p", { className:"screen-lede", style:{ fontSize:13.5, marginBottom:10 } },
-        "You upgraded while our payments were still in test mode, so no charge was ever made. As a thank-you, Premium stays on for you free" +
-        (giftNotice.until ? " until " + new Date(giftNotice.until).toLocaleDateString(undefined, { month:"long", day:"numeric", year:"numeric" }) : "") +
-        ". To keep it after that, subscribe before then — that will be your first and only charge."),
+        giftNotice.kind === "referral"
+          ? "Free months earned through invites run until " + (giftNotice.until ? new Date(giftNotice.until).toLocaleDateString(undefined, { month:"long", day:"numeric", year:"numeric" }) : "later") + ". Invite more friends to add more, or subscribe to keep Premium after that."
+          : "You upgraded while our payments were still in test mode, so no charge was ever made. As a thank-you, Premium stays on for you free" +
+            (giftNotice.until ? " until " + new Date(giftNotice.until).toLocaleDateString(undefined, { month:"long", day:"numeric", year:"numeric" }) : "") +
+            ". To keep it after that, subscribe before then — that will be your first and only charge."),
       e("div", { style:{ display:"flex", gap:10, alignItems:"center", flexWrap:"wrap" } },
         e("button", { className:"btn btn-accent btn-sm", onClick:()=>onUpgrade("home") }, "Keep Premium"),
         e("span", { className:"footnote", style:{ margin:0 } }, "$4.99 / month or $39.99 / year · cancel anytime")
@@ -4239,6 +4281,8 @@ function HomeScreen({ profile, blend, styleBlend, kibbeResult, colorResult, clos
         e("span", { className:"footnote", style:{ margin:0 } }, "$4.99 / month or $39.99 / year · cancel anytime")
       )
     ) : null,
+
+    (profile && referral && referral.code) ? e(InviteCard, { code: referral.code, count: referral.count }) : null,
 
     e("div", { className:"eyebrow", style:{ marginTop:8, marginBottom:10 } }, "Jump in"),
     e("div", { className:"home-grid" },
@@ -6961,6 +7005,7 @@ function App(){
   const [digestOptOut, setDigestOptOut] = useState(false);
   const [webCheckout, setWebCheckout] = useState(false);
   const [giftNotice, setGiftNotice] = useState(null);
+  const [referral, setReferral] = useState({ code:null, count:0 });
   const [billing, setBilling] = useState(null); // "stripe" | "play" | null
   // Back from Stripe Checkout: ?upgraded=1 — thank them, re-check status.
   const [upgradeNotice, setUpgradeNotice] = useState(() => {
@@ -7300,9 +7345,11 @@ function App(){
   useEffect(() => {
     if(!profile || !profile.visitorId){ setIsPremium(false); return; }
     let cancelled = false;
-    Api.getSubscriptionStatus(profile.visitorId).then(({ isPremium, closetFreeLimit, freeAiReadsLeft, digestOptOut, billing, webCheckout, giftNotice }) => {
+    Api.getSubscriptionStatus(profile.visitorId).then(({ isPremium, closetFreeLimit, freeAiReadsLeft, digestOptOut, billing, webCheckout, giftNotice, referralCode, referralCount }) => {
       if(cancelled) return;
       setGiftNotice(giftNotice && giftNotice.active ? giftNotice : null);
+      setReferral({ code: referralCode || null, count: referralCount || 0 });
+      try{ if(localStorage.getItem("lore_ref")) localStorage.removeItem("lore_ref"); }catch(err){}
       setIsPremium(!!isPremium);
       if(closetFreeLimit) setClosetFreeLimit(closetFreeLimit);
       setFreeAiReadsLeft(typeof freeAiReadsLeft === "number" ? freeAiReadsLeft : 0);
@@ -7519,7 +7566,7 @@ function App(){
       viewerKibbeBlend: blend, viewerStyleWordBlend: styleBlend, viewerKibbeTypeName: kibbeTypeName, viewerTopStyleWords: topStyleWords
     });
   }
-  else if(screen === "home") body = e(HomeScreen, { profile, blend, styleBlend, kibbeResult, colorResult, closetCount: closet.length, closet, digestOptOut, onToggleDigest: toggleDigest, isPremium, billing, giftNotice, onManageBilling: openBillingPortal, onUpgrade:openPaywall, onNavigate:goTo, onSignOut:signOut, onOpenProfile:openProfile, onAccountDeleted:handleAccountDeleted, onSignIn:leaveGuestForGate });
+  else if(screen === "home") body = e(HomeScreen, { profile, blend, styleBlend, kibbeResult, colorResult, closetCount: closet.length, closet, digestOptOut, onToggleDigest: toggleDigest, isPremium, billing, giftNotice, referral, onManageBilling: openBillingPortal, onUpgrade:openPaywall, onNavigate:goTo, onSignOut:signOut, onOpenProfile:openProfile, onAccountDeleted:handleAccountDeleted, onSignIn:leaveGuestForGate });
   else if(screen === "quiz") body = e(StyleQuizScreen, { kibbeResult, styleLanguageResult:styleBlend, onSaveKibbe:setKibbeResult, onSaveStyle:setStyleBlend, onSignIn: profile ? null : leaveGuestForGate, colorResult });
   else if(screen === "color") body = e(ColorScreen, { colorResult, onSaveColor:setColorResult });
   else if(screen === "closet") body = e(ClosetScreen, { closet, setCloset, blend, styleWordBlend:styleBlend, kibbeTypeName, topStyleWords, profile, isPremium, closetFreeLimit, onUpgrade:openPaywall, syncStatus:closetSyncStatus, onRetrySync:retryClosetSync, storageFull:closetStorageFull });

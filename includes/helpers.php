@@ -491,9 +491,98 @@ function has_premium(PDO $pdo, string $accountId): bool {
     $stmt = $pdo->prepare('SELECT is_premium, expires_at FROM subscriptions WHERE account_id = ?');
     $stmt->execute([$accountId]);
     $row = $stmt->fetch();
-    if (!$row || !$row['is_premium']) return false;
-    if ($row['expires_at'] !== null && (int)$row['expires_at'] < current_time_ms()) return false;
-    return true;
+    if ($row && $row['is_premium'] && ($row['expires_at'] === null || (int)$row['expires_at'] >= current_time_ms())) return true;
+    // No paid plan (or it lapsed): free months earned through referrals count.
+    return referral_premium_until($pdo, $accountId) > current_time_ms();
+}
+
+/* ---------------------------------------------------------------------
+   Referral program — "give a friend a month, get a month".
+   accounts.referral_code   short shareable code (made on first request)
+   accounts.referred_by     id of the account whose link they signed up from
+   accounts.referral_until  ms timestamp: free Premium earned via referrals
+                            runs until this moment (banked; used whenever
+                            there's no paid plan, so it stacks after one)
+   accounts.referral_count  friends who joined and verified
+   accounts.referral_rewarded  1 once this account's referrer got their month
+--------------------------------------------------------------------- */
+const REFERRAL_DAYS = 30;
+const REFERRAL_MAX_PER_YEAR = 12;
+
+function ensure_referral_columns(PDO $pdo): void {
+    static $done = false; if ($done) return; $done = true;
+    try { $pdo->exec('ALTER TABLE accounts ADD COLUMN IF NOT EXISTS referral_code VARCHAR(12) DEFAULT NULL, ADD COLUMN IF NOT EXISTS referred_by CHAR(36) DEFAULT NULL, ADD COLUMN IF NOT EXISTS referral_until BIGINT DEFAULT NULL, ADD COLUMN IF NOT EXISTS referral_count INT NOT NULL DEFAULT 0, ADD COLUMN IF NOT EXISTS referral_rewarded TINYINT(1) NOT NULL DEFAULT 0, ADD UNIQUE INDEX IF NOT EXISTS idx_referral_code (referral_code)'); }
+    catch (Throwable $e) { error_log('ensure_referral_columns: ' . $e->getMessage()); }
+}
+
+function referral_premium_until(PDO $pdo, string $accountId): int {
+    ensure_referral_columns($pdo);
+    try { $st = $pdo->prepare('SELECT referral_until FROM accounts WHERE id = ?'); $st->execute([$accountId]); $v = $st->fetchColumn(); return $v ? (int)$v : 0; }
+    catch (Throwable $e) { return 0; }
+}
+
+/** This account's share code, generated on first use. Letters/digits that can't be misread. */
+function referral_code_for(PDO $pdo, string $accountId): ?string {
+    ensure_referral_columns($pdo);
+    try {
+        $st = $pdo->prepare('SELECT referral_code FROM accounts WHERE id = ?'); $st->execute([$accountId]); $code = $st->fetchColumn();
+        if ($code === false) return null;
+        if ($code) return (string)$code;
+        $alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+        for ($try = 0; $try < 5; $try++) {
+            $code = ''; for ($i = 0; $i < 7; $i++) $code .= $alphabet[random_int(0, strlen($alphabet) - 1)];
+            try { $pdo->prepare('UPDATE accounts SET referral_code = ? WHERE id = ? AND referral_code IS NULL')->execute([$code, $accountId]); return $code; }
+            catch (PDOException $e) { /* collision — try another */ }
+        }
+    } catch (Throwable $e) { error_log('referral_code_for: ' . $e->getMessage()); }
+    return null;
+}
+
+function account_id_for_referral_code(PDO $pdo, string $code): ?string {
+    $code = strtoupper(preg_replace('/[^A-Za-z0-9]/', '', $code));
+    if ($code === '') return null;
+    ensure_referral_columns($pdo);
+    try { $st = $pdo->prepare('SELECT id FROM accounts WHERE referral_code = ?'); $st->execute([$code]); $id = $st->fetchColumn(); return $id ? (string)$id : null; }
+    catch (Throwable $e) { return null; }
+}
+
+/** Adds REFERRAL_DAYS of free Premium to an account (stacked after any existing free period). */
+function referral_grant_days(PDO $pdo, string $accountId, int $days): int {
+    $now = current_time_ms();
+    $current = referral_premium_until($pdo, $accountId);
+    $until = max($now, $current) + $days * 86400 * 1000;
+    $pdo->prepare('UPDATE accounts SET referral_until = ? WHERE id = ?')->execute([$until, $accountId]);
+    return $until;
+}
+
+/**
+ * Called when a referred account verifies its email: gives the referrer
+ * their month (once per referred account, at most REFERRAL_MAX_PER_YEAR a
+ * year) and emails them. Quietly does nothing if there's no referrer.
+ */
+function referral_reward_referrer(PDO $pdo, string $referredId): void {
+    ensure_referral_columns($pdo);
+    try {
+        $st = $pdo->prepare('SELECT referred_by, referral_rewarded FROM accounts WHERE id = ?'); $st->execute([$referredId]); $row = $st->fetch();
+        if (!$row || empty($row['referred_by']) || (int)$row['referral_rewarded'] === 1) return;
+        $referrer = (string)$row['referred_by'];
+        $pdo->prepare('UPDATE accounts SET referral_rewarded = 1 WHERE id = ?')->execute([$referredId]);
+        $st = $pdo->prepare('SELECT a.email, a.referral_count, p.name FROM accounts a LEFT JOIN profiles p ON p.id = a.id WHERE a.id = ?'); $st->execute([$referrer]); $r = $st->fetch();
+        if (!$r) return;
+        $count = (int)$r['referral_count'] + 1;
+        $pdo->prepare('UPDATE accounts SET referral_count = ? WHERE id = ?')->execute([$count, $referrer]);
+        if ($count > REFERRAL_MAX_PER_YEAR) return; // cap; the friend still gets their month
+        $until = referral_grant_days($pdo, $referrer, REFERRAL_DAYS);
+        $untilText = date('F j, Y', (int)($until / 1000));
+        $first = trim(explode(' ', (string)($r['name'] ?? ''))[0] ?? '');
+        $heading = ($first ? $first . ', ' : '') . 'a friend just joined — you earned a month of Premium';
+        $body = '<p style="margin:0 0 14px;">Someone signed up with your invite link and verified their email, so <b>a free month of Style-LORE Premium is now on your account</b>.</p>'
+              . '<p style="margin:0 0 14px;">If you\'re on the free plan, Premium is on right now through <b>' . htmlspecialchars($untilText) . '</b>. If you already pay for Premium, the month is banked and kicks in whenever your paid plan ends — you can keep stacking them (up to 12 a year).</p>'
+              . '<p style="margin:0;">Invite another friend from Home → <b>Invite a friend</b>.</p>';
+        $html = style_lore_email_html($heading, $body, 'Open Style-LORE', SITE_BASE_URL . '/', 'You get this because someone joined Style-LORE with your invite link.');
+        $text = $heading . "\n\nSomeone signed up with your invite link and verified their email, so a free month of Premium is now on your account (through " . $untilText . " if you're on the free plan; banked after your paid plan otherwise).\n\nOpen Style-LORE: " . SITE_BASE_URL . "/\n";
+        if (!empty($r['email'])) send_mail_tracked($r['email'], 'A friend joined — you earned a month of Premium', $html, $text);
+    } catch (Throwable $e) { error_log('referral_reward_referrer: ' . $e->getMessage()); }
 }
 
 /** HMAC token for the one-click weekly-email unsubscribe link. */
@@ -528,8 +617,13 @@ function digest_opt_out(PDO $pdo, string $accountId): bool {
 function subscription_billing_source(PDO $pdo, string $accountId): ?string {
     try { $st = $pdo->prepare('SELECT product_id FROM subscriptions WHERE account_id = ?'); $st->execute([$accountId]); $p = (string)($st->fetchColumn() ?: ''); }
     catch (Throwable $e) { return null; }
-    if ($p === '') return null;
+    if ($p === '') return referral_premium_until($pdo, $accountId) > current_time_ms() ? 'gift' : null;
     if (strpos($p, 'stripe:sandbox-gift') === 0 || strpos($p, 'gift:') === 0) return 'gift';
+    // A lapsed paid plan with banked referral months → the months are what's active.
+    try { $st = $pdo->prepare('SELECT is_premium, expires_at FROM subscriptions WHERE account_id = ?'); $st->execute([$accountId]); $row = $st->fetch();
+        $paidActive = $row && $row['is_premium'] && ($row['expires_at'] === null || (int)$row['expires_at'] >= current_time_ms());
+        if (!$paidActive && referral_premium_until($pdo, $accountId) > current_time_ms()) return 'gift';
+    } catch (Throwable $e) {}
     return strpos($p, 'stripe') === 0 ? 'stripe' : 'play';
 }
 
@@ -537,8 +631,13 @@ function subscription_billing_source(PDO $pdo, string $accountId): ?string {
 function subscription_gift_notice(PDO $pdo, string $accountId): ?array {
     try { $st = $pdo->prepare('SELECT product_id, expires_at FROM subscriptions WHERE account_id = ?'); $st->execute([$accountId]); $row = $st->fetch(); }
     catch (Throwable $e) { return null; }
+    $p = $row ? (string)$row['product_id'] : '';
+    $paidActive = $row && $row['is_premium'] && ($row['expires_at'] === null || (int)$row['expires_at'] >= current_time_ms()) && strpos($p, 'stripe:sandbox-gift') !== 0 && strpos($p, 'gift:') !== 0;
+    if (!$paidActive) {
+        $ru = referral_premium_until($pdo, $accountId);
+        if ($ru > current_time_ms() && !($row && strpos($p, 'stripe:sandbox-gift') === 0 && (int)$row['expires_at'] > current_time_ms())) return ['kind' => 'referral', 'until' => $ru, 'active' => true];
+    }
     if (!$row) return null;
-    $p = (string)$row['product_id'];
     if (strpos($p, 'stripe:sandbox-gift') !== 0 && strpos($p, 'gift:') !== 0) return null;
     $until = $row['expires_at'] !== null ? (int)$row['expires_at'] : null;
     return ['kind' => strpos($p, 'stripe:sandbox-gift') === 0 ? 'sandbox_gift' : 'gift', 'until' => $until, 'active' => $until === null || $until > current_time_ms()];
