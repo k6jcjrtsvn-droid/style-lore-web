@@ -8,6 +8,10 @@
 
 require_once __DIR__ . '/db.php';
 
+// Where replies to any Style-LORE email land, and the address shown for
+// support on the site. A cPanel forwarder delivers it to Kenneth's inbox.
+if (!defined('SUPPORT_EMAIL')) define('SUPPORT_EMAIL', 'support@style-lore.com');
+
 // CORS for the native apps. The website itself is same-origin and never
 // needs this, but the iOS/Android shells load the bundled index.html from
 // their own local origin (capacitor://localhost on iOS, https://localhost
@@ -301,6 +305,7 @@ function send_mail_tracked(string $to, string $subject, ?string $html, string $t
 function send_via_resend(string $to, string $subject, ?string $html, string $text): bool {
     $payload = [
         'from'    => 'Style-LORE <' . MAIL_FROM . '>',
+        'reply_to' => SUPPORT_EMAIL,
         'to'      => [$to],
         'subject' => $subject,
         'text'    => $text,
@@ -342,7 +347,7 @@ function send_via_resend(string $to, string $subject, ?string $html, string $tex
 
 function send_via_php_mail(string $to, string $subject, ?string $html, string $text): bool {
     if ($html === null) {
-        $headers = "From: Style-LORE <" . MAIL_FROM . ">\r\n" .
+        $headers = "From: Style-LORE <" . MAIL_FROM . ">\r\nReply-To: " . SUPPORT_EMAIL . "\r\n" .
             "Content-Type: text/plain; charset=utf-8\r\n";
         $body = $text;
     } else {
@@ -350,7 +355,7 @@ function send_via_php_mail(string $to, string $subject, ?string $html, string $t
         // still get a good experience, and spam filters see a real text part
         // alongside the HTML one.
         $boundary = 'stylelore-' . bin2hex(random_bytes(12));
-        $headers = "From: Style-LORE <" . MAIL_FROM . ">\r\n" .
+        $headers = "From: Style-LORE <" . MAIL_FROM . ">\r\nReply-To: " . SUPPORT_EMAIL . "\r\n" .
             "MIME-Version: 1.0\r\n" .
             "Content-Type: multipart/alternative; boundary=\"$boundary\"\r\n";
         $body = "--$boundary\r\n" .
