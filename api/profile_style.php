@@ -72,6 +72,18 @@ if ($hasStyleBlend) {
     }
 }
 
+// Color-season result (the third quiz) — same optional/never-clears rule.
+$colorResultJson = null;
+$hasColorResult = array_key_exists('colorResult', $body) && $body['colorResult'] !== null;
+if ($hasColorResult) {
+    if (!is_array($body['colorResult'])) error_response('colorResult must be an object.', 400);
+    $colorResultJson = json_encode($body['colorResult']);
+    if ($colorResultJson === false || strlen($colorResultJson) > MAX_BLEND_JSON_BYTES) {
+        error_response('colorResult is too large or invalid.', 400);
+    }
+}
+ensure_color_result_column($pdo);
+
 $now = current_time_ms();
 
 $stmt = $pdo->prepare('SELECT id FROM profiles WHERE id = ?');
@@ -83,6 +95,7 @@ if ($existing) {
     $params = [$kibbeTypeName, $styleWordsJson, $now];
     if ($hasKibbeResult) { $sets[] = 'kibbe_result_json = ?'; $params[] = $kibbeResultJson; }
     if ($hasStyleBlend) { $sets[] = 'style_blend_json = ?'; $params[] = $styleBlendJson; }
+    if ($hasColorResult) { $sets[] = 'color_result_json = ?'; $params[] = $colorResultJson; }
     $params[] = $id;
     $upd = $pdo->prepare('UPDATE profiles SET ' . implode(', ', $sets) . ' WHERE id = ?');
     $upd->execute($params);
@@ -90,8 +103,8 @@ if ($existing) {
     // No profile row yet (this person has never opened "Edit profile") —
     // create a minimal one so the style summary has somewhere to live;
     // name/bio stay at their schema defaults until they do edit it.
-    $ins = $pdo->prepare('INSERT INTO profiles (id, name, bio, avatar_url, kibbe_type_name, style_words, kibbe_result_json, style_blend_json, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)');
-    $ins->execute([$id, '', '', null, $kibbeTypeName, $styleWordsJson, $kibbeResultJson, $styleBlendJson, $now]);
+    $ins = $pdo->prepare('INSERT INTO profiles (id, name, bio, avatar_url, kibbe_type_name, style_words, kibbe_result_json, style_blend_json, color_result_json, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
+    $ins->execute([$id, '', '', null, $kibbeTypeName, $styleWordsJson, $kibbeResultJson, $styleBlendJson, $colorResultJson, $now]);
 }
 
 json_response(['ok' => true, 'kibbeTypeName' => $kibbeTypeName, 'styleWords' => $styleWords]);

@@ -2930,7 +2930,7 @@ const Api = {
     if(!r.ok) throw await apiError(r, "Couldn't save your profile.");
     return r.json();
   },
-  async updateStyleSummary(id, { kibbeTypeName, styleWords, kibbeResult, styleBlend, authToken }){
+  async updateStyleSummary(id, { kibbeTypeName, styleWords, kibbeResult, styleBlend, colorResult, authToken }){
     // Fire-and-forget background sync of the quiz-derived style summary
     // shown on this account's public profile — deliberately a separate
     // endpoint from saveProfile so a quiz-completion sync can never
@@ -2945,6 +2945,7 @@ const Api = {
     const body = { kibbeTypeName: kibbeTypeName || null, styleWords: styleWords || [], authToken };
     if (kibbeResult !== undefined) body.kibbeResult = kibbeResult;
     if (styleBlend !== undefined) body.styleBlend = styleBlend;
+    if (colorResult !== undefined) body.colorResult = colorResult;
     const r = await fetch("/api/profile-style/"+encodeURIComponent(id), {
       method:"POST", headers:{ "Content-Type":"application/json" },
       body: JSON.stringify(body),
@@ -7358,13 +7359,13 @@ function App(){
   // never something that should interrupt using the app.
   useEffect(() => {
     if(!profile || !profile.visitorId) return;
-    if(!kibbeTypeName && topStyleWords.length === 0) return;
+    if(!kibbeTypeName && topStyleWords.length === 0 && !colorResult) return;
     Api.updateStyleSummary(profile.visitorId, {
       kibbeTypeName, styleWords: topStyleWords,
-      kibbeResult: kibbeResult || null, styleBlend: styleBlend || null,
+      kibbeResult: kibbeResult || null, styleBlend: styleBlend || null, colorResult: colorResult || null,
       authToken: profile.token,
     }).catch(()=>{});
-  }, [profile && profile.visitorId, profile && profile.token, kibbeTypeName, JSON.stringify(topStyleWords), JSON.stringify(kibbeResult), JSON.stringify(styleBlend)]);
+  }, [profile && profile.visitorId, profile && profile.token, kibbeTypeName, JSON.stringify(topStyleWords), JSON.stringify(kibbeResult), JSON.stringify(styleBlend), JSON.stringify(colorResult)]);
 
   // Hydrate this account's own quiz results from the server on login/mount
   // when this browser has neither locally yet (a fresh device, or right
@@ -7373,17 +7374,22 @@ function App(){
   // they've synced from at least one other device/browser before. Runs
   // once per sign-in; never overwrites results this device already has
   // (a fresh local retake always wins over whatever the server has).
+  // Each of the three results is filled in independently: a device that
+  // already has the Kibbe result but not the color season still gets its
+  // color season back from the account.
   const hydratedForRef = useRef(null);
   useEffect(() => {
     if(!profile || !profile.visitorId) return;
-    if(kibbeResult || styleBlend) return; // this device already has results — never overwrite
+    if(kibbeResult && styleBlend && colorResult) return; // nothing missing
     if(hydratedForRef.current === profile.visitorId) return; // already tried this sign-in
     hydratedForRef.current = profile.visitorId;
     Api.getProfile(profile.visitorId).then(row => {
-      if(row && row.kibbeResult && row.kibbeResult.kibbeBlend) setKibbeResult(row.kibbeResult);
-      if(row && row.styleBlend) setStyleBlend(row.styleBlend);
+      if(!row) return;
+      if(!kibbeResult && row.kibbeResult && row.kibbeResult.kibbeBlend) setKibbeResult(row.kibbeResult);
+      if(!styleBlend && row.styleBlend) setStyleBlend(row.styleBlend);
+      if(!colorResult && row.colorResult && row.colorResult.seasonId) setColorResult(row.colorResult);
     }).catch(()=>{});
-  }, [profile && profile.visitorId, kibbeResult, styleBlend]);
+  }, [profile && profile.visitorId, kibbeResult, styleBlend, colorResult]);
 
   function completeGate(newProfile){
     setProfile(newProfile);

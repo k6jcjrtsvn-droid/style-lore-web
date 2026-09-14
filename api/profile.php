@@ -5,7 +5,8 @@ $pdo = db();
 $id = (string)($_GET['id'] ?? '');
 
 if ($_SERVER['REQUEST_METHOD'] === 'GET') {
-    $stmt = $pdo->prepare('SELECT id, name, bio, avatar_url, kibbe_type_name, style_words, kibbe_result_json, style_blend_json FROM profiles WHERE id = ?');
+    ensure_color_result_column($pdo);
+    $stmt = $pdo->prepare('SELECT id, name, bio, avatar_url, kibbe_type_name, style_words, kibbe_result_json, style_blend_json, color_result_json FROM profiles WHERE id = ?');
     $stmt->execute([$id]);
     $existing = $stmt->fetch();
     if ($existing) {
@@ -18,6 +19,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
         if (!empty($existing['style_blend_json'])) {
             $decoded = json_decode($existing['style_blend_json'], true);
             if (is_array($decoded)) $styleBlend = $decoded;
+        }
+        $colorResult = null;
+        if (!empty($existing['color_result_json'])) {
+            $decoded = json_decode($existing['color_result_json'], true);
+            if (is_array($decoded)) $colorResult = $decoded;
         }
         json_response([
             'id' => $existing['id'],
@@ -37,6 +43,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
             // when that quiz hasn't been taken (or synced) yet.
             'kibbeResult' => $kibbeResult,
             'styleBlend' => $styleBlend,
+            // Color-season quiz result, synced the same way so it follows
+            // the account to a new device / a fresh sign-in.
+            'colorResult' => $colorResult,
         ]);
     }
 

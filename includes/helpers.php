@@ -502,6 +502,13 @@ function digest_unsub_token(string $accountId): string {
     return substr(hash_hmac('sha256', 'digest:' . $accountId, $secret), 0, 32);
 }
 
+/** profiles.color_result_json — the color-season quiz result, synced like kibbe_result_json. Lazy, idempotent. */
+function ensure_color_result_column(PDO $pdo): void {
+    static $done = false; if ($done) return; $done = true;
+    try { $pdo->exec('ALTER TABLE profiles ADD COLUMN IF NOT EXISTS color_result_json MEDIUMTEXT DEFAULT NULL'); }
+    catch (Throwable $e) { error_log('ensure_color_result_column: ' . $e->getMessage()); }
+}
+
 /** Adds the weekly-email columns if a deploy got ahead of the migration. Cheap, idempotent, MariaDB. */
 function ensure_digest_columns(PDO $pdo): void {
     static $done = false; if ($done) return; $done = true;
