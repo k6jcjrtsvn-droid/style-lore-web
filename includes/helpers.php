@@ -522,12 +522,26 @@ function digest_opt_out(PDO $pdo, string $accountId): bool {
     catch (Throwable $e) { return false; }
 }
 
-/** 'stripe' | 'play' | null — which billing system owns this account's subscription row. */
+/** 'stripe' | 'play' | 'gift' | null — which billing system owns this account's subscription row.
+ *  'gift' is a free thank-you period (e.g. sandbox-era upgrades converted at go-live by
+ *  api/golive_sandbox_premium.php): Premium is on, but there's no Stripe customer to manage. */
 function subscription_billing_source(PDO $pdo, string $accountId): ?string {
     try { $st = $pdo->prepare('SELECT product_id FROM subscriptions WHERE account_id = ?'); $st->execute([$accountId]); $p = (string)($st->fetchColumn() ?: ''); }
     catch (Throwable $e) { return null; }
     if ($p === '') return null;
+    if (strpos($p, 'stripe:sandbox-gift') === 0 || strpos($p, 'gift:') === 0) return 'gift';
     return strpos($p, 'stripe') === 0 ? 'stripe' : 'play';
+}
+
+/** For gift rows: when the free period ends (ms) and whether it's still active; null otherwise. */
+function subscription_gift_notice(PDO $pdo, string $accountId): ?array {
+    try { $st = $pdo->prepare('SELECT product_id, expires_at FROM subscriptions WHERE account_id = ?'); $st->execute([$accountId]); $row = $st->fetch(); }
+    catch (Throwable $e) { return null; }
+    if (!$row) return null;
+    $p = (string)$row['product_id'];
+    if (strpos($p, 'stripe:sandbox-gift') !== 0 && strpos($p, 'gift:') !== 0) return null;
+    $until = $row['expires_at'] !== null ? (int)$row['expires_at'] : null;
+    return ['kind' => strpos($p, 'stripe:sandbox-gift') === 0 ? 'sandbox_gift' : 'gift', 'until' => $until, 'active' => $until === null || $until > current_time_ms()];
 }
 
 const FREE_AI_READS = 1;

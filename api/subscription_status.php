@@ -27,5 +27,8 @@ json_response([
     // Where the subscription came from, so the web can show "Manage" for
     // Stripe subscribers and point store subscribers at their phone.
     'billing' => subscription_billing_source($pdo, $accountId),
+    // Free thank-you period (sandbox-era upgrades): the app shows a notice
+    // with the end date and a "keep Premium" button instead of "Manage".
+    'giftNotice' => subscription_gift_notice($pdo, $accountId),
     'webCheckout' => defined('STRIPE_SECRET_KEY') && STRIPE_SECRET_KEY !== '' && defined('STRIPE_PRICE_MONTHLY') && STRIPE_PRICE_MONTHLY !== '',
 ]);

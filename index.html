@@ -4133,7 +4133,7 @@ function BottomNav({ screen, onNavigate }){
    HOME
 ===================================================================== */
 
-function HomeScreen({ profile, blend, styleBlend, kibbeResult, colorResult, closetCount, closet, digestOptOut, onToggleDigest, isPremium, billing, onManageBilling, onUpgrade, onNavigate, onSignOut, onOpenProfile, onAccountDeleted, onSignIn }){
+function HomeScreen({ profile, blend, styleBlend, kibbeResult, colorResult, closetCount, closet, digestOptOut, onToggleDigest, isPremium, billing, giftNotice, onManageBilling, onUpgrade, onNavigate, onSignOut, onOpenProfile, onAccountDeleted, onSignIn }){
   const homeType = (kibbeResult && kibbeResult.kibbeTypeId && KIBBE_BY_ID[kibbeResult.kibbeTypeId]) || null;
   const homeWords = styleBlend ? topWords(styleBlend, STYLE_WORDS, 4) : [];
   const homeSeason = (colorResult && colorResult.seasonId && COLOR_SEASON_BY_ID[colorResult.seasonId]) || null;
@@ -4187,6 +4187,19 @@ function HomeScreen({ profile, blend, styleBlend, kibbeResult, colorResult, clos
         e("button", { className:"btn-text", style:{ padding:0, fontSize:12.5 }, disabled:resendBusy || resendSent, onClick:resendVerification },
           resendBusy ? "Sending…" : "Resend email"),
         e("button", { className:"btn-text", style:{ padding:0, fontSize:12.5, color:"var(--ink-soft)" }, onClick:()=>setVerifyBannerDismissed(true) }, "Dismiss")
+      )
+    ) : null,
+
+    giftNotice ? e("div", { className:"card premium-card", style:{ marginBottom:16 } },
+      e("div", { className:"eyebrow" }, "Premium · on us"),
+      e("div", { className:"display", style:{ fontSize:19, fontWeight:700, marginBottom:6 } }, "Your card was never charged"),
+      e("p", { className:"screen-lede", style:{ fontSize:13.5, marginBottom:10 } },
+        "You upgraded while our payments were still in test mode, so no charge was ever made. As a thank-you, Premium stays on for you free" +
+        (giftNotice.until ? " until " + new Date(giftNotice.until).toLocaleDateString(undefined, { month:"long", day:"numeric", year:"numeric" }) : "") +
+        ". To keep it after that, subscribe before then — that will be your first and only charge."),
+      e("div", { style:{ display:"flex", gap:10, alignItems:"center", flexWrap:"wrap" } },
+        e("button", { className:"btn btn-accent btn-sm", onClick:()=>onUpgrade("home") }, "Keep Premium"),
+        e("span", { className:"footnote", style:{ margin:0 } }, "$4.99 / month or $39.99 / year · cancel anytime")
       )
     ) : null,
 
@@ -4268,7 +4281,9 @@ function HomeScreen({ profile, blend, styleBlend, kibbeResult, colorResult, clos
         "Style-LORE Premium · ",
         billing === "stripe" && !IS_NATIVE_APP
           ? e("button", { className:"btn-text", style:{ padding:0, fontSize:12.5 }, onClick:onManageBilling }, "Manage subscription")
-          : e("span", null, billing === "stripe" ? "manage it at style-lore.com" : "manage it in your phone's subscription settings")
+          : billing === "gift"
+            ? e("span", null, "free thank-you period", giftNotice && giftNotice.until ? " until " + new Date(giftNotice.until).toLocaleDateString() : "")
+            : e("span", null, billing === "stripe" ? "manage it at style-lore.com" : "manage it in your phone's subscription settings")
       ) : e("div", { style:{ marginTop:10, fontSize:12.5, color:"var(--ink-soft)" } },
         "Free account · ",
         e("button", { className:"btn-text", style:{ padding:0, fontSize:12.5 }, onClick:()=>onUpgrade("home") }, "Upgrade to Premium")
@@ -6945,6 +6960,7 @@ function App(){
   const [freeAiReadsLeft, setFreeAiReadsLeft] = useState(0);
   const [digestOptOut, setDigestOptOut] = useState(false);
   const [webCheckout, setWebCheckout] = useState(false);
+  const [giftNotice, setGiftNotice] = useState(null);
   const [billing, setBilling] = useState(null); // "stripe" | "play" | null
   // Back from Stripe Checkout: ?upgraded=1 — thank them, re-check status.
   const [upgradeNotice, setUpgradeNotice] = useState(() => {
@@ -7284,8 +7300,9 @@ function App(){
   useEffect(() => {
     if(!profile || !profile.visitorId){ setIsPremium(false); return; }
     let cancelled = false;
-    Api.getSubscriptionStatus(profile.visitorId).then(({ isPremium, closetFreeLimit, freeAiReadsLeft, digestOptOut, billing, webCheckout }) => {
+    Api.getSubscriptionStatus(profile.visitorId).then(({ isPremium, closetFreeLimit, freeAiReadsLeft, digestOptOut, billing, webCheckout, giftNotice }) => {
       if(cancelled) return;
+      setGiftNotice(giftNotice && giftNotice.active ? giftNotice : null);
       setIsPremium(!!isPremium);
       if(closetFreeLimit) setClosetFreeLimit(closetFreeLimit);
       setFreeAiReadsLeft(typeof freeAiReadsLeft === "number" ? freeAiReadsLeft : 0);
@@ -7502,7 +7519,7 @@ function App(){
       viewerKibbeBlend: blend, viewerStyleWordBlend: styleBlend, viewerKibbeTypeName: kibbeTypeName, viewerTopStyleWords: topStyleWords
     });
   }
-  else if(screen === "home") body = e(HomeScreen, { profile, blend, styleBlend, kibbeResult, colorResult, closetCount: closet.length, closet, digestOptOut, onToggleDigest: toggleDigest, isPremium, billing, onManageBilling: openBillingPortal, onUpgrade:openPaywall, onNavigate:goTo, onSignOut:signOut, onOpenProfile:openProfile, onAccountDeleted:handleAccountDeleted, onSignIn:leaveGuestForGate });
+  else if(screen === "home") body = e(HomeScreen, { profile, blend, styleBlend, kibbeResult, colorResult, closetCount: closet.length, closet, digestOptOut, onToggleDigest: toggleDigest, isPremium, billing, giftNotice, onManageBilling: openBillingPortal, onUpgrade:openPaywall, onNavigate:goTo, onSignOut:signOut, onOpenProfile:openProfile, onAccountDeleted:handleAccountDeleted, onSignIn:leaveGuestForGate });
   else if(screen === "quiz") body = e(StyleQuizScreen, { kibbeResult, styleLanguageResult:styleBlend, onSaveKibbe:setKibbeResult, onSaveStyle:setStyleBlend, onSignIn: profile ? null : leaveGuestForGate, colorResult });
   else if(screen === "color") body = e(ColorScreen, { colorResult, onSaveColor:setColorResult });
   else if(screen === "closet") body = e(ClosetScreen, { closet, setCloset, blend, styleWordBlend:styleBlend, kibbeTypeName, topStyleWords, profile, isPremium, closetFreeLimit, onUpgrade:openPaywall, syncStatus:closetSyncStatus, onRetrySync:retryClosetSync, storageFull:closetStorageFull });
