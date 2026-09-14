@@ -2138,7 +2138,9 @@ const TERMS_TEXT = `Style-LORE is a styling web app. By creating an account you 
 
 5. Changes. Because this app is actively developed, features and this agreement may change over time.
 
-6. No warranty. Style-LORE is provided as-is, without warranty of any kind, while it continues to be developed and tested.`;
+6. No warranty. Style-LORE is provided as-is, without warranty of any kind, while it continues to be developed and tested.
+
+7. Premium subscriptions. Style-LORE Premium is $4.99 a month or $39.99 a year (plus any applicable tax) and renews automatically until you cancel. You can cancel any time — from Home → Manage subscription on the web, or from your phone's subscription settings for the apps — and you keep Premium until the end of the period you've paid for. If Premium didn't work as promised, email kgasps2025@gmail.com within 14 days of the charge for a full refund; store purchases follow Google Play's or Apple's refund policy. The full Terms of Service, including refunds and cancellation, are at style-lore.com/terms.html, and the Privacy Policy at style-lore.com/privacy.html.`;
 
 const GUIDELINES_TEXT = `Style-LORE is meant to be a safe, welcoming space to talk about style. By joining Community, you agree to:
 
@@ -3866,7 +3868,8 @@ function AccountGate({ onComplete, onExplore, startWithForm }){
         e("button", { type:"button", className:"link-btn", onClick: () => { setMode("signup"); setShowForm(true); } }, "Create an account"),
         " if you'd rather save your results now, or ",
         e("button", { type:"button", className:"link-btn", onClick: () => onExplore("home") }, "just look around"),
-        ".")
+        "."),
+      e("p", { className:"footnote", style:{ textAlign:"center", marginTop:6 } }, e(LegalLinks, null))
     );
   }
 
@@ -3956,6 +3959,13 @@ function SignInPromptScreen({ screen, onSignIn, onBack }){
       e("button", { className:"btn btn-accent btn-block", onClick:onSignIn }, "Create a free account or log in")
     )
   );
+}
+
+function LegalLinks(){
+  const st = { fontSize:12, color:"var(--ink-soft)" };
+  return e("span", { style:st },
+    e("a", { href:"https://style-lore.com/terms.html", target:"_blank", rel:"noopener", style:{ color:"inherit" } }, "Terms"), " · ",
+    e("a", { href:"https://style-lore.com/privacy.html", target:"_blank", rel:"noopener", style:{ color:"inherit" } }, "Privacy"));
 }
 
 function LegalSheet({ title, text, onClose }){
@@ -4207,9 +4217,12 @@ function HomeScreen({ profile, blend, styleBlend, kibbeResult, colorResult, clos
       ))
     ),
 
-    !profile ? e("div", { style:{ marginTop:30, paddingTop:18, borderTop:"1px solid var(--line-soft)", display:"flex", justifyContent:"space-between", alignItems:"center", gap:12 } },
-      e("span", { className:"footnote" }, "Exploring without an account"),
-      e("button", { className:"btn-text", onClick:onSignIn }, "Log in / Create account")
+    !profile ? e("div", { style:{ marginTop:30, paddingTop:18, borderTop:"1px solid var(--line-soft)" } },
+      e("div", { style:{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:12 } },
+        e("span", { className:"footnote" }, "Exploring without an account"),
+        e("button", { className:"btn-text", onClick:onSignIn }, "Log in / Create account")
+      ),
+      e("div", { style:{ marginTop:8 } }, e(LegalLinks, null))
     ) :
     e("div", { style:{ marginTop:30, paddingTop:18, borderTop:"1px solid var(--line-soft)" } },
       e("div", { style:{ display:"flex", justifyContent:"space-between", alignItems:"center" } },
@@ -4234,8 +4247,9 @@ function HomeScreen({ profile, blend, styleBlend, kibbeResult, colorResult, clos
         e("input", { type:"checkbox", checked: !digestOptOut, onChange: onToggleDigest }),
         e("span", null, "Weekly email — one tip for your type, every week")
       ),
-      e("div", { style:{ marginTop:10 } },
-        e("button", { className:"btn-text", style:{ padding:0, fontSize:12, color:"var(--ink-soft)" }, onClick:()=>setShowDeleteAccount(true) }, "Delete my account")
+      e("div", { style:{ marginTop:10, display:"flex", gap:14, flexWrap:"wrap", alignItems:"center" } },
+        e("button", { className:"btn-text", style:{ padding:0, fontSize:12, color:"var(--ink-soft)" }, onClick:()=>setShowDeleteAccount(true) }, "Delete my account"),
+        e(LegalLinks, null)
       )
     ),
     (profile && showDeleteAccount) ? e(DeleteAccountSheet, {
@@ -5120,7 +5134,8 @@ function PaywallSheet({ reason, onClose, onPurchased, profile, webCheckout: webC
     plansContent = e("div", { style:{ display:"flex", flexDirection:"column", gap:10, marginBottom:12 } },
       e("button", { className:"btn btn-accent btn-block", disabled:!!webBusy, onClick:()=>webBuy("yearly") }, webBusy === "yearly" ? "Opening checkout…" : "Yearly — $39.99 / year (save 33%)"),
       e("button", { className:"btn btn-ghost btn-block", disabled:!!webBusy, onClick:()=>webBuy("monthly") }, webBusy === "monthly" ? "Opening checkout…" : "Monthly — $4.99 / month"),
-      e("p", { className:"footnote", style:{ margin:"4px 0 0", textAlign:"center" } }, "Secure checkout by Stripe. Cancel anytime from your account.")
+      e("p", { className:"footnote", style:{ margin:"4px 0 0", textAlign:"center" } }, "Secure checkout by Stripe. Cancel anytime from your account. ",
+        e("a", { href:"https://style-lore.com/terms.html", target:"_blank", rel:"noopener" }, "Terms"), " · ", e("a", { href:"https://style-lore.com/privacy.html", target:"_blank", rel:"noopener" }, "Privacy"))
     );
   } else if (!isNative){
     plansContent = e(Banner, { kind:"info" }, "Subscriptions are handled through the Style-LORE mobile app right now — open the app on your phone to upgrade.");
