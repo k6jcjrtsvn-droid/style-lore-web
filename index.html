@@ -671,7 +671,10 @@
   .browse-row::-webkit-scrollbar{ display:none; }
   .browse-row .tab-chip{ flex:0 0 auto; white-space:nowrap; }
   .home-grid{ display:grid; grid-template-columns:repeat(2,1fr); gap:10px; }
-  .history-remove{ flex-shrink:0; width:28px; height:28px; border-radius:50%; border:1px solid var(--line-soft); background:transparent; color:var(--ink-soft); font-size:18px; line-height:1; display:flex; align-items:center; justify-content:center; cursor:pointer; padding:0; margin-left:4px; }
+  .history-main{ flex:1; min-width:0; display:flex; gap:12px; align-items:flex-start; background:none; border:0; padding:0; margin:0; font:inherit; color:inherit; cursor:pointer; text-align:left; }
+.history-chevron{ flex-shrink:0; color:var(--ink-soft); font-size:12px; margin-top:4px; }
+.history-detail{ flex-basis:100%; margin-top:10px; padding-top:10px; border-top:1px dashed var(--line-soft); }
+.history-remove{ flex-shrink:0; width:28px; height:28px; border-radius:50%; border:1px solid var(--line-soft); background:transparent; color:var(--ink-soft); font-size:18px; line-height:1; display:flex; align-items:center; justify-content:center; cursor:pointer; padding:0; margin-left:4px; }
 .history-remove:hover{ color:var(--danger); border-color:var(--danger); }
 .premium-card{ border-color:var(--accent); background:linear-gradient(135deg, rgba(255,255,255,.55), rgba(255,255,255,0)); }
 .premium-list{ margin:10px 0 12px; padding-left:18px; font-size:13.5px; line-height:1.45; color:var(--ink); }
@@ -1556,6 +1559,7 @@ function thumbFromDataUrl(dataUrl, size){
 function HistoryList({ isPremium, onUpgrade, version }){
   const [localVersion, setLocalVersion] = useState(0);
   const [confirmClear, setConfirmClear] = useState(false);
+  const [openId, setOpenId] = useState(null);
   const all = useMemo(() => loadHistory(), [version, localVersion]);
   if (!all.length) return null;
   const shown = isPremium ? all : all.slice(0, HISTORY_FREE_LIMIT);
@@ -1574,19 +1578,33 @@ function HistoryList({ isPremium, onUpgrade, version }){
         : e("button", { className:"btn-text", style:{ padding:0, fontSize:12.5, color:"var(--ink-soft)" }, onClick:()=>setConfirmClear(true) }, "Clear all")
     ),
     e("div", { className:"row-list" },
-      shown.map(h => e("div", { key:h.id, className:"row-list-item", style:{ alignItems:"flex-start" } },
-        h.thumb ? e("img", { src:h.thumb, alt:"", style:{ width:44, height:44, borderRadius:8, objectFit:"cover", flexShrink:0 } })
-          : e("span", { style:{ color:"var(--accent)", flexShrink:0, width:22, height:22 } }, Icon("check")),
-        e("span", { style:{ flex:1, minWidth:0 } },
-          e("div", { style:{ display:"flex", gap:8, alignItems:"center", marginBottom:2 } },
-            h.verdictPill ? e(VerdictPill, { verdict:h.verdictPill }) : null,
-            e("span", { style:{ fontSize:11.5, color:"var(--ink-soft)" } }, kindLabel[h.kind] || "Check", " · ", timeAgo(h.at))
+      shown.map(h => {
+        const open = openId === h.id;
+        const hasMore = !!(h.detail || h.suggestion || (h.kind === "text" && h.input));
+        return e("div", { key:h.id, className:"row-list-item history-row" + (open ? " open" : ""), style:{ alignItems:"flex-start", flexWrap:"wrap" } },
+          e("button", { type:"button", className:"history-main", "aria-expanded": open ? "true" : "false", onClick:()=>setOpenId(open ? null : h.id) },
+            h.thumb ? e("img", { src:h.thumb, alt:"", style:{ width:44, height:44, borderRadius:8, objectFit:"cover", flexShrink:0 } })
+              : e("span", { style:{ color:"var(--accent)", flexShrink:0, width:22, height:22 } }, Icon("check")),
+            e("span", { style:{ flex:1, minWidth:0, textAlign:"left" } },
+              e("div", { style:{ display:"flex", gap:8, alignItems:"center", marginBottom:2 } },
+                h.verdictPill ? e(VerdictPill, { verdict:h.verdictPill }) : null,
+                e("span", { style:{ fontSize:11.5, color:"var(--ink-soft)" } }, kindLabel[h.kind] || "Check", " · ", timeAgo(h.at))
+              ),
+              e("div", { style:{ fontWeight:600, fontSize:13.5 } }, h.headline),
+              !open && h.input ? e("div", { style:{ fontSize:12.5, color:"var(--ink-soft)", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" } }, h.input) : null
+            ),
+            hasMore ? e("span", { className:"history-chevron", "aria-hidden":"true" }, open ? "▴" : "▾") : null
           ),
-          e("div", { style:{ fontWeight:600, fontSize:13.5 } }, h.headline),
-          h.input ? e("div", { style:{ fontSize:12.5, color:"var(--ink-soft)", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" } }, h.input) : null
-        ),
-        e("button", { className:"history-remove", "aria-label":"Remove this check", title:"Remove", onClick:()=>remove(h.id) }, "×")
-      ))
+          e("button", { className:"history-remove", "aria-label":"Remove this check", title:"Remove", onClick:()=>remove(h.id) }, "×"),
+          open ? e("div", { className:"history-detail" },
+            h.thumb ? e("img", { src:h.thumb, alt:"", style:{ width:"100%", maxWidth:220, borderRadius:10, display:"block", marginBottom:10 } }) : null,
+            h.kind === "text" && h.input ? e("p", { style:{ fontSize:13, color:"var(--ink-soft)", margin:"0 0 8px" } }, "“", h.input, "”") : null,
+            h.detail ? e("p", { style:{ fontSize:13.5, margin:"0 0 8px" } }, h.detail) : null,
+            h.suggestion ? e("p", { style:{ fontSize:13.5, color:"var(--accent)", fontWeight:500, margin:0 } }, "✦ " + h.suggestion) : null,
+            !h.detail && !h.suggestion && h.kind !== "text" ? e("p", { className:"footnote", style:{ margin:0 } }, "This check was saved before full reads were kept — run it again to see the details.") : null
+          ) : null
+        );
+      })
     ),
     hidden > 0 ? e("div", { className:"card", style:{ marginTop:10, padding:12, display:"flex", alignItems:"center", justifyContent:"space-between", gap:12, borderColor:"var(--accent)" } },
       e("span", { style:{ fontSize:13 } }, hidden + " older " + (hidden === 1 ? "check is" : "checks are") + " kept for Premium — your shopping notebook, every verdict saved."),
@@ -5220,7 +5238,7 @@ function CheckerScreen({ blend, styleWordBlend, kibbeTypeName, topStyleWords, vi
     if (!description.trim()) return;
     const v = styleCheckVerdict(description.trim(), profile);
     setChecked(v);
-    if (v && v.score !== null) remember({ kind:"text", input: description.trim(), headline: v.headline, score: v.score, verdictPill: v.verdictPill });
+    if (v && v.score !== null) remember({ kind:"text", input: description.trim(), headline: v.headline, detail: v.detail || "", score: v.score, verdictPill: v.verdictPill });
   }
 
   function pickCheckerPhoto(ev){
@@ -5245,7 +5263,7 @@ function CheckerScreen({ blend, styleWordBlend, kibbeTypeName, topStyleWords, vi
       const { axes, usedBodyCrop } = await GarmentOnDeviceAnalyzer.analyzePhotoAxes(photoBlob);
       const v = photoStyleVerdict(axes, profile, usedBodyCrop);
       setPhotoResult(v);
-      if (v && v.score !== null){ const thumb = await thumbFromDataUrl(photoPreview, 160); remember({ kind:"photo", thumb, headline: v.headline, score: v.score, verdictPill: v.verdictPill }); }
+      if (v && v.score !== null){ const thumb = await thumbFromDataUrl(photoPreview, 160); remember({ kind:"photo", thumb, headline: v.headline, detail: v.detail || "", score: v.score, verdictPill: v.verdictPill }); }
     }catch(err){
       setPhotoError(err.message || "Couldn't run the photo check right now.");
     }finally{
@@ -5265,7 +5283,7 @@ function CheckerScreen({ blend, styleWordBlend, kibbeTypeName, topStyleWords, vi
       setAiResult(result);
       if(!isPremium && onFreeAiReadUsed) onFreeAiReadUsed();
       const thumb = await thumbFromDataUrl(photoPreview, 160);
-      remember({ kind:"ai", thumb, headline: result.headline, input: result.suggestion || result.detail, verdictPill: result.verdict === "mismatch" ? "avoid" : result.verdict === "match" ? "match" : "neutral" });
+      remember({ kind:"ai", thumb, headline: result.headline, input: result.suggestion || result.detail, detail: result.detail || "", suggestion: result.suggestion || "", verdictPill: result.verdict === "mismatch" ? "avoid" : result.verdict === "match" ? "match" : "neutral" });
     }catch(err){
       if(err.code === "premium_required"){
         if(onUpgrade) onUpgrade("checker");
