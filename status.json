@@ -1,6 +1,6 @@
 {
   "_comment": "Service notice shown inside the app and website (ServiceNotice in index.html). Set active:true with a message during an incident; change id for each new notice (people can dismiss one per id).",
-  "active": true,
+  "active": false,
   "id": "2026-09-15-android-1.2",
   "message": "Android app 1.2: if the app closes right after the notification question, tap “Don’t allow” and it works normally. A fix (1.3) is on its way to Google Play — we’re on it."
 }

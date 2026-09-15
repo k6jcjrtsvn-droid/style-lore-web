@@ -14,7 +14,7 @@
   window.STYLE_LORE_API_BASE = window.STYLE_LORE_NATIVE ? "https://style-lore.com" : "";
   // Bump this with every app release; it travels with every bug report so we
   // know which build a problem came from.
-  window.STYLE_LORE_APP_VERSION = "1.3.0";
+  window.STYLE_LORE_APP_VERSION = "1.4.0";
   // Native push needs Firebase (android/app/google-services.json). The
   // Codemagic build flips this to false when that file is missing, so the
   // app never calls Push.register() without Firebase — which crashes the
@@ -338,28 +338,42 @@
   .story-tap-zones{ position:absolute; inset:0 0 auto 0; top:0; height:calc(70vh + 20px); display:flex; }
   .story-tap-zone{ flex:1; height:100%; }
 
-  .conversation-list{
-    flex:1; overflow-y:auto;
-    display:flex; flex-direction:column; gap:8px;
-    padding:4px 2px 12px;
-  }
-  .message-bubble{
-    max-width:78%;
-    padding:9px 13px;
-    border-radius:16px;
-    font-size:13.5px;
-    line-height:1.4;
-    word-wrap:break-word;
-  }
-  .message-bubble-mine{ align-self:flex-end; background:var(--accent); color:#fff; border-bottom-right-radius:4px; }
-  .message-bubble-theirs{ align-self:flex-start; background:var(--paper-raised); border:1px solid var(--line); border-bottom-left-radius:4px; }
-  .conversation-input-row{
-    display:flex; gap:8px; align-items:center;
-    padding:10px 2px calc(10px + env(safe-area-inset-bottom));
-    border-top:1px solid var(--line-soft);
-  }
-  .conversation-input-row input{ flex:1; }
-  .conversation-input-row .btn svg{ width:16px; height:16px; stroke:currentColor; fill:none; stroke-width:1.8; }
+  /* ---------- Messages ---------- */
+  .inbox-item{ display:flex; align-items:center; gap:14px; width:100%; text-align:left; padding:14px 12px; border-radius:var(--radius-m); background:var(--paper-raised); border:1px solid var(--line-soft); margin-bottom:8px; transition:background .15s ease, transform .15s ease; }
+  .inbox-item:hover{ background:var(--accent-soft); }
+  .inbox-item:active{ transform:scale(.995); }
+  .inbox-item.unread{ border-color:var(--accent); }
+  .inbox-name{ font-size:15.5px; font-weight:600; }
+  .inbox-item.unread .inbox-name{ font-weight:700; }
+  .inbox-preview{ font-size:13.5px; color:var(--ink-soft); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; margin-top:2px; }
+  .inbox-item.unread .inbox-preview{ color:var(--ink); }
+  .inbox-time{ font-size:11.5px; color:var(--ink-soft); white-space:nowrap; }
+  .inbox-badge{ min-width:20px; height:20px; padding:0 6px; border-radius:999px; background:var(--accent); color:#fff; font-size:11px; font-weight:700; display:inline-flex; align-items:center; justify-content:center; }
+  .convo{ display:flex; flex-direction:column; height:calc(100vh - 150px); min-height:420px; margin:-24px -20px -96px; }
+  .convo-head{ display:flex; align-items:center; gap:12px; padding:12px 16px; border-bottom:1px solid var(--line-soft); background:var(--paper); position:sticky; top:0; z-index:2; }
+  .convo-head .back{ width:36px; height:36px; border-radius:50%; display:flex; align-items:center; justify-content:center; color:var(--ink); }
+  .convo-head .back svg{ width:20px; height:20px; stroke:currentColor; fill:none; stroke-width:1.8; }
+  .convo-head .who{ flex:1; min-width:0; }
+  .convo-head .who b{ display:block; font-size:16px; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .convo-head .who span{ font-size:12px; color:var(--ink-soft); }
+  .conversation-list{ flex:1; overflow-y:auto; display:flex; flex-direction:column; gap:3px; padding:16px 16px 12px; background:linear-gradient(var(--paper), var(--paper-raised) 40%, var(--paper)); }
+  .conversation-list > :first-child{ margin-top:auto; }
+  .msg-day{ align-self:center; font-size:11px; letter-spacing:.08em; text-transform:uppercase; color:var(--ink-soft); margin:10px 0 8px; }
+  .message-bubble{ max-width:80%; padding:11px 15px; border-radius:20px; font-size:15px; line-height:1.4; word-wrap:break-word; white-space:pre-wrap; position:relative; }
+  .message-bubble-mine{ align-self:flex-end; background:var(--accent); color:#fff; border-bottom-right-radius:6px; }
+  .message-bubble-theirs{ align-self:flex-start; background:var(--paper-raised); border:1px solid var(--line); border-bottom-left-radius:6px; }
+  .message-bubble.first-mine{ border-top-right-radius:20px; } .message-bubble.cont-mine{ border-top-right-radius:6px; }
+  .message-bubble.cont-theirs{ border-top-left-radius:6px; }
+  .msg-time{ font-size:10.5px; color:var(--ink-soft); margin:2px 6px 8px; }
+  .msg-time.mine{ align-self:flex-end; } .msg-time.theirs{ align-self:flex-start; }
+  .conversation-input-row{ display:flex; gap:10px; align-items:flex-end; padding:10px 12px calc(12px + env(safe-area-inset-bottom)); border-top:1px solid var(--line-soft); background:var(--paper); }
+  .conversation-input-row textarea{ flex:1; min-height:46px; max-height:140px; padding:12px 16px; border-radius:23px; font-size:15.5px; line-height:1.35; resize:none; border:1px solid var(--line); background:var(--paper-raised); color:var(--ink); font-family:inherit; }
+  .conversation-input-row textarea:focus{ outline:none; border-color:var(--accent); box-shadow:0 0 0 3px var(--accent-soft); }
+  .send-btn{ width:46px; height:46px; border-radius:50%; background:var(--accent); color:#fff; display:flex; align-items:center; justify-content:center; flex-shrink:0; transition:transform .12s ease, opacity .15s ease; box-shadow:0 6px 16px -8px var(--accent); }
+  .send-btn:disabled{ opacity:.45; box-shadow:none; }
+  .send-btn:active{ transform:scale(.94); }
+  .send-btn svg{ width:20px; height:20px; stroke:currentColor; fill:none; stroke-width:2; }
+  @media (min-width:1024px){ .convo{ height:calc(100vh - 210px); margin:-36px -48px -64px; border-left:1px solid var(--line-soft); } .message-bubble{ max-width:62%; } }
 
   .bottom-nav{
     position:sticky;
@@ -574,6 +588,15 @@
   .skip-link{display:block; width:100%; text-align:center; padding:12px 8px 4px; font-size:13px; color:var(--ink-soft); background:none; border:0;}
   .skip-link:hover{color:var(--ink); text-decoration:underline;}
   /* Results reveal: the type name on its own color, edge to edge. */
+  .trust-line{ display:flex; align-items:center; justify-content:center; gap:6px; font-size:12px; color:var(--ink-soft); margin:0 0 10px; }
+  .trust-line svg{ width:13px; height:13px; stroke:currentColor; fill:none; stroke-width:1.6; }
+  .pill-time{ display:inline-block; margin-left:10px; padding:2px 8px; border-radius:999px; background:rgba(255,255,255,.22); font-size:11px; font-weight:600; letter-spacing:.04em; vertical-align:middle; }
+  @keyframes reveal-rise{ from{ opacity:0; transform:translateY(10px); } to{ opacity:1; transform:none; } }
+  .result-hero h1, .result-hero .eyebrow, .result-hero p{ animation:reveal-rise .55s cubic-bezier(.2,.7,.2,1) both; }
+  .result-hero h1{ animation-delay:.08s; } .result-hero p{ animation-delay:.18s; }
+  .weekly-prompt{ display:flex; gap:12px; align-items:center; padding:12px 14px; border:1px dashed var(--accent); border-radius:var(--radius-m); background:var(--accent-soft); margin-bottom:14px; }
+  .weekly-prompt b{ display:block; font-family:'Bodoni Moda', Georgia, serif; font-size:16px; margin-bottom:2px; }
+  .weekly-prompt span{ font-size:12.5px; color:var(--ink-soft); }
   .result-hero{
     margin:-24px -20px 18px; padding:34px 22px 26px; color:#fff;
     background:var(--hero, var(--accent));
@@ -988,6 +1011,21 @@
     padding:3px 7px; border-radius:6px; background:rgba(255,255,255,.85); color:#2E1620; opacity:0; transition:opacity .15s ease;
   }
   .color-swatch.show-hex span{ opacity:1; }
+  /* Full-screen swatch: tap a color to fill the whole screen so it can be
+     held up against a garment; swipe/tap the arrows to move through the
+     palette, tap anywhere to close. */
+  .swatch-full{ position:fixed; inset:0; z-index:70; display:flex; flex-direction:column; justify-content:flex-end; padding:0 20px calc(28px + env(safe-area-inset-bottom)); color:#fff; cursor:pointer; -webkit-tap-highlight-color:transparent; }
+  .swatch-full.light{ color:#1d1016; }
+  .swatch-full .swatch-full-bar{ display:flex; align-items:center; justify-content:space-between; gap:12px; }
+  .swatch-full .swatch-full-hex{ font-family:'IBM Plex Mono', monospace; font-size:15px; letter-spacing:.06em; padding:8px 14px; border-radius:999px; background:rgba(0,0,0,.28); color:#fff; }
+  .swatch-full.light .swatch-full-hex{ background:rgba(255,255,255,.55); color:#1d1016; }
+  .swatch-full .swatch-full-nav{ display:flex; gap:8px; }
+  .swatch-full .swatch-full-nav button{ width:44px; height:44px; border-radius:50%; background:rgba(0,0,0,.28); color:#fff; font-size:20px; display:flex; align-items:center; justify-content:center; }
+  .swatch-full.light .swatch-full-nav button{ background:rgba(255,255,255,.55); color:#1d1016; }
+  .swatch-full .swatch-full-hint{ font-size:12.5px; opacity:.85; margin-top:12px; text-align:center; }
+  .swatch-full .swatch-full-dots{ display:flex; gap:6px; justify-content:center; margin-top:10px; }
+  .swatch-full .swatch-full-dots i{ width:6px; height:6px; border-radius:50%; background:currentColor; opacity:.35; }
+  .swatch-full .swatch-full-dots i.on{ opacity:1; }
   .color-chip{
     width:42px; height:42px; border-radius:11px; flex-shrink:0;
     box-shadow:0 0 0 1px var(--line) inset, 0 1px 2px rgba(0,0,0,.1);
@@ -2951,6 +2989,23 @@ function nativePlugin(name){
   }catch(err){ /* plugin not installed in this build */ }
   return null;
 }
+// Store rating prompt (item 8 of the competitive review): asked ONCE, only
+// on the second visit to a result or after a successful checker verdict —
+// never on first launch, never after an error. Uses the in-app review
+// sheet (@capacitor-community/in-app-review) so nobody leaves the app.
+const REVIEW_KEY = "lore_review_prompt";
+function maybeAskForReview(kind){
+  if(!IS_NATIVE_APP) return;
+  try{
+    const st = loadLocal(REVIEW_KEY, { results:0, asked:false }) || { results:0, asked:false };
+    if(st.asked) return;
+    if(kind === "result"){ st.results = (st.results || 0) + 1; saveLocal(REVIEW_KEY, st); if(st.results < 2) return; }
+    const R = nativePlugin("InAppReview");
+    if(!R || !R.requestReview) return;
+    st.asked = true; saveLocal(REVIEW_KEY, st);
+    setTimeout(() => { try{ Promise.resolve(R.requestReview()).catch(()=>{}); }catch(err){} }, 1500);
+  }catch(err){}
+}
 // Light tap on a choice, a heavier "done" on a result. Never awaited.
 function haptic(kind){
   const H = nativePlugin("Haptics");
@@ -4151,6 +4206,7 @@ function Icon(name){
     community: "M8 11a3 3 0 1 0 0-6 3 3 0 0 0 0 6Zm8 0a3 3 0 1 0 0-6 3 3 0 0 0 0 6ZM3 20c.5-3.5 3-5.5 5-5.5s4.5 2 5 5.5M13 20c.4-2.8 2.2-4.5 3.7-5",
     camera: "M4 8h3l1.5-2h7L17 8h3v11H4V8Zm8 3.2a3.3 3.3 0 1 0 0 6.6 3.3 3.3 0 0 0 0-6.6Z",
     x: "M5 5l14 14M19 5 5 19",
+    lock: "M7 11V8a5 5 0 0 1 10 0v3M5 11h14v9H5v-9Z",
     heart: "M12 20s-7-4.4-9.3-8.8C1 8 2.4 5 5.6 5c1.9 0 3.3 1 4 2.3.7-1.3 2.1-2.3 4-2.3 3.2 0 4.6 3 3.9 6.2C19.2 15.6 12 20 12 20Z",
     comment: "M4 5h16v11H8l-4 4V5Z",
     flag: "M6 4v16M6 4h10l-2 3 2 3H6",
@@ -5019,7 +5075,7 @@ function StyleQuizScreen({ kibbeResult, styleLanguageResult, onSaveKibbe, onSave
   function afterKibbePart(result){
     haptic("success");
     onSaveKibbe(result);
-    if(styleQuizBlend) setStage("result");
+    if(styleQuizBlend) (setStage("result"), maybeAskForReview("result"));
     else setStage("style-intro");
   }
 
@@ -5062,7 +5118,7 @@ function StyleQuizScreen({ kibbeResult, styleLanguageResult, onSaveKibbe, onSave
       const b = computeBlend(next, STYLE_LANGUAGE_QUESTIONS, STYLE_WORDS, genderLean);
       setStyleQuizBlend(b);
       onSaveStyle(b);
-      setStage("result");
+      (setStage("result"), maybeAskForReview("result"));
     }
   }
 
@@ -5104,8 +5160,8 @@ function StyleQuizScreen({ kibbeResult, styleLanguageResult, onSaveKibbe, onSave
           )
         )
       ),
-      e("button", { className:"btn btn-accent btn-block", onClick:()=>setStage("quiz") }, "Start the quiz"),
-      (kibbeQuizResult || styleQuizBlend) ? e("button", { className:"btn btn-ghost btn-block", style:{ marginTop:10 }, onClick:()=>setStage("result") }, "See my last result") : null
+      e("button", { className:"btn btn-accent btn-block", onClick:()=>setStage("quiz") }, "Start the quiz", e("span", { className:"pill-time" }, "2 min")),
+      (kibbeQuizResult || styleQuizBlend) ? e("button", { className:"btn btn-ghost btn-block", style:{ marginTop:10 }, onClick:()=>(setStage("result"), maybeAskForReview("result")) }, "See my last result") : null
     );
   }
 
@@ -5142,7 +5198,8 @@ function StyleQuizScreen({ kibbeResult, styleLanguageResult, onSaveKibbe, onSave
             : e("label", { className:"photo-frame-label", htmlFor:"kibbe-photo-input", onClick: ev => pickWithNativeCamera(ev, pickPhoto) }, Icon("camera"), e("span", null, "Tap to upload a photo"))
         ),
         e("input", { id:"kibbe-photo-input", type:"file", accept:"image/*", className:"visually-hidden", onChange:pickPhoto }),
-        !photoPreview ? e("label", { htmlFor:"kibbe-photo-input", className:"btn btn-ghost btn-block", style:{ marginBottom:10 }, onClick: ev => pickWithNativeCamera(ev, pickPhoto) }, "Choose photo") : null,
+        !photoPreview ? e("label", { htmlFor:"kibbe-photo-input", className:"btn btn-ghost btn-block", style:{ marginBottom:6 }, onClick: ev => pickWithNativeCamera(ev, pickPhoto) }, "Choose photo") : null,
+        e("p", { className:"trust-line" }, Icon("lock"), "Your photo never leaves your phone."),
         photoError ? e(Banner, { kind:"error" }, photoError) : null,
         photoPreview ? e("button", { className:"btn btn-accent btn-block", disabled:analyzing, onClick:analyzePhoto, style:{ marginBottom:10 } },
           analyzing ? e(Thinking, { label:"Analyzing photo on your device…" }) : "Analyze photo") : null
@@ -5168,10 +5225,11 @@ function StyleQuizScreen({ kibbeResult, styleLanguageResult, onSaveKibbe, onSave
             onClick: () => setGenderLean(prev => prev === val ? null : val)
           }, label))
         ),
-        e("div", { className:"field-hint" }, "Words the questions, your shop links and the AI Stylist for what you actually buy — menswear, womenswear or both. Remembered on this device; skip it and nothing changes.")
+        e("div", { className:"field-hint" }, "Words the questions, your shop links and the AI Stylist for what you actually buy — menswear, womenswear or both. Remembered on this device; skip it and nothing changes."),
+        e("div", { className:"field-hint", style:{ marginTop:6 } }, "Why we don't ask your gender: body type is about lines and proportions, not who you are. We only need to know which racks you shop.")
       ),
       e("button", { className:"btn btn-accent btn-block", onClick:()=>setStage("style-quiz") }, "Start this part"),
-      styleQuizBlend ? e("button", { className:"btn btn-ghost btn-block", style:{ marginTop:10 }, onClick:()=>setStage("result") }, "See my last result") : null
+      styleQuizBlend ? e("button", { className:"btn btn-ghost btn-block", style:{ marginTop:10 }, onClick:()=>(setStage("result"), maybeAskForReview("result")) }, "See my last result") : null
     );
   }
 
@@ -5398,7 +5456,41 @@ function PhotoColorSampler({ onDone }){
   );
 }
 
+function hexIsLight(hex){
+  const m = /^#?([0-9a-f]{6})$/i.exec(hex || ""); if(!m) return false;
+  const n = parseInt(m[1], 16), r = n >> 16, g = (n >> 8) & 255, b = n & 255;
+  return (0.2126 * r + 0.7152 * g + 0.0722 * b) > 165;
+}
+// Tap a swatch → the whole screen becomes that color, to hold the phone
+// up against fabric. Arrows or a swipe move through the season's palette;
+// tapping the color (or the back button) closes it.
+function SwatchFullScreen({ swatches, index, onIndex, onClose }){
+  useBackClose(onClose);
+  const hex = swatches[index];
+  const light = hexIsLight(hex);
+  const touch = useRef(null);
+  useEffect(() => {
+    const onKey = ev => { if(ev.key === "Escape") onClose(); else if(ev.key === "ArrowRight") onIndex((index + 1) % swatches.length); else if(ev.key === "ArrowLeft") onIndex((index - 1 + swatches.length) % swatches.length); };
+    window.addEventListener("keydown", onKey); return () => window.removeEventListener("keydown", onKey);
+  }, [index, swatches.length, onIndex, onClose]);
+  return e("div", { className:"swatch-full" + (light ? " light" : ""), style:{ background:hex }, role:"dialog", "aria-modal":"true", "aria-label":"Color " + hex + " full screen",
+      onClick: onClose,
+      onTouchStart: ev => { touch.current = ev.touches[0].clientX; },
+      onTouchEnd: ev => { if(touch.current === null) return; const dx = ev.changedTouches[0].clientX - touch.current; touch.current = null; if(Math.abs(dx) > 50){ ev.stopPropagation(); onIndex(dx < 0 ? (index + 1) % swatches.length : (index - 1 + swatches.length) % swatches.length); } } },
+    e("div", { className:"swatch-full-bar", onClick: ev => ev.stopPropagation() },
+      e("span", { className:"swatch-full-hex" }, hex.toUpperCase()),
+      e("div", { className:"swatch-full-nav" },
+        e("button", { type:"button", "aria-label":"Previous color", onClick: () => onIndex((index - 1 + swatches.length) % swatches.length) }, "‹"),
+        e("button", { type:"button", "aria-label":"Next color", onClick: () => onIndex((index + 1) % swatches.length) }, "›")
+      )
+    ),
+    e("div", { className:"swatch-full-dots" }, swatches.map((_, i) => e("i", { key:i, className: i === index ? "on" : "" }))),
+    e("div", { className:"swatch-full-hint" }, "Hold it up to the garment · swipe for the next color · tap to close")
+  );
+}
+
 function ColorScreen({ colorResult, onSaveColor }){
+  const [fullSwatch, setFullSwatch] = useState(null); // index into season.swatches, or null
   const [stage, setStage] = useState(colorResult ? "result" : "intro"); // intro | quiz | photo | result
   const [answers, setAnswers] = useState({});
   const [qIndex, setQIndex] = useState(0);
@@ -5422,7 +5514,7 @@ function ColorScreen({ colorResult, onSaveColor }){
     const result = { seasonId: season.id, confidence, source, updatedAt: Date.now() };
     setFinalResult(result);
     onSaveColor(result);
-    setStage("result");
+    (setStage("result"), maybeAskForReview("result"));
   }
 
   function finishWithQuizOnly(){ saveResult(quizFeatures, "quiz"); }
@@ -5440,7 +5532,7 @@ function ColorScreen({ colorResult, onSaveColor }){
       e("p", { className:"screen-lede", style:{ marginBottom:24 } },
         "Six questions about your skin, hair and eyes give you your color season and a palette to shop from. Add a photo after, if you like — it stays on your phone."),
       e("button", { className:"btn btn-accent btn-block", onClick:()=>setStage("quiz") }, "Start the quiz"),
-      finalResult ? e("button", { className:"btn btn-ghost btn-block", style:{ marginTop:10 }, onClick:()=>setStage("result") }, "See my last result") : null
+      finalResult ? e("button", { className:"btn btn-ghost btn-block", style:{ marginTop:10 }, onClick:()=>(setStage("result"), maybeAskForReview("result")) }, "See my last result") : null
     );
   }
 
@@ -5488,14 +5580,14 @@ function ColorScreen({ colorResult, onSaveColor }){
         e("button", { className:"btn btn-sm", style:{ color:"var(--ink)", borderColor:"rgba(0,0,0,.25)", background:"rgba(255,255,255,.45)" }, onClick: () => shareResultCard({ typeName:null, tag:null, color: season.swatches[0], words:[season.name], seasonName: season.name, swatches: season.swatches }, "I'm a " + season.name + " on Style-LORE. Find your best colors: https://style-lore.com") }, "Share")
       )
     ),
-    e("div", { className:"eyebrow", style:{ marginBottom:10 } }, "Your best colors — hold one up to a garment"),
-    // Big enough to compare against fabric in a store; tapping a swatch
-    // shows its hex for anyone shopping online.
+    e("div", { className:"eyebrow", style:{ marginBottom:4 } }, "Your best colors — hold one up to a garment"),
+    e("p", { className:"footnote", style:{ marginBottom:10 } }, "Tap a color and it fills the screen; hold your phone against the fabric."),
     e("div", { className:"color-swatch-grid", style:{ marginBottom:16 } },
-      season.swatches.map((hex,i) => e("button", { key:i, type:"button", className:"color-swatch", style:{ background:hex }, "aria-label":"Color " + hex,
-        onClick: ev => { const el = ev.currentTarget; el.classList.toggle("show-hex"); } },
+      season.swatches.map((hex,i) => e("button", { key:i, type:"button", className:"color-swatch show-hex", style:{ background:hex }, "aria-label":"Show " + hex + " full screen",
+        onClick: () => { haptic("light"); setFullSwatch(i); } },
         e("span", null, hex.toUpperCase())))
     ),
+    fullSwatch !== null ? e(SwatchFullScreen, { swatches: season.swatches, index: fullSwatch, onIndex: setFullSwatch, onClose: () => setFullSwatch(null) }) : null,
     e("p", { className:"footnote", style:{ marginBottom:20 } },
       finalResult.source === "quiz+photo"
         ? "Based on your quiz answers and a photo sample — an approximate read, not a substitute for in-person draping."
@@ -5889,7 +5981,7 @@ function PaywallSheet({ reason, onClose, onPurchased, profile, webCheckout: webC
       e("p", { style:{ fontSize:14, color:"var(--ink-soft)", marginBottom:16 } }, reasonCopy),
       e("ul", { style:{ margin:"0 0 20px", paddingLeft:20, fontSize:13.5, color:"var(--ink-soft)", display:"flex", flexDirection:"column", gap:6 } },
         e("li", null, e("strong", null, "AI Stylist"), " — send any photo and get specific feedback on the cut, the color and the fit, plus what to change."),
-        e("li", null, e("strong", null, "Your whole wardrobe"), " — a closet of up to 300 pieces, the gap read that tells you what to buy next, and a capsule builder that finds the pieces that make the most outfits."),
+        e("li", null, e("strong", null, "Your whole wardrobe"), " — an unlimited closet, the gap read that tells you what to buy next, and a capsule builder that finds the pieces that make the most outfits."),
         e("li", null, e("strong", null, "A shopping notebook"), " — every check and stylist read saved, so you never wonder what the verdict was."),
         e("li", null, e("strong", null, "Still private"), " — your closet and quiz never leave your phone; only the photos you send to the AI Stylist do."),
         e("li", null, isNative ? "Cancel anytime from your phone's subscription settings." : "Cancel anytime — one click from your account, no calls, no emails.")
@@ -5974,6 +6066,7 @@ function CheckerScreen({ blend, styleWordBlend, kibbeTypeName, topStyleWords, vi
       const { axes, usedBodyCrop } = await GarmentOnDeviceAnalyzer.analyzePhotoAxes(photoBlob);
       const v = photoStyleVerdict(axes, profile, usedBodyCrop);
       setPhotoResult(v);
+      if(v && v.status === "match") maybeAskForReview("verdict");
       if (v && v.score !== null){ const thumb = await thumbFromDataUrl(photoPreview, 160); const photo = photoHiRes || photoPreview; remember({ kind:"photo", thumb, photo, headline: v.headline, detail: v.detail || "", score: v.score, verdictPill: v.verdictPill }); }
     }catch(err){
       setPhotoError(err.message || "Couldn't run the photo check right now.");
@@ -6062,6 +6155,7 @@ function CheckerScreen({ blend, styleWordBlend, kibbeTypeName, topStyleWords, vi
         : e("label", { className:"photo-frame-label", htmlFor:"checker-photo-input", onClick: ev => pickWithNativeCamera(ev, pickCheckerPhoto) }, Icon("shirt"), e("span", null, "Add a photo"))
     ),
     e("input", { id:"checker-photo-input", type:"file", accept:"image/*", className:"visually-hidden", onChange:pickCheckerPhoto }),
+    e("p", { className:"trust-line", style:{ marginTop:-4, marginBottom:12 } }, Icon("lock"), "Your photo never leaves your phone."),
 
     e("button", {
       className:"btn btn-accent btn-block", style:{ marginBottom:16 },
@@ -6152,6 +6246,27 @@ function spaceLabel(space){
 
 function patchPostLocal(setPosts, id, patch){
   setPosts(prev => prev ? prev.map(p => p.id === id ? Object.assign({}, p, patch) : p) : prev);
+}
+
+// Rotating weekly prompt at the top of every room, so a new member knows
+// what to post into a quiet room. Rotates by ISO week; same for everyone.
+const WEEKLY_PROMPTS = [
+  ["Your best jacket", "The layer you reach for first. Show it on, or on the hanger."],
+  ["One outfit, three ways", "Same pieces, three moods. Or just the one you wore today."],
+  ["The piece that suits your type most", "The thing people compliment. Tell us why it works on your lines."],
+  ["Shoes that finish the look", "The pair you'd buy again tomorrow."],
+  ["Something you almost didn't buy", "And why you're glad you did — or wish you hadn't."],
+  ["Your go-to for a hard morning", "The outfit that never fails when you have five minutes."],
+  ["A color that surprised you", "One from your season you didn't expect to love."],
+  ["Thrifted or hand-me-down", "The best thing in your closet that cost you almost nothing."],
+];
+function isoWeek(d){ d = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate())); const day = d.getUTCDay() || 7; d.setUTCDate(d.getUTCDate() + 4 - day); const y0 = new Date(Date.UTC(d.getUTCFullYear(), 0, 1)); return Math.ceil((((d - y0) / 86400000) + 1) / 7); }
+function WeeklyPrompt({ onPost }){
+  const [title, body] = WEEKLY_PROMPTS[isoWeek(new Date()) % WEEKLY_PROMPTS.length];
+  return e("div", { className:"weekly-prompt" },
+    e("div", { style:{ flex:1, minWidth:0 } }, e("div", { className:"eyebrow", style:{ marginBottom:2 } }, "This week"), e("b", null, title), e("span", null, body)),
+    onPost ? e("button", { type:"button", className:"btn btn-sm btn-accent", onClick:onPost }, "Post yours") : null
+  );
 }
 
 function CommunityScreen({ profile, blend, onOpenProfile }){
@@ -6460,6 +6575,7 @@ function CommunityScreen({ profile, blend, onOpenProfile }){
           e("p", { className:"screen-lede", style:{ marginBottom:16 } }, kibbeInfo.desc)
         ) : e("div", { style:{ marginBottom:16 } })),
 
+    !isGroupSpace ? e(WeeklyPrompt, { onPost: openCompose }) : null,
     loadError ? e(Banner, { kind:"error" }, loadError) : null,
     groupError ? e(Banner, { kind:"error" }, groupError) : null,
     feedLoading ? e("div", { style:{ padding:"20px 0" } }, e(Thinking, { label:"Loading feed…" }))
@@ -7520,26 +7636,26 @@ function InboxScreen({ profile, onBack, onOpenConversation }){
     conversations === null ? e("div", { style:{ padding:"20px 0" } }, e(Thinking, { label:"Loading…" }))
       : conversations.length === 0
         ? e(EmptyState, { icon:"community" }, "No conversations yet — message someone from their profile.")
-        : e("div", { className:"row-list" },
+        : e("div", null,
             conversations.map(c => e("button", {
-              key:c.id, type:"button", className:"row-list-item", style:{ width:"100%", textAlign:"left" },
-              onClick: () => onOpenConversation({ id:c.id, otherId:c.otherId, otherName:c.otherName }),
+              key:c.id, type:"button", className:"inbox-item" + (c.unread ? " unread" : ""),
+              onClick: () => onOpenConversation({ id:c.id, otherId:c.otherId, otherName:c.otherName, otherAvatarUrl:c.otherAvatarUrl }),
             },
-              e(Avatar, { url:c.otherAvatarUrl, name:c.otherName, size:40 }),
+              e(Avatar, { url:c.otherAvatarUrl, name:c.otherName, size:52 }),
               e("span", { style:{ flex:1, minWidth:0 } },
-                e("div", { style:{ fontSize:14, fontWeight: c.unread ? 700 : 600 } }, c.otherName),
-                e("div", { style:{ fontSize:12.5, color:"var(--ink-soft)", whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" } }, c.lastMessagePreview || "Say hello…")
+                e("div", { className:"inbox-name" }, c.otherName),
+                e("div", { className:"inbox-preview" }, c.lastMessagePreview || "Say hello…")
               ),
-              e("span", { style:{ display:"flex", flexDirection:"column", alignItems:"flex-end", gap:4, flexShrink:0 } },
-                e("span", { style:{ fontSize:11, color:"var(--ink-soft)" } }, timeAgo(c.lastMessageAt)),
-                c.unread ? e("span", { className:"unread-dot" }) : null
+              e("span", { style:{ display:"flex", flexDirection:"column", alignItems:"flex-end", gap:6, flexShrink:0 } },
+                e("span", { className:"inbox-time" }, timeAgo(c.lastMessageAt)),
+                c.unread ? e("span", { className:"inbox-badge" }, typeof c.unread === "number" && c.unread > 1 ? c.unread : "new") : null
               )
             ))
           )
   );
 }
 
-function ConversationScreen({ profile, conversationId, otherName, onBack }){
+function ConversationScreen({ profile, conversationId, otherName, otherId, otherAvatarUrl, onBack, onOpenProfile }){
   const [messages, setMessages] = useState(null);
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
@@ -7567,6 +7683,7 @@ function ConversationScreen({ profile, conversationId, otherName, onBack }){
       const msg = await Api.sendMessage({ conversationId, visitorId:profile.visitorId, authToken:profile.token, text:trimmed });
       setMessages(prev => prev ? [...prev, msg] : [msg]);
       setText("");
+      const ta = document.querySelector(".conversation-input-row textarea"); if(ta) ta.style.height = "auto";
     }catch(err){
       setError(err.message || "Couldn't send that message.");
     }finally{
@@ -7574,23 +7691,48 @@ function ConversationScreen({ profile, conversationId, otherName, onBack }){
     }
   }
 
-  return e("div", { style:{ display:"flex", flexDirection:"column", height:"100%" } },
-    e("button", { className:"btn-text", style:{ padding:0, marginBottom:14 }, onClick:onBack }, "← Messages"),
-    e("h1", { className:"screen-title", style:{ marginBottom:14, fontSize:19 } }, otherName || "Conversation"),
+  function onKeyDown(ev){
+    // Enter sends; Shift+Enter makes a new line (desktop). On phones the
+    // keyboard's Enter is a newline and the round button sends.
+    if(ev.key === "Enter" && !ev.shiftKey && !IS_NATIVE_APP && window.innerWidth >= 700){ ev.preventDefault(); send(); }
+  }
+  function autoGrow(el){ if(!el) return; el.style.height = "auto"; el.style.height = Math.min(140, el.scrollHeight) + "px"; }
+  const dayLabel = ts => { const d = new Date(ts), now = new Date(); const same = (a, b) => a.toDateString() === b.toDateString(); const y = new Date(now); y.setDate(now.getDate() - 1); return same(d, now) ? "Today" : same(d, y) ? "Yesterday" : d.toLocaleDateString(undefined, { month:"short", day:"numeric" }); };
+  const clock = ts => new Date(ts).toLocaleTimeString(undefined, { hour:"numeric", minute:"2-digit" });
+  const items = [];
+  if(messages && messages.length){
+    let lastDay = null, prev = null;
+    messages.forEach((m, i) => {
+      const mine = m.senderId === profile.visitorId;
+      const day = dayLabel(m.createdAt || Date.now());
+      if(day !== lastDay){ items.push(e("div", { key:"day"+i, className:"msg-day" }, day)); lastDay = day; prev = null; }
+      const cont = prev && prev.senderId === m.senderId && (m.createdAt - prev.createdAt) < 3 * 60 * 1000;
+      const next = messages[i + 1];
+      const endOfRun = !next || next.senderId !== m.senderId || (next.createdAt - m.createdAt) >= 3 * 60 * 1000;
+      items.push(e("div", { key:m.id, className:"message-bubble " + (mine ? "message-bubble-mine" : "message-bubble-theirs") + (cont ? (mine ? " cont-mine" : " cont-theirs") : "") }, m.text));
+      if(endOfRun) items.push(e("div", { key:"t"+m.id, className:"msg-time " + (mine ? "mine" : "theirs") }, clock(m.createdAt || Date.now())));
+      prev = m;
+    });
+  }
+
+  return e("div", { className:"convo" },
+    e("div", { className:"convo-head" },
+      e("button", { type:"button", className:"back", "aria-label":"Back to messages", onClick:onBack }, Icon("back")),
+      e(Avatar, { url:otherAvatarUrl || null, name:otherName || "?", size:40 }),
+      e("div", { className:"who" }, e("b", null, otherName || "Conversation"), e("span", null, messages && messages.length ? "Direct message" : "Start of your conversation")),
+      onOpenProfile && otherId ? e("button", { className:"btn-text", style:{ fontSize:12.5, padding:"6px 8px" }, onClick:()=>onOpenProfile(otherId) }, "Profile") : null
+    ),
     error ? e(Banner, { kind:"error" }, error) : null,
     e("div", { ref:listRef, className:"conversation-list" },
       messages === null ? e(Thinking, { label:"Loading…" })
         : messages.length === 0 ? e(EmptyState, { icon:"community" }, "Say hello — this is the start of your conversation.")
-        : messages.map(m => e("div", {
-            key:m.id,
-            className: "message-bubble " + (m.senderId === profile.visitorId ? "message-bubble-mine" : "message-bubble-theirs"),
-          }, m.text))
+        : items
     ),
     e("div", { className:"conversation-input-row" },
-      e("input", { type:"text", value:text, maxLength:2000, placeholder:"Message " + (otherName || "") + "…",
-        onChange: ev=>setText(ev.target.value),
-        onKeyDown: ev => { if(ev.key === "Enter") send(); } }),
-      e("button", { className:"btn btn-accent btn-sm", disabled:sending || !text.trim(), onClick:send }, Icon("send"))
+      e("textarea", { value:text, maxLength:2000, rows:1, placeholder:"Message " + (otherName || "") + "…", "aria-label":"Message",
+        onChange: ev => { setText(ev.target.value); autoGrow(ev.target); },
+        onKeyDown }),
+      e("button", { type:"button", className:"send-btn", "aria-label":"Send", disabled:sending || !text.trim(), onClick:send }, Icon("send"))
     )
   );
 }
@@ -8264,8 +8406,8 @@ function App(){
   }
   else if(viewingConversation){
     body = e(ConversationScreen, {
-      profile, conversationId: viewingConversation.id, otherName: viewingConversation.otherName,
-      onBack: closeConversation,
+      profile, conversationId: viewingConversation.id, otherName: viewingConversation.otherName, otherId: viewingConversation.otherId || null, otherAvatarUrl: viewingConversation.otherAvatarUrl || null,
+      onBack: closeConversation, onOpenProfile: openProfile,
     });
   }
   else if(viewingProfileId){
