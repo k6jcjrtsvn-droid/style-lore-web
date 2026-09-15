@@ -14,7 +14,7 @@
   window.STYLE_LORE_API_BASE = window.STYLE_LORE_NATIVE ? "https://style-lore.com" : "";
   // Bump this with every app release; it travels with every bug report so we
   // know which build a problem came from.
-  window.STYLE_LORE_APP_VERSION = "1.5.0";
+  window.STYLE_LORE_APP_VERSION = "1.4.0";
   // Native push needs Firebase (android/app/google-services.json). The
   // Codemagic build flips this to false when that file is missing, so the
   // app never calls Push.register() without Firebase — which crashes the
@@ -1694,6 +1694,37 @@ function shopSearchUrl(query){
 function shopQueryFromAxisLabel(label){
   return label.replace(/\s*&\s*/g, " ") + " clothing";
 }
+
+/* The style-axis labels that suit this person, straight from their quiz
+   results — no closet required.
+
+   Until 2026-09-15 every Shop link in the app hung off styleGapAnalysis(),
+   which needs a non-empty closet whose descriptions carry enough vocabulary
+   to score an axis, AND a gap of at least 0.22 on that axis. Anyone who
+   hadn't built a closet yet — which on the website was everyone, since the
+   closet lived only in the device that made it — never saw a single Shop
+   link. That is most people, and it was quietly the difference between the
+   affiliate integration earning something and earning nothing.
+
+   This reads the same idealAxesForPerson() the gap analysis and the Checker
+   use, and returns the axes this person leans furthest from neutral on, as
+   the shopper-facing label for that direction ("crisp & structured"). It is
+   a recommendation from their own results, not a claim about their closet,
+   so the caller words it that way. */
+function shopLabelsForProfile(profile, max){
+  const ideal = idealAxesForPerson(profile);
+  if (!ideal) return [];
+  return STYLE_AXES
+    .filter(a => ideal[a.id] !== undefined)
+    .map(a => ({ label: ideal[a.id] > 0.5 ? a.highLabel : a.lowLabel, pull: Math.abs(ideal[a.id] - 0.5) }))
+    // Below ~0.12 off neutral the axis isn't really saying anything about
+    // this person, and a "Shop plain & minimal" chip for someone who is
+    // barely off-centre is noise dressed up as advice.
+    .filter(x => x.pull >= 0.12)
+    .sort((a, b) => b.pull - a.pull)
+    .slice(0, max || 3)
+    .map(x => x.label);
+}
 // Small row of outbound "Shop [label]" links for a set of style-axis
 // labels (e.g. from a closet gap-analysis miss, or a checker verdict's
 // non-aligned axes) — dedups and caps at 3 so this never crowds out the
@@ -2116,6 +2147,27 @@ function ShopTheGap({ labels }){
       }, "Shop " + label))
     ),
     e("div", { className:"footnote", style:{ marginTop:6, fontSize:11.5 } }, "Links open Amazon. As an Amazon Associate, Style-LORE earns from qualifying purchases — at no extra cost to you.")
+  );
+}
+
+/* "Shop your lines" — the always-available version of the row above, keyed
+   to the person's quiz results rather than to a detected closet gap. Shown
+   wherever someone with results is likely to be thinking about what to buy
+   (Closet, and the results screen). Carries its own heading so it reads as
+   a standing suggestion rather than as a verdict on what they own; the
+   gap-driven ShopTheGap row above stays exactly as it was and takes
+   priority when there IS something specific to say. */
+function ShopForYourType({ profile, heading }){
+  const labels = shopLabelsForProfile(profile, 3);
+  if (labels.length === 0) return null;
+  const typeName = profile && profile.kibbeTypeName;
+  return e("div", { className:"card", style:{ padding:14, marginBottom:14 } },
+    e("div", { className:"eyebrow", style:{ marginBottom:4 } }, heading || "Shop your lines"),
+    e("div", { style:{ fontSize:13.5, lineHeight:1.5, marginBottom:2 } },
+      typeName
+        ? "Searches set up for " + typeName + " lines — a starting point, not a shopping list."
+        : "Searches set up for your lines — a starting point, not a shopping list."),
+    e(ShopTheGap, { labels })
   );
 }
 
@@ -3702,6 +3754,16 @@ const Api = {
   async getClosetFeed(limit){
     const r = await fetch("/api/closet/feed?limit=" + encodeURIComponent(limit || 50));
     if(!r.ok) return [];
+    return r.json();
+  },
+  // The signed-in person's OWN closet from the server, Hidden items
+  // included. Used once per sign-in to rehydrate a device that has never
+  // seen this account's closet (a browser, a new phone) — see
+  // closetHydratedRef in App(). Never call this for someone else's
+  // profile; that's getCloset() above, which is public-only by design.
+  async getMyCloset(visitorId, authToken){
+    const r = await fetch("/api/closet/mine?visitorId=" + encodeURIComponent(visitorId) + "&authToken=" + encodeURIComponent(authToken));
+    if(!r.ok) throw await apiError(r, "Couldn't load your closet.");
     return r.json();
   },
   async syncCloset(visitorId, visitorName, authToken, items){
@@ -5402,7 +5464,20 @@ function StyleQuizScreen({ kibbeResult, styleLanguageResult, onSaveKibbe, onSave
         e("p", { className:"footnote", style:{ marginBottom:10 } }, "No result yet for this part."),
         e("button", { className:"btn-text", onClick:retakeStyle }, "Take this part")
       )
-    )
+    ),
+
+    // Shopping, right where someone has just been told what their lines are
+    // and is most likely to want to act on it. Built from the results on
+    // this screen rather than from the saved profile, so it works for a
+    // signed-out visitor who just finished the quiz.
+    e(ShopForYourType, {
+      profile: {
+        kibbeBlend: (kibbeQuizResult && kibbeQuizResult.kibbeBlend) || null,
+        styleWordBlend: styleQuizBlend || null,
+        kibbeTypeName: hasKibbe ? kibbeType.name : null,
+      },
+      heading: "Shop these lines",
+    })
   );
 }
 
@@ -5713,6 +5788,10 @@ function ClosetScreen({ closet, setCloset, blend, styleWordBlend, kibbeTypeName,
   // The gap read is the closet's payoff, so it gets a proper card at the
   // top rather than a banner. Only shown once there's something to say.
   let gapBanner = null;
+  // Set when gapBanner already contains a Shop row, so the fallback row
+  // below doesn't render the same chips a second time (it did until
+  // 2026-09-15 — "Shop bold & oversized" appeared twice, back to back).
+  let shopRowInBanner = false;
   if (gapAnalysis && closet.length > 0){
     if (gapAnalysis.itemsWithSignal === 0){
       gapBanner = e("p", { className:"footnote", style:{ marginBottom:14 } }, "Tip: name the fabric and the cut when you add an item (\"silk slip dress\", \"boxy denim jacket\") and the closet starts telling you what's missing.");
@@ -5721,6 +5800,7 @@ function ClosetScreen({ closet, setCloset, blend, styleWordBlend, kibbeTypeName,
       // so the value of the full gap list is visible before it's paid for.
       const gapsShown = gapAnalysis.gaps.slice(0, 3);
       const lockRest = !isPremium && gapsShown.length > 1;
+      shopRowInBanner = !lockRest && !!(gapAnalysis.gapLabels && gapAnalysis.gapLabels.length);
       gapBanner = e("div", { className:"card", style:{ marginBottom:14, padding:14 } },
         e("div", { className:"eyebrow", style:{ marginBottom:4 } }, "What your closet is missing"),
         e("div", { style:{ display:"flex", flexDirection:"column", gap:6 } },
@@ -5797,7 +5877,18 @@ function ClosetScreen({ closet, setCloset, blend, styleWordBlend, kibbeTypeName,
         ),
 
     gapBanner,
-    gapAnalysis ? e(ShopTheGap, { labels: gapAnalysis.gapLabels }) : null,
+    // When the closet has actually told us something specific ("you lean
+    // away from crisp & structured"), shop that. Otherwise — empty closet,
+    // descriptions too thin to score, or a closet that's already balanced —
+    // fall back to the person's own quiz results so there is always a way
+    // to shop from here. Before 2026-09-15 this line was the only one, so
+    // anyone without a scored gap saw nothing at all.
+    // The gap-driven Shop row lives inside gapBanner when there is a scored
+    // gap to shop. Everything else — empty closet, descriptions too thin to
+    // score, a closet that's already balanced, or a locked free-tier gap
+    // list — falls back to the person's own quiz results, so there is
+    // always a way to shop from this screen.
+    shopRowInBanner ? null : e(ShopForYourType, { profile }),
 
     e("p", { className:"footnote", style:{ marginTop:12 } }, "Verdicts are a quick read from each item's description, worked out on your phone. Photos stay on your device unless you make an item Public or tap “Describe it for me” (sent once, never stored)."),
 
@@ -8127,8 +8218,69 @@ function App(){
   const closetSyncedSnapshotRef = useRef(null);
   const closetSyncDebounceRef = useRef(null);
 
+  // Has this device pulled THIS account's closet down from the server yet?
+  // Holds the visitorId once it has. Nothing may upload before it does --
+  // api/closet POST is a wholesale replace (DELETE then re-INSERT), so a
+  // fresh browser with an empty local closet that uploaded first would
+  // delete the account's real closet server-side. That was a live data-loss
+  // path until 2026-09-15: sign in on the website, and one second later the
+  // empty closet was pushed over the top of the one built on the phone.
+  const closetHydratedRef = useRef(null);
+  // Mirror of the ref as state, purely so the sync effect below re-runs the
+  // moment hydration finishes. Without it, a hydration that added nothing
+  // (server closet already matched this device) leaves `closet` unchanged,
+  // the effect never re-fires, and a genuinely new local item added while
+  // signed out would sit unsynced until the next edit.
+  const [closetHydratedFor, setClosetHydratedFor] = useState(null);
+
+  // Pull the owner's own closet (Hidden items included) once per sign-in and
+  // merge it into whatever is already on this device. Merge, not replace:
+  // someone may have added items in this browser while signed out, and those
+  // must survive. Items are matched on id first, then on description+photo
+  // so an item that predates server ids isn't duplicated. Local wins on a
+  // conflict -- it's the copy the person is looking at right now.
+  const hydrateClosetFromServer = useCallback(async () => {
+    if(!profile || !profile.visitorId || !profile.token) return;
+    if(closetHydratedRef.current === profile.visitorId) return;
+    try {
+      const remote = await Api.getMyCloset(profile.visitorId, profile.token);
+      if(!Array.isArray(remote)) throw new Error("bad-shape");
+      setCloset(local => {
+        const seen = new Set();
+        const key = it => (it && it.id) ? "id:" + it.id
+          : "d:" + String((it && it.description) || "").trim().toLowerCase() + "|" + String((it && it.photo) || "").slice(0, 64);
+        for(const it of (local || [])) seen.add(key(it));
+        const additions = [];
+        for(const it of remote){
+          if(seen.has(key(it))) continue;
+          seen.add(key(it));
+          additions.push({
+            id: it.id,
+            description: it.description || "",
+            photo: it.photo || null,
+            createdAt: it.createdAt || Date.now(),
+            visibility: it.visibility === "public" ? "public" : "hidden",
+          });
+        }
+        if(additions.length === 0) return local;
+        return [...(local || []), ...additions].sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+      });
+      closetHydratedRef.current = profile.visitorId;
+      setClosetHydratedFor(profile.visitorId);
+    } catch (err) {
+      // Leave closetHydratedRef unset so the upload guard keeps holding and
+      // the next sign-in/render tries again. A failed download must never
+      // become permission to upload an empty closet.
+      if(err && err.status === 401){ closetHydratedRef.current = profile.visitorId; setClosetHydratedFor(profile.visitorId); }
+    }
+  }, [profile && profile.visitorId, profile && profile.token]);
+
+  useEffect(() => { hydrateClosetFromServer(); }, [hydrateClosetFromServer]);
+
   const runClosetSync = useCallback((opts) => {
     if(!profile || !profile.visitorId) return;
+    // See closetHydratedRef above — never push over a closet we haven't read.
+    if(closetHydratedRef.current !== profile.visitorId) return;
     const force = !!(opts && opts.force);
     const payload = JSON.stringify(closetRef.current);
     if(!force && payload === closetSyncedSnapshotRef.current) return;
@@ -8163,7 +8315,7 @@ function App(){
     // Coalesce a burst of edits (add three items quickly) into one upload.
     if(closetSyncDebounceRef.current) clearTimeout(closetSyncDebounceRef.current);
     closetSyncDebounceRef.current = setTimeout(() => runClosetSync(), 1000);
-  }, [profile && profile.visitorId, profile && profile.name, profile && profile.token, closet]);
+  }, [profile && profile.visitorId, profile && profile.name, profile && profile.token, closet, closetHydratedFor]);
 
   // "Retry now" must clear the backoff counter — without this, pressing it
   // after 5 failures did one attempt and then silently gave up while the
