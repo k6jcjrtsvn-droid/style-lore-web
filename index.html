@@ -4267,7 +4267,55 @@ function InviteCard({ code, count }){
   );
 }
 
+/* "Update available" notice for the native apps. On launch the app fetches
+   /app-versions.json from the website and, if the store has a newer build
+   than the one running, shows a card on Home with a button that opens the
+   app's Play Store / App Store page. Testers on the closed test see the
+   normal store page with an Update button, so no special link is needed.
+   Nothing is shown on the website, and nothing is shown if the check fails. */
+function compareVersions(a, b){
+  const pa = String(a || "0").split(".").map(n => parseInt(n, 10) || 0);
+  const pb = String(b || "0").split(".").map(n => parseInt(n, 10) || 0);
+  for(let i = 0; i < Math.max(pa.length, pb.length); i++){
+    const d = (pa[i] || 0) - (pb[i] || 0);
+    if(d !== 0) return d;
+  }
+  return 0;
+}
+function useUpdateAvailable(){
+  const [update, setUpdate] = useState(null);
+  useEffect(() => {
+    if(!window.STYLE_LORE_NATIVE) return;
+    let cancelled = false;
+    const platform = (window.Capacitor && window.Capacitor.getPlatform) ? window.Capacitor.getPlatform() : "android";
+    fetch("/app-versions.json", { cache:"no-store" })
+      .then(r => r.ok ? r.json() : null)
+      .then(j => {
+        if(cancelled || !j || !j[platform]) return;
+        const latest = j[platform];
+        if(latest.version && compareVersions(latest.version, window.STYLE_LORE_APP_VERSION) > 0){
+          setUpdate({ version: latest.version, notes: latest.notes || "", url: latest.url || (platform === "ios" ? j.iosStoreUrl : j.androidStoreUrl) });
+        }
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, []);
+  return update;
+}
+function UpdateBanner({ update }){
+  if(!update) return null;
+  return e("div", { className:"card premium-card", style:{ marginBottom:16 } },
+    e("div", { className:"eyebrow" }, "Update available"),
+    e("div", { className:"display", style:{ fontSize:19, fontWeight:700, marginBottom:6 } }, "Style-LORE " + update.version + " is ready"),
+    update.notes ? e("p", { className:"screen-lede", style:{ fontSize:13.5, marginBottom:10 } }, update.notes) : null,
+    e("p", { className:"screen-lede", style:{ fontSize:12.5, marginBottom:10, color:"var(--ink-soft)" } },
+      "You're on " + window.STYLE_LORE_APP_VERSION + ". Tap below, then Update on the store page (if it isn't there yet, give it an hour and try again)."),
+    e("a", { className:"btn btn-accent btn-block", href: update.url, target:"_blank", rel:"noopener" }, "Get the update")
+  );
+}
+
 function HomeScreen({ profile, blend, styleBlend, kibbeResult, colorResult, closetCount, closet, digestOptOut, onToggleDigest, isPremium, billing, giftNotice, referral, onManageBilling, onUpgrade, onNavigate, onSignOut, onOpenProfile, onAccountDeleted, onSignIn }){
+  const updateAvailable = useUpdateAvailable();
   const homeType = (kibbeResult && kibbeResult.kibbeTypeId && KIBBE_BY_ID[kibbeResult.kibbeTypeId]) || null;
   const homeWords = styleBlend ? topWords(styleBlend, STYLE_WORDS, 4) : [];
   const homeSeason = (colorResult && colorResult.seasonId && COLOR_SEASON_BY_ID[colorResult.seasonId]) || null;
@@ -4310,6 +4358,8 @@ function HomeScreen({ profile, blend, styleBlend, kibbeResult, colorResult, clos
       e("p", { className:"screen-lede", style:{ marginBottom:22 } },
         "Start with the quiz. Everything else here — your colors, your closet, the Checker — is built on what it finds.")
     ),
+
+    e(UpdateBanner, { update: updateAvailable }),
 
     (profile && profile.emailVerified === false && !verifyBannerDismissed) ? e("div", { className:"card", style:{ marginBottom:16 } },
       e(Banner, { kind:"info" },

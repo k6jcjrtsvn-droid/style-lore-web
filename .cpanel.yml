@@ -13,6 +13,7 @@ deployment:
     - /bin/cp -f .htaccess $DEPLOYPATH
     - /bin/cp -f sitemap.xml $DEPLOYPATH
     - /bin/cp -f robots.txt $DEPLOYPATH
+    - /bin/cp -f app-versions.json $DEPLOYPATH
     - /bin/mkdir -p $DEPLOYPATH/types
     - /bin/cp -rf types/. $DEPLOYPATH/types/
     - /bin/cp -f config.sample.php $DEPLOYPATH

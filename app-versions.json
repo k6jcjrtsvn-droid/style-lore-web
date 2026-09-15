@@ -1,0 +1,16 @@
+{
+  "_comment": "Latest app builds. The apps fetch this on launch and show an 'Update available' card on Home when the running version is older. Bump 'version' and 'notes' with every store release; 'url' is where the button sends people.",
+  "androidStoreUrl": "https://play.google.com/store/apps/details?id=com.stylelore.app",
+  "iosStoreUrl": "https://apps.apple.com/app/id0000000000",
+  "android": {
+    "version": "1.2",
+    "versionCode": 4,
+    "notes": "Fixes the photo step of the quiz (the on-device analyzer now ships inside the app), and the app can now report problems to us automatically.",
+    "url": "https://play.google.com/store/apps/details?id=com.stylelore.app"
+  },
+  "ios": {
+    "version": "0",
+    "notes": "",
+    "url": "https://apps.apple.com/app/id0000000000"
+  }
+}
