@@ -847,13 +847,21 @@
   .close-btn svg{width:15px; height:15px; stroke:var(--ink); fill:none; stroke-width:1.6;}
 
   .footnote{font-size:11.5px; color:var(--ink-soft); line-height:1.6;}
-  .link-btn{color:var(--accent); font-weight:600;}
+  .link-btn{color:var(--accent); font-weight:600; padding:0; font-size:inherit; line-height:inherit; vertical-align:baseline;}
   .kicker-num{font-family:'IBM Plex Mono',monospace; font-size:11px; color:var(--ink-soft);}
 
   /* Landing page below the welcome screen (website only) */
-  .landing{ max-width:480px; margin:0 auto; padding:8px 24px 48px; }
-  .landing h2{ font-family:'Bodoni Moda', Georgia, serif; font-weight:700; font-size:26px; line-height:1.1; margin:44px 0 8px; letter-spacing:-.01em; }
-  .landing .lede{ font-size:14.5px; line-height:1.55; color:var(--ink-soft); margin:0 0 16px; }
+  .landing{ width:100%; margin:0; padding:8px 0 48px; text-align:left; }
+  .landing h2{ font-family:'Bodoni Moda', Georgia, serif; font-weight:700; font-size:26px; line-height:1.1; margin:44px 0 8px; letter-spacing:-.01em; text-align:center; }
+  .landing .lede{ font-size:14.5px; line-height:1.55; color:var(--ink-soft); margin:0 auto 16px; text-align:center; max-width:400px; }
+  /* Welcome screen (website): one centred column so the hero, the buttons
+     and the sections below all share the same axis. */
+  .gate-welcome{ text-align:center; padding-top:48px; }
+  .gate-welcome .wordmark{ justify-content:center; }
+  .gate-welcome .screen-lede{ margin-left:auto; margin-right:auto; max-width:400px; }
+  .gate-welcome > .btn-block{ max-width:360px; margin-left:auto; margin-right:auto; }
+  .gate-welcome .footnote{ max-width:360px; margin-left:auto; margin-right:auto; }
+  .landing-cta{ max-width:360px; margin:18px auto 0; display:block; }
   .landing-shots{ display:flex; gap:12px; overflow-x:auto; scroll-snap-type:x mandatory; padding:4px 0 10px; -webkit-overflow-scrolling:touch; }
   .landing-shots figure{ flex:0 0 200px; margin:0; scroll-snap-align:start; }
   .landing-shots img{ width:100%; height:auto; border-radius:18px; border:1px solid var(--line); box-shadow:var(--shadow); display:block; }
@@ -862,8 +870,8 @@
   .landing-steps li{ background:var(--paper-raised); border:1px solid var(--line); border-radius:14px; padding:12px; font-size:13px; line-height:1.45; }
   .landing-steps b{ display:block; font-family:'Bodoni Moda', Georgia, serif; font-size:17px; margin-bottom:4px; }
   .landing-steps .n{ font-size:11px; letter-spacing:.08em; text-transform:uppercase; color:var(--accent); display:block; margin-bottom:6px; }
-  .landing-types{ display:grid; grid-template-columns:repeat(4,1fr); gap:8px; }
-  .landing-types a{ text-decoration:none; color:var(--ink); font-size:11px; line-height:1.2; text-align:center; }
+  .landing-types{ display:flex; flex-wrap:wrap; justify-content:center; gap:8px; }
+  .landing-types a{ flex:0 0 calc(25% - 6px); text-decoration:none; color:var(--ink); font-size:11px; line-height:1.2; text-align:center; }
   .landing-types img{ width:100%; height:auto; border-radius:12px; display:block; margin-bottom:4px; }
   .landing-faq details{ border-top:1px solid var(--line); padding:12px 0; }
   .landing-faq summary{ cursor:pointer; font-weight:600; font-size:14px; list-style:none; display:flex; justify-content:space-between; align-items:center; }
@@ -4239,7 +4247,7 @@ function LandingBelowFold({ onQuiz }){
         t.name
       ))
     ),
-    e("button", { type:"button", className:"btn btn-accent btn-block", style:{ marginTop:18 }, onClick:onQuiz }, "Find my type — free"),
+    e("button", { type:"button", className:"btn btn-accent btn-block landing-cta", onClick:onQuiz }, "Find my type — free"),
     e("h2", null, "Good to know"),
     e("div", { className:"landing-faq" },
       e("details", null, e("summary", null, "Is the quiz really free?"), e("p", null, "Yes. Your body type, style words and colors are free, and you can keep them without an account. An account is only for saving across devices, the closet sync and the community.")),
@@ -4343,7 +4351,7 @@ function AccountGate({ onComplete, onExplore, startWithForm }){
   }
 
   if(!showForm){
-    return e("div", { className:"gate-wrap" },
+    return e("div", { className:"gate-wrap gate-welcome" },
       e("div", { className:"wordmark", style:{ marginBottom:18, display:"flex", alignItems:"center", gap:"0.12em" } },
           e(LogoMark, { size:"0.85em" }), "Style-LORE"),
       e("div", { className:"eyebrow", style:{ marginBottom:10 } }, "Your body type · your colors · your closet"),
