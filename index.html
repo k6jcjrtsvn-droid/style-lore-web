@@ -1607,9 +1607,90 @@ function seededRandom(seed){
   return () => { x ^= x << 13; x >>>= 0; x ^= x >>> 17; x ^= x << 5; x >>>= 0; return x / 4294967296; };
 }
 function dateSeed(){ const d = new Date(); return d.getFullYear() * 10000 + (d.getMonth() + 1) * 100 + d.getDate(); }
+// ---- Weather (Today's outfit) ---------------------------------------
+// Opt-in: the person taps "Add weather" once; the phone's location goes to
+// our own api/weather.php (rounded to ~1 km, never stored), which asks
+// Open-Meteo. Cached for 30 minutes so Home stays instant.
+const WEATHER_PREF_KEY = "lore_weather", WEATHER_CACHE_KEY = "lore_weather_cache";
+const USE_FAHRENHEIT = /-(US|LR|MM)$/i.test(navigator.language || "en-US") || (navigator.language || "") === "en";
+function fmtTemp(c){ return USE_FAHRENHEIT ? Math.round(c * 9 / 5 + 32) + "°" : Math.round(c) + "°"; }
+function weatherTone(w){
+  if (!w) return null;
+  const rainy = w.rainChance >= 50 || /rain|shower|drizzle|storm|snow/.test(w.label || "");
+  const snow = /snow|freezing/.test(w.label || "");
+  const feel = typeof w.highC === "number" ? w.highC : w.tempC;
+  return { rainy, snow, cold: feel < 13, cool: feel >= 13 && feel < 19, warm: feel >= 24, hot: feel >= 29 };
+}
+function weatherHeadline(w){
+  const t = weatherTone(w); if (!t) return "";
+  const temp = fmtTemp(w.tempC);
+  if (t.snow) return temp + " and snow";
+  if (t.rainy) return temp + " and rain likely";
+  if (t.hot) return temp + " and hot";
+  if (t.cold) return temp + " and cold";
+  return temp + (w.label ? " and " + w.label : "");
+}
+function getPosition(){
+  return new Promise((resolve, reject) => {
+    if (!navigator.geolocation) { reject(new Error("no-geo")); return; }
+    navigator.geolocation.getCurrentPosition(pos => resolve(pos.coords), err => reject(err), { timeout: 12000, maximumAge: 30 * 60 * 1000, enableHighAccuracy: false });
+  });
+}
+async function fetchWeatherForHere(){
+  const cache = loadLocal(WEATHER_CACHE_KEY, null);
+  if (cache && cache.at && Date.now() - cache.at < 30 * 60 * 1000 && cache.data) return cache.data;
+  const c = await getPosition();
+  const data = await Api.getWeather(c.latitude, c.longitude);
+  saveLocal(WEATHER_CACHE_KEY, { at: Date.now(), data });
+  return data;
+}
+function useWeather(enabled){
+  const [pref, setPref] = useState(() => loadLocal(WEATHER_PREF_KEY, null));
+  const [weather, setWeather] = useState(() => { const c = loadLocal(WEATHER_CACHE_KEY, null); return c && c.data ? c.data : null; });
+  const [state, setState] = useState("idle"); // idle | loading | error
+  const on = !!(pref && pref.on);
+  const refresh = useCallback(async () => {
+    setState("loading");
+    try { setWeather(await fetchWeatherForHere()); setState("idle"); }
+    catch (err) { setState("error"); }
+  }, []);
+  useEffect(() => { if (enabled && on) refresh(); }, [enabled, on, refresh]);
+  function enable(){ saveLocal(WEATHER_PREF_KEY, { on: true }); setPref({ on: true }); }
+  function disable(){ saveLocal(WEATHER_PREF_KEY, { on: false }); setPref({ on: false }); setWeather(null); }
+  return { on, weather: on ? weather : null, state, enable, disable, refresh };
+}
+
+// ---- "Wore this" log (on this device) ---------------------------------
+// One entry per day: { day:"YYYY-MM-DD", ids:[itemId…], at }. Counts feed
+// "Worn N×" in the closet; cost-per-wear can build on it later.
+const WEARS_KEY = "lore_wears", WEARS_MAX = 400;
+function localDay(d){ d = d || new Date(); return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0"); }
+function loadWears(){ return loadLocal(WEARS_KEY, []) || []; }
+function todaysWear(){ const day = localDay(); return loadWears().find(w => w.day === day) || null; }
+function logWear(ids){
+  const day = localDay();
+  const list = [{ day, ids: ids.slice(), at: Date.now() }, ...loadWears().filter(w => w.day !== day)].slice(0, WEARS_MAX);
+  saveLocal(WEARS_KEY, list);
+  return list;
+}
+function unlogWear(){ const day = localDay(); saveLocal(WEARS_KEY, loadWears().filter(w => w.day !== day)); }
+function wearCounts(){
+  const counts = {};
+  for (const w of loadWears()) for (const id of (w.ids || [])) counts[id] = (counts[id] || 0) + 1;
+  return counts;
+}
+
+const RAIN_LAYER_RE = /trench|rain|parka|anorak|windbreaker|shell|waterproof|mac\b/i;
+const HEAVY_LAYER_RE = /parka|puffer|wool|overcoat|peacoat|pea coat|down|shearling|fleece/i;
+const WARM_TOP_RE = /sweater|jumper|knit|turtleneck|hoodie|fleece|cardigan|flannel|thermal/i;
+const LIGHT_BOTTOM_RE = /shorts|linen|skort/i;
+const OPEN_SHOE_RE = /sandal|slide|espadrille|flip|open-toe|open toe|mule/i;
+const BOOT_RE = /boot|wellie|wellington/i;
+
 // Returns { pieces:[{item, category}], why, ready } or { ready:false, need }.
-function buildOutfit(closet, profile, seed){
+function buildOutfit(closet, profile, seed, weather){
   const rnd = seededRandom(seed);
+  const tone = weatherTone(weather);
   const buckets = { dress:[], top:[], bottom:[], outerwear:[], shoes:[], accessory:[] };
   for (const item of closet || []){
     const cat = garmentCategory(item.description);
@@ -1619,7 +1700,29 @@ function buildOutfit(closet, profile, seed){
       const v = styleCheckVerdict(item.description || "", profile);
       if (v && typeof v.score === "number") score = v.score;
     }catch(err){}
-    buckets[cat].push({ item, category:cat, score });
+    // Weather nudges the odds — nothing is ever excluded, so a closet that
+    // has only sandals still gets an outfit on a rainy day.
+    let w = 1;
+    if (tone){
+      const d = item.description || "";
+      if (cat === "outerwear"){
+        if (tone.rainy && RAIN_LAYER_RE.test(d)) w *= 3;
+        if (tone.cold && HEAVY_LAYER_RE.test(d)) w *= 2.5;
+        if ((tone.warm || (!tone.cold && !tone.cool)) && HEAVY_LAYER_RE.test(d)) w *= 0.2;
+      } else if (cat === "top"){
+        if (tone.cold && WARM_TOP_RE.test(d)) w *= 3;
+        if (tone.warm && WARM_TOP_RE.test(d)) w *= 0.15;
+      } else if (cat === "bottom"){
+        if ((tone.cold || tone.rainy) && LIGHT_BOTTOM_RE.test(d)) w *= 0.08;
+        else if (tone.cool && LIGHT_BOTTOM_RE.test(d)) w *= 0.3;
+        if (tone.hot && LIGHT_BOTTOM_RE.test(d)) w *= 2.5;
+      } else if (cat === "shoes"){
+        if ((tone.rainy || tone.cold) && OPEN_SHOE_RE.test(d)) w *= 0.03;
+        if ((tone.rainy || tone.cold) && BOOT_RE.test(d)) w *= 2.5;
+        if (tone.hot && BOOT_RE.test(d)) w *= 0.3;
+      }
+    }
+    buckets[cat].push({ item, category:cat, score, w });
   }
   const canDress = buckets.dress.length > 0;
   const canSeparates = buckets.top.length > 0 && buckets.bottom.length > 0;
@@ -1632,29 +1735,53 @@ function buildOutfit(closet, profile, seed){
   // excluded — a closet should feel used, not judged.
   function pick(list){
     if (!list.length) return null;
-    const weights = list.map(x => 1 + Math.max(0, x.score - 40) / 20);
+    const weights = list.map(x => (1 + Math.max(0, x.score - 40) / 20) * (x.w || 1));
     let r = rnd() * weights.reduce((a, b) => a + b, 0);
     for (let i = 0; i < list.length; i++){ r -= weights[i]; if (r <= 0) return list[i]; }
     return list[list.length - 1];
   }
   const pieces = [];
-  const useDress = canDress && (!canSeparates || rnd() < 0.4);
+  const dressOdds = tone && tone.cold ? 0.2 : tone && tone.hot ? 0.6 : 0.4;
+  const useDress = canDress && (!canSeparates || rnd() < dressOdds);
   if (useDress) pieces.push(pick(buckets.dress));
   else { pieces.push(pick(buckets.top)); pieces.push(pick(buckets.bottom)); }
-  if (buckets.outerwear.length && rnd() < 0.7) pieces.push(pick(buckets.outerwear));
+  const layerOdds = tone ? (tone.cold || tone.rainy ? 1 : tone.hot ? 0 : tone.warm ? 0.15 : tone.cool ? 0.9 : 0.6) : 0.7;
+  if (buckets.outerwear.length && rnd() < layerOdds) pieces.push(pick(buckets.outerwear));
   if (buckets.shoes.length) pieces.push(pick(buckets.shoes));
   if (buckets.accessory.length && rnd() < 0.5) pieces.push(pick(buckets.accessory));
   const avg = Math.round(pieces.reduce((a, p) => a + p.score, 0) / pieces.length);
-  const why = avg >= 70 ? "Every piece here sits well with your lines."
+  let why = avg >= 70 ? "Every piece here sits well with your lines."
     : avg >= 45 ? "A solid everyday combination — one piece leans away from your type, which can read as intentional contrast."
     : "Built from what you own. As you log more pieces that suit your type, these get sharper.";
+  if (tone){
+    const hasLayer = pieces.some(p => p.category === "outerwear");
+    if (tone.rainy && !hasLayer && !buckets.outerwear.length) why = "Rain's likely and there's no layer in your closet yet — add a jacket or trench and it'll show up here. " + why;
+    else if (tone.rainy && hasLayer) why = "Rain's likely, so a layer is in. " + why;
+    else if (tone.cold && hasLayer) why = "Cold one — layered up. " + why;
+    else if (tone.hot) why = "Hot today — kept it light. " + why;
+  }
   return { ready:true, pieces, avg, why };
 }
 
 function OutfitCard({ closet, profile, compact, onNavigate }){
   const [seed, setSeed] = useState(() => dateSeed());
-  const outfit = useMemo(() => buildOutfit(closet, profile, seed), [closet, profile, seed]);
+  const wx = useWeather(!!closet && closet.length > 0);
+  const outfit = useMemo(() => buildOutfit(closet, profile, seed, wx.weather), [closet, profile, seed, wx.weather]);
   const labels = { dress:"Dress", top:"Top", bottom:"Bottom", outerwear:"Layer", shoes:"Shoes", accessory:"Finish" };
+  const [wornToday, setWornToday] = useState(() => { const t = todaysWear(); return t ? t.ids : null; });
+  const pieceIds = outfit.ready ? outfit.pieces.map(p => p.item.id) : [];
+  const wornThis = !!wornToday && wornToday.length === pieceIds.length && pieceIds.every(id => wornToday.includes(id));
+  function toggleWore(){
+    haptic("light");
+    if (wornThis){ unlogWear(); setWornToday(null); }
+    else { logWear(pieceIds); setWornToday(pieceIds); }
+  }
+  const weatherLine = wx.on
+    ? (wx.weather ? e("button", { className:"btn-text", style:{ padding:0, fontSize:12.5, color:"var(--ink-soft)" }, onClick: wx.refresh, title:"Refresh weather" },
+          weatherHeadline(wx.weather) + (typeof wx.weather.highC === "number" ? " · high " + fmtTemp(wx.weather.highC) : ""))
+        : wx.state === "loading" ? e("span", { style:{ fontSize:12.5, color:"var(--ink-soft)" } }, "Checking the weather…")
+        : e("button", { className:"btn-text", style:{ padding:0, fontSize:12.5, color:"var(--ink-soft)" }, onClick: wx.refresh }, "Weather unavailable — tap to retry"))
+    : e("button", { className:"btn-text", style:{ padding:0, fontSize:12.5 }, onClick: () => { wx.enable(); } }, "Add weather");
   if (!closet || closet.length === 0){
     if (compact) return null;
     return e("div", { className:"card", style:{ marginBottom:14, padding:14 } },
@@ -1668,10 +1795,11 @@ function OutfitCard({ closet, profile, compact, onNavigate }){
       onNavigate ? e("button", { className:"btn-text", style:{ padding:0, marginTop:8 }, onClick:()=>onNavigate("closet") }, "Open closet") : null);
   }
   return e("div", { className:"card", style:{ marginBottom:14, padding:14 } },
-    e("div", { style:{ display:"flex", justifyContent:"space-between", alignItems:"baseline", marginBottom:8 } },
+    e("div", { style:{ display:"flex", justifyContent:"space-between", alignItems:"baseline", marginBottom:4 } },
       e("div", { className:"eyebrow", style:{ margin:0 } }, "Today's outfit"),
       e("button", { className:"btn-text", style:{ padding:0, fontSize:12.5 }, onClick:()=>{ haptic("light"); setSeed(s => (s * 31 + 7) >>> 0); } }, "Shuffle")
     ),
+    e("div", { style:{ marginBottom:8 } }, weatherLine),
     e("div", { className:"outfit-row" },
       outfit.pieces.map(p => e("div", { key:p.item.id, className:"outfit-piece" },
         p.item.photo ? e("img", { src:p.item.photo, alt:"" }) : e("div", { className:"outfit-piece-blank" }, Icon("shirt")),
@@ -1679,7 +1807,11 @@ function OutfitCard({ closet, profile, compact, onNavigate }){
         e("div", { className:"outfit-piece-desc" }, p.item.description)
       ))
     ),
-    e("p", { style:{ fontSize:13, color:"var(--ink-soft)", margin:"10px 0 0" } }, outfit.why)
+    e("p", { style:{ fontSize:13, color:"var(--ink-soft)", margin:"10px 0 0" } }, outfit.why),
+    e("div", { style:{ display:"flex", gap:10, alignItems:"center", marginTop:10, flexWrap:"wrap" } },
+      e("button", { type:"button", className: "btn btn-sm " + (wornThis ? "btn-accent" : "btn-ghost"), "aria-pressed": wornThis, onClick: toggleWore }, wornThis ? "Wore this ✓" : "Wore this"),
+      e("span", { style:{ fontSize:12, color:"var(--ink-soft)" } }, wornThis ? "Logged for today — each piece's wear count is in your closet." : "Tap when you wear it — builds wear counts over time.")
+    )
   );
 }
 
@@ -3235,7 +3367,7 @@ const Api = {
   async registerDeviceToken(visitorId, authToken, token, platform){
     const r = await fetch("/api/device-tokens", {
       method:"POST", headers:{ "Content-Type":"application/json" },
-      body: JSON.stringify({ visitorId, authToken, token, platform }),
+      body: JSON.stringify({ visitorId, authToken, token, platform, tzOffset: -new Date().getTimezoneOffset() }),
     });
     if(!r.ok) throw await apiError(r, "Couldn't register this device for notifications.");
     return r.json();
@@ -3317,6 +3449,20 @@ const Api = {
     if(!r.ok) throw await apiError(r, "Couldn't open billing.");
     return r.json();
   },
+  async setMorningPushPrefs(visitorId, authToken, optOut){
+    const r = await fetch("/api/digest_prefs.php", { method:"POST", headers:{ "Content-Type":"application/json" }, body: JSON.stringify({ visitorId, authToken, morningOptOut: optOut ? 1 : 0 }) });
+    if(!r.ok) throw await apiError(r, "Couldn't save that setting.");
+    return r.json();
+  },
+  // Today's weather for the outfit card (api/weather.php proxies
+  // Open-Meteo; coordinates are rounded server-side and never stored).
+  async getWeather(lat, lon){
+    const r = await fetch("/api/weather.php?lat=" + encodeURIComponent(lat.toFixed(2)) + "&lon=" + encodeURIComponent(lon.toFixed(2)));
+    if(!r.ok) throw await apiError(r, "Couldn't get the weather.");
+    const w = await r.json();
+    if(!w || typeof w.tempC !== "number") throw new Error("Bad weather data");
+    return w;
+  },
   async setDigestPrefs(visitorId, authToken, optOut){
     const r = await fetch("/api/digest_prefs.php", { method:"POST", headers:{ "Content-Type":"application/json" }, body: JSON.stringify({ visitorId, authToken, optOut: optOut ? 1 : 0 }) });
     if(!r.ok) throw await apiError(r, "Couldn't save that setting.");
@@ -3345,6 +3491,24 @@ const Api = {
     const body = await r.json().catch(()=>({}));
     if(!r.ok){
       const err = new Error(body.error || "Couldn't run the AI Stylist right now — try again.");
+      err.code = body.code || null;
+      throw err;
+    }
+    return body;
+  },
+  // "Describe it for me" in Add-to-closet (api/closet_describe.php): one
+  // small vision call that returns a closet-ready one-liner. Free for
+  // signed-in accounts; the photo is sent once and not stored.
+  async describeClosetPhoto({ visitorId, authToken, photoBlob }){
+    const fd = new FormData();
+    fd.append("visitorId", visitorId);
+    fd.append("authToken", authToken || "");
+    fd.append("photo", photoBlob, "item.jpg");
+    const wardrobe = getWardrobe(); if(wardrobe) fd.append("wardrobe", wardrobe);
+    const r = await fetch("/api/closet_describe.php", { method:"POST", body:fd });
+    const body = await r.json().catch(()=>({}));
+    if(!r.ok){
+      const err = new Error(body.error || "Couldn't describe that photo — type a description instead.");
       err.code = body.code || null;
       throw err;
     }
@@ -4518,7 +4682,7 @@ function UpdateBanner({ update }){
   );
 }
 
-function HomeScreen({ profile, blend, styleBlend, kibbeResult, colorResult, closetCount, closet, digestOptOut, onToggleDigest, isPremium, billing, giftNotice, referral, onManageBilling, onUpgrade, onNavigate, onSignOut, onOpenProfile, onAccountDeleted, onSignIn }){
+function HomeScreen({ profile, blend, styleBlend, kibbeResult, colorResult, closetCount, closet, digestOptOut, onToggleDigest, morningPushOptOut, onToggleMorningPush, isPremium, billing, giftNotice, referral, onManageBilling, onUpgrade, onNavigate, onSignOut, onOpenProfile, onAccountDeleted, onSignIn }){
   const updateAvailable = useUpdateAvailable();
   const homeType = (kibbeResult && kibbeResult.kibbeTypeId && KIBBE_BY_ID[kibbeResult.kibbeTypeId]) || null;
   const homeWords = styleBlend ? topWords(styleBlend, STYLE_WORDS, 4) : [];
@@ -4684,6 +4848,10 @@ function HomeScreen({ profile, blend, styleBlend, kibbeResult, colorResult, clos
         e("input", { type:"checkbox", checked: !digestOptOut, onChange: onToggleDigest }),
         e("span", null, "Weekly email — one tip for your type, every week")
       ),
+      IS_NATIVE_APP && window.STYLE_LORE_PUSH_CONFIGURED !== false ? e("label", { className:"checkline", style:{ marginTop:8, fontSize:12.5 } },
+        e("input", { type:"checkbox", checked: !morningPushOptOut, onChange: onToggleMorningPush }),
+        e("span", null, "Morning nudge — “Today's outfit is ready” at 8 AM (once your closet has a few pieces)")
+      ) : null,
       e("div", { style:{ marginTop:10, display:"flex", gap:14, flexWrap:"wrap", alignItems:"center" } },
         e("button", { className:"btn-text", style:{ padding:0, fontSize:12, color:"var(--ink-soft)" }, onClick:()=>setShowDeleteAccount(true) }, "Delete my account"),
         e(LegalLinks, null)
@@ -5261,6 +5429,7 @@ function ClosetScreen({ closet, setCloset, blend, styleWordBlend, kibbeTypeName,
   const [showAdd, setShowAdd] = useState(false);
   const profile = { kibbeBlend: blend, styleWordBlend, kibbeTypeName, topStyleWords };
   const atCap = !isPremium && closet.length >= closetFreeLimit;
+  const worn = useMemo(() => wearCounts(), [closet]);
 
   function addItem(item){
     if(!isPremium && closet.length >= closetFreeLimit){
@@ -5371,7 +5540,7 @@ function ClosetScreen({ closet, setCloset, blend, styleWordBlend, kibbeTypeName,
       ? e(EmptyState, { icon:"closet" }, "Nothing logged yet. Add your first piece to get started.")
       : e("div", { className:"row-list" },
           closet.map(item => e(ClosetRow, {
-            key:item.id, item, profile, onRemove:()=>removeItem(item.id),
+            key:item.id, item, profile, onRemove:()=>removeItem(item.id), wornCount: worn[item.id] || 0,
             onToggleVisibility: viewer ? ()=>toggleItemVisibility(item.id) : null,
           }))
         ),
@@ -5379,26 +5548,46 @@ function ClosetScreen({ closet, setCloset, blend, styleWordBlend, kibbeTypeName,
     gapBanner,
     gapAnalysis ? e(ShopTheGap, { labels: gapAnalysis.gapLabels }) : null,
 
-    e("p", { className:"footnote", style:{ marginTop:12 } }, "Verdicts are a quick read from each item's description, worked out on your phone. Photos stay on your device unless you make an item Public."),
+    e("p", { className:"footnote", style:{ marginTop:12 } }, "Verdicts are a quick read from each item's description, worked out on your phone. Photos stay on your device unless you make an item Public or tap “Describe it for me” (sent once, never stored)."),
 
-    showAdd ? e(AddItemSheet, { onAdd:addItem, onClose:()=>setShowAdd(false) }) : null
+    showAdd ? e(AddItemSheet, { onAdd:addItem, onClose:()=>setShowAdd(false), viewer }) : null
   );
 }
 
-function AddItemSheet({ onAdd, onClose }){
+function AddItemSheet({ onAdd, onClose, viewer }){
   const dialogRef = useDialog(onClose);
   useBackClose(onClose);
   const [description, setDescription] = useState("");
   const [photoPreview, setPhotoPreview] = useState(null);
   const [photoError, setPhotoError] = useState(null);
   const [visibility, setVisibility] = useState("hidden");
+  // "Describe it for me": idle | busy | done | off (feature not set up)
+  const [describe, setDescribe] = useState("idle");
+  const describedRef = useRef(false);
 
   function pickPhoto(ev){
     const file = ev.target.files && ev.target.files[0];
     if(!file) return;
     setPhotoError(null);
+    describedRef.current = false;
+    setDescribe(d => d === "off" ? "off" : "idle");
     downscaleImage(file, 480, 0.72).then(setPhotoPreview)
       .catch(() => setPhotoError("Couldn't read that photo — try another."));
+  }
+
+  async function describeForMe(){
+    if(!photoPreview || !viewer || describe === "busy") return;
+    setDescribe("busy"); setPhotoError(null);
+    try{
+      const res = await Api.describeClosetPhoto({ visitorId: viewer.visitorId, authToken: viewer.token, photoBlob: dataUrlToBlob(photoPreview) });
+      const text = (res && res.description || "").trim();
+      if(!text){ setPhotoError("Couldn't make out a garment in that photo — type a short description instead."); setDescribe("idle"); return; }
+      setDescription(text); describedRef.current = true; setDescribe("done");
+    }catch(err){
+      if(err && err.code === "ai_unavailable"){ setDescribe("off"); return; }
+      setPhotoError((err && err.message) || "Couldn't describe that photo — type a description instead.");
+      setDescribe("idle");
+    }
   }
 
   function submit(){
@@ -5418,6 +5607,12 @@ function AddItemSheet({ onAdd, onClose }){
           : e("label", { className:"photo-frame-label", htmlFor:"closet-photo-input", onClick: ev => pickWithNativeCamera(ev, pickPhoto) }, Icon("shirt"), e("span", null, "Add a photo (optional)"))
       ),
       e("input", { id:"closet-photo-input", type:"file", accept:"image/*", className:"visually-hidden", onChange:pickPhoto }),
+      photoPreview && viewer && describe !== "off" ? e("div", { style:{ margin:"-4px 0 12px" } },
+        e("button", { type:"button", className:"btn btn-ghost btn-block btn-sm", disabled: describe === "busy", onClick: describeForMe },
+          describe === "busy" ? "Looking at your photo…" : describe === "done" ? "Describe it again" : "✨ Describe it for me"),
+        e("div", { className:"field-hint", style:{ textAlign:"center" } },
+          describe === "done" ? "Edit the description if it's not quite right." : "Sends this one photo to our AI to write the label. It isn't stored.")
+      ) : null,
       photoError ? e(Banner, { kind:"error" }, photoError) : null,
       e("div", { className:"field" },
         e("label", { htmlFor:"closet-desc" }, "Describe the item"),
@@ -5439,7 +5634,7 @@ function AddItemSheet({ onAdd, onClose }){
   );
 }
 
-function ClosetRow({ item, profile, onRemove, onToggleVisibility }){
+function ClosetRow({ item, profile, onRemove, onToggleVisibility, wornCount }){
   const [confirmDelete, setConfirmDelete] = useState(false);
   const verdict = useMemo(
     () => profile && (profile.kibbeBlend || profile.styleWordBlend) ? styleCheckVerdict(item.description, profile) : null,
@@ -5450,7 +5645,8 @@ function ClosetRow({ item, profile, onRemove, onToggleVisibility }){
     item.photo ? e("img", { src:item.photo, alt:"", style:{ width:52, height:52, borderRadius:8, objectFit:"cover", flexShrink:0 } })
       : e("span", { style:{ width:52, height:52, borderRadius:8, background:"var(--paper-raised)", border:"1px solid var(--line)", display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0, color:"var(--ink-soft)" } }, Icon("shirt")),
     e("div", { style:{ flex:1, minWidth:0 } },
-      e("div", { style:{ fontSize:14, fontWeight:500, marginBottom:6 } }, item.description),
+      e("div", { style:{ fontSize:14, fontWeight:500, marginBottom:6 } }, item.description,
+        wornCount ? e("span", { style:{ fontSize:11.5, fontWeight:500, color:"var(--ink-soft)", marginLeft:8, whiteSpace:"nowrap" } }, "Worn " + wornCount + "×") : null),
       verdict && verdict.score !== null
         ? e("div", { style:{ display:"flex", alignItems:"center", gap:8, marginBottom:6, flexWrap:"wrap" } },
             e(VerdictPill, { verdict: verdict.verdictPill }),
@@ -7437,6 +7633,13 @@ function App(){
     setDigestOptOut(next);
     try{ await Api.setDigestPrefs(profile.visitorId, profile.token, next); }catch(err){ setDigestOptOut(!next); onAuthError(err); }
   }
+  const [morningPushOptOut, setMorningPushOptOut] = useState(false);
+  async function toggleMorningPush(){
+    if(!profile) return;
+    const next = !morningPushOptOut;
+    setMorningPushOptOut(next);
+    try{ await Api.setMorningPushPrefs(profile.visitorId, profile.token, next); }catch(err){ setMorningPushOptOut(!next); onAuthError(err); }
+  }
   // null, or a short string saying why the paywall was opened ("closet",
   // "checker") purely for the paywall's own copy — never used for access
   // control (the server checks that independently on every call).
@@ -7717,6 +7920,7 @@ function App(){
 
     function routeFromNotificationData(data){
       if(!data) { goTo("notifications"); return; }
+      if(data.screen === "home"){ goTo("home"); return; }
       if(data.type === "message" && data.conversationId){
         openConversation({ id:data.conversationId, otherId:data.otherId || null, otherName:data.otherName || "" });
       } else if(data.actorId){
@@ -7761,8 +7965,9 @@ function App(){
   useEffect(() => {
     if(!profile || !profile.visitorId){ setIsPremium(false); window.STYLE_LORE_REF_CODE = null; return; }
     let cancelled = false;
-    Api.getSubscriptionStatus(profile.visitorId).then(({ isPremium, closetFreeLimit, freeAiReadsLeft, digestOptOut, billing, webCheckout, giftNotice, referralCode, referralCount }) => {
+    Api.getSubscriptionStatus(profile.visitorId).then(({ isPremium, closetFreeLimit, freeAiReadsLeft, digestOptOut, morningPushOptOut, billing, webCheckout, giftNotice, referralCode, referralCount }) => {
       if(cancelled) return;
+      setMorningPushOptOut(!!morningPushOptOut);
       setGiftNotice(giftNotice && giftNotice.active ? giftNotice : null);
       setReferral({ code: referralCode || null, count: referralCount || 0 });
       window.STYLE_LORE_REF_CODE = referralCode || null;
@@ -7986,7 +8191,7 @@ function App(){
       viewerKibbeBlend: blend, viewerStyleWordBlend: styleBlend, viewerKibbeTypeName: kibbeTypeName, viewerTopStyleWords: topStyleWords
     });
   }
-  else if(screen === "home") body = e(HomeScreen, { profile, blend, styleBlend, kibbeResult, colorResult, closetCount: closet.length, closet, digestOptOut, onToggleDigest: toggleDigest, isPremium, billing, giftNotice, referral, onManageBilling: openBillingPortal, onUpgrade:openPaywall, onNavigate:goTo, onSignOut:signOut, onOpenProfile:openProfile, onAccountDeleted:handleAccountDeleted, onSignIn:leaveGuestForGate });
+  else if(screen === "home") body = e(HomeScreen, { profile, blend, styleBlend, kibbeResult, colorResult, closetCount: closet.length, closet, digestOptOut, onToggleDigest: toggleDigest, morningPushOptOut, onToggleMorningPush: toggleMorningPush, isPremium, billing, giftNotice, referral, onManageBilling: openBillingPortal, onUpgrade:openPaywall, onNavigate:goTo, onSignOut:signOut, onOpenProfile:openProfile, onAccountDeleted:handleAccountDeleted, onSignIn:leaveGuestForGate });
   else if(screen === "quiz") body = e(StyleQuizScreen, { kibbeResult, styleLanguageResult:styleBlend, onSaveKibbe:setKibbeResult, onSaveStyle:setStyleBlend, onSignIn: profile ? null : leaveGuestForGate, colorResult });
   else if(screen === "color") body = e(ColorScreen, { colorResult, onSaveColor:setColorResult });
   else if(screen === "closet") body = e(ClosetScreen, { closet, setCloset, blend, styleWordBlend:styleBlend, kibbeTypeName, topStyleWords, profile, isPremium, closetFreeLimit, onUpgrade:openPaywall, syncStatus:closetSyncStatus, onRetrySync:retryClosetSync, storageFull:closetStorageFull });

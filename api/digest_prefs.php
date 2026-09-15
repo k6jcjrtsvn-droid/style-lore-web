@@ -12,6 +12,13 @@ if ($visitorId === '' || $authToken === '') error_response('You need to be signe
 $pdo = db();
 ensure_digest_columns($pdo);
 require_owner($pdo, $visitorId, $authToken);
+// Either field may be sent alone: {optOut} for the weekly email,
+// {morningOptOut} for the 8 AM outfit push.
+if (array_key_exists('morningOptOut', $body)) {
+    $m = !empty($body['morningOptOut']) ? 1 : 0;
+    $pdo->prepare('UPDATE accounts SET morning_push_opt_out = ? WHERE id = ?')->execute([$m, $visitorId]);
+    json_response(['ok' => true, 'morningPushOptOut' => $m]);
+}
 $optOut = !empty($body['optOut']) ? 1 : 0;
 $pdo->prepare('UPDATE accounts SET digest_opt_out = ? WHERE id = ?')->execute([$optOut, $visitorId]);
 json_response(['ok' => true, 'digestOptOut' => $optOut]);

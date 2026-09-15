@@ -677,8 +677,22 @@ function ensure_color_result_column(PDO $pdo): void {
 /** Adds the weekly-email columns if a deploy got ahead of the migration. Cheap, idempotent, MariaDB. */
 function ensure_digest_columns(PDO $pdo): void {
     static $done = false; if ($done) return; $done = true;
-    try { $pdo->exec('ALTER TABLE accounts ADD COLUMN IF NOT EXISTS digest_opt_out TINYINT(1) NOT NULL DEFAULT 0, ADD COLUMN IF NOT EXISTS digest_sent_at BIGINT DEFAULT NULL'); }
+    try { $pdo->exec('ALTER TABLE accounts ADD COLUMN IF NOT EXISTS digest_opt_out TINYINT(1) NOT NULL DEFAULT 0, ADD COLUMN IF NOT EXISTS digest_sent_at BIGINT DEFAULT NULL, ADD COLUMN IF NOT EXISTS morning_push_opt_out TINYINT(1) NOT NULL DEFAULT 0'); }
     catch (Throwable $e) { error_log('ensure_digest_columns: ' . $e->getMessage()); }
+}
+
+/** 8 AM "Today's outfit" push (api/cron_morning_push.php): per-account opt-out. */
+function morning_push_opt_out(PDO $pdo, string $accountId): bool {
+    ensure_digest_columns($pdo);
+    try { $st = $pdo->prepare('SELECT morning_push_opt_out FROM accounts WHERE id = ?'); $st->execute([$accountId]); return (bool)$st->fetchColumn(); }
+    catch (Throwable $e) { return false; }
+}
+
+/** device_tokens.tz_offset (minutes east of UTC, from the phone) + morning_push_day (local YYYY-MM-DD last sent). Lazy, idempotent. */
+function ensure_device_token_columns(PDO $pdo): void {
+    static $done = false; if ($done) return; $done = true;
+    try { $pdo->exec('ALTER TABLE device_tokens ADD COLUMN IF NOT EXISTS tz_offset INT NOT NULL DEFAULT 0, ADD COLUMN IF NOT EXISTS morning_push_day CHAR(10) DEFAULT NULL'); }
+    catch (Throwable $e) { error_log('ensure_device_token_columns: ' . $e->getMessage()); }
 }
 
 function digest_opt_out(PDO $pdo, string $accountId): bool {

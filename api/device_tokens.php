@@ -34,11 +34,16 @@ if ($method === 'DELETE') {
 }
 
 $platform = in_array($body['platform'] ?? '', ['android', 'ios'], true) ? $body['platform'] : 'android';
+// Phone's UTC offset in minutes (JS: -new Date().getTimezoneOffset()), so
+// the 8 AM "Today's outfit" push lands at 8 AM *there*.
+$tzOffset = (int)($body['tzOffset'] ?? 0);
+if ($tzOffset < -840 || $tzOffset > 840) $tzOffset = 0;
+ensure_device_token_columns($pdo);
 
 $pdo->prepare(
-    'INSERT INTO device_tokens (token, account_id, platform, updated_at) VALUES (?, ?, ?, ?)
-     ON DUPLICATE KEY UPDATE account_id = VALUES(account_id), platform = VALUES(platform), updated_at = VALUES(updated_at)'
-)->execute([$token, $visitorId, $platform, current_time_ms()]);
+    'INSERT INTO device_tokens (token, account_id, platform, updated_at, tz_offset) VALUES (?, ?, ?, ?, ?)
+     ON DUPLICATE KEY UPDATE account_id = VALUES(account_id), platform = VALUES(platform), updated_at = VALUES(updated_at), tz_offset = VALUES(tz_offset)'
+)->execute([$token, $visitorId, $platform, current_time_ms(), $tzOffset]);
 
 // Keep at most 10 tokens per account (newest win) so a reinstalling
 // device can't pile up stale tokens forever.
