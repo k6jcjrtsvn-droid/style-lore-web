@@ -40,42 +40,50 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $visitorId = (string)($body['visitorId'] ?? '');
     require_owner($pdo, $visitorId, (string)($body['authToken'] ?? ''));
 
-    // Name comes from the profiles table, never from the client.
-    $visitorName = profile_identity($pdo, $visitorId)['name'];
-
-    // Free accounts are capped at CLOSET_FREE_LIMIT items; Style-LORE
-    // Premium (has_premium()) gets the full 300-item sync ceiling. This is
-    // a server-side backstop -- the frontend should also stop letting a
-    // free account add past the limit client-side, using the
-    // closetFreeLimit/isPremium this endpoint (and api/subscription_status.php)
-    // report back, rather than relying on a silent server-side truncation.
-    $isPremium = has_premium($pdo, $visitorId);
-    $maxItems = $isPremium ? 300 : CLOSET_FREE_LIMIT;
+    $visitorName = mb_substr(trim((string)($body['visitorName'] ?? '')), 0, 60);
 
     $items = is_array($body['items'] ?? null) ? $body['items'] : [];
-    $items = array_slice($items, 0, $maxItems);
+    // Cap it — this is a mirror of a personal capsule wardrobe, not
+    // unbounded storage, and keeps one sync call bounded in size.
+    $items = array_slice($items, 0, 300);
 
+    $usedIds = [];
     $pdo->beginTransaction();
     try {
         $pdo->prepare('DELETE FROM closet_items WHERE account_id = ?')->execute([$visitorId]);
         $ins = $pdo->prepare(
             'INSERT INTO closet_items (id, account_id, description, photo_data, created_at, visibility, author_name) VALUES (?, ?, ?, ?, ?, ?, ?)'
         );
+        // De-duplicate within the payload itself: same description + same
+        // photo is the same garment, whatever ids the client attached. A
+        // client that arrives already duplicated is cleaned by syncing.
+        $seen = [];
         foreach ($items as $item) {
             if (!is_array($item)) continue;
             $description = mb_substr(trim((string)($item['description'] ?? '')), 0, 200);
-            // Photos are inline data: URLs produced by the app's canvas
-            // resize. Only accept a real base64 image, capped at 2MB, since
-            // this string is rendered as an <img src> in other people's
-            // closet feeds.
             $photo = isset($item['photo']) && is_string($item['photo']) ? $item['photo'] : null;
-            if ($photo !== null && (strlen($photo) > 2 * 1024 * 1024
-                || !preg_match('#^data:image/(jpeg|png|webp|gif);base64,[A-Za-z0-9+/]+=*$#', $photo))) {
-                $photo = null;
-            }
             $createdAt = isset($item['createdAt']) ? (int)$item['createdAt'] : current_time_ms();
             $visibility = ($item['visibility'] ?? '') === 'public' ? 'public' : 'hidden';
-            $ins->execute([uuidv4(), $visitorId, $description, $photo, $createdAt, $visibility, $visitorName]);
+
+            $fingerprint = sha1(mb_strtolower($description) . '|' . ($photo === null ? '' : sha1($photo)));
+            if (isset($seen[$fingerprint])) continue;
+            $seen[$fingerprint] = true;
+
+            // Keep the client's own id when it sent one. Minting a fresh
+            // uuidv4() on every sync — as this did until 2026-09-15 — meant
+            // an item's id changed every time the closet was saved, so the
+            // client could never recognise its own items coming back from
+            // /api/closet/mine and appended the whole closet again on every
+            // sign-in. That doubled closets on each pull (Jayne's two items
+            // reached 31 rows). Ids are client-generated, so validate the
+            // shape and scope uniqueness to this account.
+            $id = (string)($item['id'] ?? '');
+            if ($id === '' || strlen($id) > 64 || !preg_match('/^[A-Za-z0-9_-]+$/', $id) || isset($usedIds[$id])) {
+                $id = uuidv4();
+            }
+            $usedIds[$id] = true;
+
+            $ins->execute([$id, $visitorId, $description, $photo, $createdAt, $visibility, $visitorName]);
         }
         $pdo->commit();
     } catch (Throwable $e) {
@@ -83,7 +91,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         throw $e;
     }
 
-    json_response(['ok' => true, 'count' => count($items), 'limit' => $maxItems, 'isPremium' => $isPremium]);
+    json_response(['ok' => true, 'count' => count($seen)]);
 }
 
 error_response('Method not allowed.', 405);

@@ -1834,6 +1834,76 @@ function wearCounts(){
   return counts;
 }
 
+/* ---- Closet identity, de-duplication and tombstones -------------------
+
+   A closet item has no stable server-side identity: api/closet.php replaces
+   the whole mirror on every sync. So two items are "the same garment" when
+   their description and photo match -- that is the only thing that survives
+   a round trip, and it is what every comparison below uses.
+
+   This exists because of a real incident on 2026-09-15: the sync minted a
+   fresh uuidv4 per row per save, the sign-in merge matched on id, so every
+   pull appended the whole closet again and closets doubled on each visit
+   (two items became 31 rows). Both causes are fixed, but these helpers make
+   the client self-healing regardless -- a device that is already duplicated
+   cleans itself on the next load and pushes the clean list up. */
+function closetItemKey(it){
+  const desc = String((it && it.description) || "").trim().toLowerCase().replace(/\s+/g, " ");
+  const photo = String((it && it.photo) || "");
+  // Photos are inline base64 and can be megabytes; a head+tail+length
+  // signature separates different images without hashing the whole string
+  // on every render.
+  const photoSig = photo ? (photo.length + ":" + photo.slice(0, 96) + ":" + photo.slice(-32)) : "";
+  // An item with neither a description nor a photo can't be compared to
+  // anything, so fall back to its id and let it stand on its own.
+  if(!desc && !photoSig) return "id:" + String((it && it.id) || Math.random());
+  return desc + "|" + photoSig;
+}
+// Keeps the FIRST occurrence of each distinct garment — that's the copy the
+// person actually added, and it carries the earliest createdAt.
+function dedupeCloset(list){
+  const seen = new Set(), out = [];
+  for(const it of (list || [])){
+    if(!it) continue;
+    const k = closetItemKey(it);
+    if(seen.has(k)) continue;
+    seen.add(k);
+    out.push(it);
+  }
+  return out;
+}
+
+/* Removals have to outlive a single device, or the sign-in merge undoes
+   them: delete an item on your phone, open the website whose local copy
+   still has it, and the union merge would hand it straight back and sync it
+   up again. A tombstone records that this garment was deliberately removed
+   so the merge can skip it. Kept for 90 days — long enough to cover every
+   device someone actually uses, short enough that re-adding the same
+   garment a season later still works. */
+const CLOSET_TOMBSTONE_KEY = "lore_closet_removed", TOMBSTONE_TTL_MS = 90 * 24 * 60 * 60 * 1000, TOMBSTONE_MAX = 400;
+function loadTombstones(){
+  const now = Date.now();
+  const raw = loadLocal(CLOSET_TOMBSTONE_KEY, []) || [];
+  return raw.filter(t => t && t.key && (now - (t.at || 0)) < TOMBSTONE_TTL_MS);
+}
+function addTombstone(item){
+  const key = closetItemKey(item);
+  const list = [{ key, at: Date.now() }, ...loadTombstones().filter(t => t.key !== key)].slice(0, TOMBSTONE_MAX);
+  saveLocal(CLOSET_TOMBSTONE_KEY, list);
+  return list;
+}
+// Re-adding a garment you'd previously deleted must clear its tombstone,
+// or the next merge would quietly delete it again.
+function clearTombstone(item){
+  const key = closetItemKey(item);
+  const list = loadTombstones().filter(t => t.key !== key);
+  saveLocal(CLOSET_TOMBSTONE_KEY, list);
+  return list;
+}
+function tombstonedKeys(){
+  return new Set(loadTombstones().map(t => t.key));
+}
+
 const RAIN_LAYER_RE = /trench|rain|parka|anorak|windbreaker|shell|waterproof|mac\b/i;
 const HEAVY_LAYER_RE = /parka|puffer|wool|overcoat|peacoat|pea coat|down|shearling|fleece/i;
 const WARM_TOP_RE = /sweater|jumper|knit|turtleneck|hoodie|fleece|cardigan|flannel|thermal/i;
@@ -5859,14 +5929,28 @@ function ClosetScreen({ closet, setCloset, blend, styleWordBlend, kibbeTypeName,
       if(onUpgrade) onUpgrade("closet");
       return;
     }
-    setCloset([{ ...item, id: uid(), createdAt: Date.now() }, ...closet]);
+    const next = { ...item, id: uid(), createdAt: Date.now() };
+    // Adding something back lifts its tombstone (see addTombstone above),
+    // otherwise the next sign-in merge would silently drop it again.
+    clearTombstone(next);
+    setCloset(prev => dedupeCloset([next, ...(prev || [])]));
     setShowAdd(false);
   }
   function removeItem(id){
-    setCloset(closet.filter(x => x.id !== id));
+    setCloset(prev => {
+      const target = (prev || []).find(x => x.id === id);
+      if(!target) return prev;
+      // Remove every copy of this garment, not just the row that was tapped.
+      // While closets were duplicated (see closetItemKey above) an item could
+      // exist 16 times under 16 different ids, so removing one left fifteen
+      // behind and the remove button looked like it had done nothing.
+      const key = closetItemKey(target);
+      addTombstone(target);
+      return prev.filter(x => closetItemKey(x) !== key);
+    });
   }
   function toggleItemVisibility(id){
-    setCloset(closet.map(x => x.id === id ? Object.assign({}, x, { visibility: x.visibility === "public" ? "hidden" : "public" }) : x));
+    setCloset(prev => (prev || []).map(x => x.id === id ? Object.assign({}, x, { visibility: x.visibility === "public" ? "hidden" : "public" }) : x));
   }
   function handleAddClick(){
     if(atCap){ if(onUpgrade) onUpgrade("closet"); return; }
@@ -8082,7 +8166,10 @@ function App(){
   const [kibbeResult, setKibbeResult] = useState(() => loadLocal("lore_kibbe", null));
   const [styleBlend, setStyleBlend] = useState(() => loadLocal("lore_style_blend", null));
   const [colorResult, setColorResult] = useState(() => loadLocal("lore_colorseason", null));
-  const [closet, setCloset] = useState(() => loadLocal("lore_closet", []));
+  // dedupeCloset on boot so a device that was duplicated by the 2026-09-15
+  // sync bug heals itself on the next load, before anything is rendered or
+  // synced back up.
+  const [closet, setCloset] = useState(() => dedupeCloset(loadLocal("lore_closet", []) || []));
   const [screen, setScreen] = useState(loadLastScreen);
   const [viewingProfileId, setViewingProfileId] = useState(null);
   const [viewingConversation, setViewingConversation] = useState(null); // {id, otherId, otherName} | null
@@ -8340,9 +8427,16 @@ function App(){
   // Pull the owner's own closet (Hidden items included) once per sign-in and
   // merge it into whatever is already on this device. Merge, not replace:
   // someone may have added items in this browser while signed out, and those
-  // must survive. Items are matched on id first, then on description+photo
-  // so an item that predates server ids isn't duplicated. Local wins on a
-  // conflict -- it's the copy the person is looking at right now.
+  // must survive. Local wins on a conflict -- it's the copy the person is
+  // looking at right now.
+  //
+  // Matching is on CONTENT, never on id. The first version of this merge
+  // keyed on id first, and api/closet.php used to mint a fresh uuidv4 for
+  // every row on every sync -- so an item's id changed each time the closet
+  // was saved, nothing ever matched, and every sign-in appended the entire
+  // closet again. Each pull doubled it (Jayne's two items reached 31 rows
+  // in an evening). Both halves of that are fixed now, but content matching
+  // is what makes it safe regardless of what ids the server hands back.
   const hydrateClosetFromServer = useCallback(async () => {
     if(!profile || !profile.visitorId || !profile.token) return;
     if(closetHydratedRef.current === profile.visitorId) return;
@@ -8350,24 +8444,24 @@ function App(){
       const remote = await Api.getMyCloset(profile.visitorId, profile.token);
       if(!Array.isArray(remote)) throw new Error("bad-shape");
       setCloset(local => {
-        const seen = new Set();
-        const key = it => (it && it.id) ? "id:" + it.id
-          : "d:" + String((it && it.description) || "").trim().toLowerCase() + "|" + String((it && it.photo) || "").slice(0, 64);
-        for(const it of (local || [])) seen.add(key(it));
-        const additions = [];
-        for(const it of remote){
-          if(seen.has(key(it))) continue;
-          seen.add(key(it));
-          additions.push({
-            id: it.id,
-            description: it.description || "",
-            photo: it.photo || null,
-            createdAt: it.createdAt || Date.now(),
-            visibility: it.visibility === "public" ? "public" : "hidden",
-          });
-        }
-        if(additions.length === 0) return local;
-        return [...(local || []), ...additions].sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+        const buried = tombstonedKeys();
+        const merged = dedupeCloset([
+          ...(local || []),
+          ...remote
+            .map(it => ({
+              id: it.id,
+              description: it.description || "",
+              photo: it.photo || null,
+              createdAt: it.createdAt || Date.now(),
+              visibility: it.visibility === "public" ? "public" : "hidden",
+            }))
+            // Don't resurrect something this person deleted on another device.
+            .filter(it => !buried.has(closetItemKey(it))),
+        ]);
+        // Same set, same order? Keep the existing array so React skips the
+        // re-render and the sync effect doesn't fire for nothing.
+        if(merged.length === (local || []).length && merged.every((it, i) => it === local[i])) return local;
+        return merged.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
       });
       closetHydratedRef.current = profile.visitorId;
       setClosetHydratedFor(profile.visitorId);
