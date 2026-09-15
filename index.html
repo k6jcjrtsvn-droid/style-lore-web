@@ -825,7 +825,17 @@
   .post-name{font-size:13.5px; font-weight:600;}
   .post-time{font-size:11.5px; color:var(--ink-soft);}
   .post-caption{font-size:14.5px; line-height:1.55; margin-bottom:10px;}
-  .post-photo{width:100%; border-radius:var(--radius-s); margin-bottom:10px; display:block; border:1px solid var(--line-soft);}
+  .post-photo{width:100%; border-radius:var(--radius-s); margin-bottom:10px; display:block; border:1px solid var(--line-soft); cursor:zoom-in;}
+  .zoomable{ cursor:zoom-in; }
+  /* Lightbox: any photo in the app (posts, profile pictures, public closet
+     items) opens full screen; pinch or double-tap to zoom, drag to pan. */
+  .lightbox{ position:fixed; inset:0; z-index:80; background:rgba(12,6,9,.96); display:flex; align-items:center; justify-content:center; touch-action:none; -webkit-tap-highlight-color:transparent; }
+  .lightbox img{ max-width:100vw; max-height:100vh; width:auto; height:auto; object-fit:contain; user-select:none; -webkit-user-drag:none; transition:transform .12s ease-out; will-change:transform; }
+  .lightbox.dragging img{ transition:none; }
+  .lightbox-close{ position:absolute; top:calc(14px + env(safe-area-inset-top)); right:14px; width:42px; height:42px; border-radius:50%; background:rgba(255,255,255,.14); color:#fff; display:flex; align-items:center; justify-content:center; z-index:2; }
+  .lightbox-close svg{ width:20px; height:20px; stroke:currentColor; fill:none; stroke-width:2; }
+  .lightbox-cap{ position:absolute; left:16px; right:16px; bottom:calc(18px + env(safe-area-inset-bottom)); color:rgba(255,255,255,.85); font-size:13px; text-align:center; line-height:1.4; pointer-events:none; text-shadow:0 1px 8px rgba(0,0,0,.6); }
+  .lightbox-hint{ position:absolute; top:calc(24px + env(safe-area-inset-top)); left:16px; font-size:11.5px; color:rgba(255,255,255,.55); letter-spacing:.06em; text-transform:uppercase; pointer-events:none; }
   .post-video{width:100%; max-height:420px; border-radius:var(--radius-s); margin-bottom:10px; display:block; background:#0B0B0D; border:1px solid var(--line-soft);}
   .post-actions{display:flex; align-items:center; gap:18px; padding-top:10px; border-top:1px solid var(--line-soft); margin-top:2px;}
   .post-action{display:flex; align-items:center; gap:6px; font-size:12.5px; color:var(--ink-soft); transition:color .15s ease, transform .1s ease;}
@@ -4324,6 +4334,71 @@ function VideoEmbed({ url }){
 
 /* A round avatar: a real photo when the person has set one, otherwise the
    same initials-on-a-tinted-circle treatment used everywhere in this app. */
+/* ---- Photo lightbox ------------------------------------------------- */
+let _openLightbox = null;
+function openPhoto(src, caption){ if(_openLightbox && src) _openLightbox({ src, caption: caption || "" }); }
+function Lightbox({ photo, onClose }){
+  useBackClose(onClose);
+  const [scale, setScale] = useState(1);
+  const [pos, setPos] = useState({ x:0, y:0 });
+  const [dragging, setDragging] = useState(false);
+  const g = useRef({ pinch:null, drag:null, lastTap:0, moved:false });
+  useEffect(() => { setScale(1); setPos({ x:0, y:0 }); }, [photo && photo.src]);
+  useEffect(() => {
+    const onKey = ev => { if(ev.key === "Escape") onClose(); };
+    window.addEventListener("keydown", onKey);
+    const prev = document.body.style.overflow; document.body.style.overflow = "hidden";
+    return () => { window.removeEventListener("keydown", onKey); document.body.style.overflow = prev; };
+  }, [onClose]);
+  const clamp = v => Math.min(5, Math.max(1, v));
+  function toggleZoom(cx, cy){
+    if(scale > 1){ setScale(1); setPos({ x:0, y:0 }); return; }
+    const w = window.innerWidth, h = window.innerHeight;
+    setScale(2.5); setPos({ x:(w / 2 - cx) * 1.5, y:(h / 2 - cy) * 1.5 });
+  }
+  function onTouchStart(ev){
+    const t = ev.touches, st = g.current;
+    st.moved = false;
+    if(t.length === 2){ st.pinch = { d: Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY), s: scale }; st.drag = null; }
+    else if(t.length === 1){ st.drag = { x:t[0].clientX, y:t[0].clientY, px:pos.x, py:pos.y }; setDragging(true); }
+  }
+  function onTouchMove(ev){
+    const t = ev.touches, st = g.current;
+    if(t.length === 2 && st.pinch){ ev.preventDefault(); const d = Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY); setScale(clamp(st.pinch.s * d / st.pinch.d)); st.moved = true; }
+    else if(t.length === 1 && st.drag && scale > 1){ ev.preventDefault(); const dx = t[0].clientX - st.drag.x, dy = t[0].clientY - st.drag.y; if(Math.abs(dx) + Math.abs(dy) > 6) st.moved = true; setPos({ x: st.drag.px + dx, y: st.drag.py + dy }); }
+    else if(t.length === 1 && st.drag){ const dy = t[0].clientY - st.drag.y; if(Math.abs(dy) > 12) st.moved = true; }
+  }
+  function onTouchEnd(ev){
+    const st = g.current; setDragging(false);
+    if(ev.touches.length === 0){
+      if(st.pinch){ st.pinch = null; if(scale < 1.05){ setScale(1); setPos({ x:0, y:0 }); } return; }
+      if(!st.moved){
+        const now = Date.now(); const ch = ev.changedTouches[0];
+        if(now - st.lastTap < 300){ st.lastTap = 0; toggleZoom(ch.clientX, ch.clientY); }
+        else { st.lastTap = now; setTimeout(() => { if(st.lastTap === now){ st.lastTap = 0; if(scale === 1) onClose(); } }, 300); }
+      }
+      st.drag = null;
+    }
+  }
+  function onWheel(ev){ ev.preventDefault(); setScale(s => clamp(s - ev.deltaY * 0.002)); }
+  function onDblClick(ev){ toggleZoom(ev.clientX, ev.clientY); }
+  function onClick(ev){ if(ev.target.tagName !== "IMG" && !g.current.moved) onClose(); }
+  return e("div", { className:"lightbox" + (dragging ? " dragging" : ""), role:"dialog", "aria-modal":"true", "aria-label":"Photo",
+      onTouchStart, onTouchMove, onTouchEnd, onWheel, onClick },
+    e("div", { className:"lightbox-hint" }, scale > 1 ? "Drag to move · double-tap to reset" : "Pinch or double-tap to zoom"),
+    e("button", { type:"button", className:"lightbox-close", "aria-label":"Close photo", onClick: ev => { ev.stopPropagation(); onClose(); } }, Icon("x")),
+    e("img", { src: photo.src, alt: photo.caption || "", draggable:false, onDoubleClick:onDblClick, onClick: ev => { if(!("ontouchstart" in window) && scale === 1) { /* desktop: single click on image also closes */ onClose(); } },
+      style:{ transform:"translate(" + pos.x + "px," + pos.y + "px) scale(" + scale + ")" } }),
+    photo.caption ? e("div", { className:"lightbox-cap" }, photo.caption) : null
+  );
+}
+function LightboxHost(){
+  const [photo, setPhoto] = useState(null);
+  useEffect(() => { _openLightbox = setPhoto; return () => { _openLightbox = null; }; }, []);
+  const close = useCallback(() => setPhoto(null), []);
+  return photo ? e(Lightbox, { photo, onClose: close }) : null;
+}
+
 function Avatar({ url, name, size }){
   const s = size || 32;
   const style = { width:s, height:s, fontSize: Math.max(11, Math.round(s * 0.36)) };
@@ -5818,7 +5893,7 @@ function ClosetRow({ item, profile, onRemove, onToggleVisibility, wornCount }){
   );
   const isPublic = item.visibility === "public";
   return e("div", { className:"row-list-item" },
-    item.photo ? e("img", { src:item.photo, alt:"", style:{ width:52, height:52, borderRadius:8, objectFit:"cover", flexShrink:0 } })
+    item.photo ? e("img", { src:item.photo, alt:"", className:"zoomable", style:{ width:52, height:52, borderRadius:8, objectFit:"cover", flexShrink:0 }, onClick: () => openPhoto(item.photo, item.description) })
       : e("span", { style:{ width:52, height:52, borderRadius:8, background:"var(--paper-raised)", border:"1px solid var(--line)", display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0, color:"var(--ink-soft)" } }, Icon("shirt")),
     e("div", { style:{ flex:1, minWidth:0 } },
       e("div", { style:{ fontSize:14, fontWeight:500, marginBottom:6 } }, item.description,
@@ -5852,8 +5927,8 @@ function ClosetFeedRow({ item, onOpenProfile }){
     type:"button", className:"row-list-item", style:{ width:"100%", textAlign:"left" },
     onClick: () => { if(item.authorId && onOpenProfile) onOpenProfile(item.authorId); }
   },
-    item.photo ? e("img", { src:item.photo, alt:"", style:{ width:52, height:52, borderRadius:8, objectFit:"cover", flexShrink:0 } })
-      : e("span", { style:{ width:52, height:52, borderRadius:8, background:"var(--paper-raised)", border:"1px solid var(--line)", display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0, color:"var(--ink-soft)" } }, Icon("shirt")),
+    item.photo ? e("img", { src:item.photo, alt:"", className:"zoomable", style:{ width:64, height:64, borderRadius:10, objectFit:"cover", flexShrink:0 }, onClick: ev => { ev.stopPropagation(); openPhoto(item.photo, item.description + " · " + authorName); } })
+      : e("span", { style:{ width:64, height:64, borderRadius:10, background:"var(--paper-raised)", border:"1px solid var(--line)", display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0, color:"var(--ink-soft)" } }, Icon("shirt")),
     e("div", { style:{ flex:1, minWidth:0 } },
       e("div", { style:{ fontSize:14, fontWeight:500, marginBottom:4 } }, item.description),
       e("div", { style:{ fontSize:12, color:"var(--ink-soft)" } }, authorName)
@@ -6895,7 +6970,9 @@ function PostCard({ post, profile, followingIds, onToggleFollow, onOpenProfile, 
     post.videoFileUrl ? e("video", { className:"post-video", src:mediaUrl(post.videoFileUrl), controls:true, playsInline:true, preload:"metadata" })
       : post.videoUrl ? e(VideoEmbed, { url:post.videoUrl })
       : null,
-    post.photoUrl ? e("img", { className:"post-photo", src:mediaUrl(post.photoUrl), alt: post.caption ? ("Photo shared with the caption: " + post.caption) : ("Photo shared by " + (post.authorName || "a member")), loading:"lazy", decoding:"async" }) : null,
+    post.photoUrl ? e("img", { className:"post-photo", src:mediaUrl(post.photoUrl), alt: post.caption ? ("Photo shared with the caption: " + post.caption) : ("Photo shared by " + (post.authorName || "a member")), loading:"lazy", decoding:"async", role:"button", tabIndex:0, "aria-label":"View photo full screen",
+        onClick: () => openPhoto(mediaUrl(post.photoUrl), post.caption ? post.caption : (post.authorName ? "Posted by " + post.authorName : "")),
+        onKeyDown: ev => { if(ev.key === "Enter" || ev.key === " "){ ev.preventDefault(); openPhoto(mediaUrl(post.photoUrl), post.caption || ""); } } }) : null,
     e("div", { className:"post-actions" },
       e("button", { className:"post-action", "aria-pressed":liked, disabled:busy, onClick:toggleLike }, Icon("heart"), likeCount || ""),
       e("button", { className:"post-action", onClick:()=>setShowComments(!showComments) }, Icon("comment"), (post.comments||[]).length || ""),
@@ -6998,7 +7075,9 @@ function ProfileScreen({ id, viewer, onBack, onOpenProfile, onNameChange, onMess
     loadError ? e(Banner, { kind:"error" }, loadError) : null,
 
     e("div", { className:"profile-head" },
-      e(Avatar, { url: profileRow ? profileRow.avatarUrl : null, name:displayName, size:72 }),
+      profileRow && profileRow.avatarUrl
+        ? e("button", { type:"button", className:"zoomable", style:{ padding:0, borderRadius:"50%", lineHeight:0 }, "aria-label":"View profile photo", onClick: () => openPhoto(mediaUrl(profileRow.avatarUrl), displayName) }, e(Avatar, { url: profileRow.avatarUrl, name:displayName, size:72 }))
+        : e(Avatar, { url: null, name:displayName, size:72 }),
       e("div", { style:{ flex:1, minWidth:0 } },
         e("div", { className:"profile-name" }, displayName),
         (profileRow && profileRow.bio)
@@ -7051,8 +7130,8 @@ function ProfileScreen({ id, viewer, onBack, onOpenProfile, onNameChange, onMess
       e("div", { className:"eyebrow", style:{ marginBottom:8 } }, isMe ? "Your public closet items" : displayName + "’s closet"),
       e("div", { className:"row-list" },
         closetItems.slice(0, 6).map(item => e("div", { key:item.id, className:"row-list-item" },
-          item.photo ? e("img", { src:item.photo, alt:"", style:{ width:44, height:44, borderRadius:8, objectFit:"cover", flexShrink:0 } })
-            : e("span", { style:{ width:44, height:44, borderRadius:8, background:"var(--paper-raised)", border:"1px solid var(--line)", display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0, color:"var(--ink-soft)" } }, Icon("shirt")),
+          item.photo ? e("img", { src:item.photo, alt:"", className:"zoomable", style:{ width:56, height:56, borderRadius:10, objectFit:"cover", flexShrink:0 }, onClick: () => openPhoto(item.photo, item.description + " · " + displayName) })
+            : e("span", { style:{ width:56, height:56, borderRadius:10, background:"var(--paper-raised)", border:"1px solid var(--line)", display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0, color:"var(--ink-soft)" } }, Icon("shirt")),
           e("span", { style:{ flex:1, minWidth:0, fontSize:13.5 } }, item.description)
         ))
       )
@@ -8427,6 +8506,7 @@ function App(){
   else if(screen === "inbox") body = e(InboxScreen, { profile, onBack:()=>goTo("home"), onOpenConversation:openConversation });
 
   return e("div", { className:"app" },
+    e(LightboxHost, null),
     e(ServiceNotice, null),
     e("header", { className:"topbar" },
       e("span", { className:"wordmark", style:{ display:"inline-flex", alignItems:"center", gap:"0.12em" } },
