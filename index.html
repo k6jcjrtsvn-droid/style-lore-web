@@ -4860,6 +4860,28 @@ const NAV_ITEMS = [
   { id:"community", label:"Community", icon:"community" },
 ];
 
+/* Which tab you were on, remembered across a reload.
+
+   Refreshing the page used to drop you back on Home no matter where you
+   were — the screen lived only in React state, so every reload started at
+   the default. Annoying on the website, where refreshing is a normal thing
+   to do (and where a browser restore-tabs also counts as a reload).
+
+   Deliberately localStorage and not a URL hash: this app keeps its own
+   in-app history stack (navStackRef in App()) built on pushState with no
+   URL change, and hash navigation fires the same popstate that stack
+   listens to. Routing through the URL would mean rebuilding that, which is
+   a much bigger change than the problem warrants. Only the six real tabs
+   are ever restored — never a profile or a conversation view, so a reload
+   can't drop someone into someone else's page. */
+const SCREEN_KEY = "lore_screen";
+function loadLastScreen(){
+  try{
+    const v = localStorage.getItem(SCREEN_KEY);
+    return NAV_ITEMS.some(item => item.id === v) ? v : "home";
+  }catch(err){ return "home"; }
+}
+
 function BottomNav({ screen, onNavigate }){
   return e("nav", { className:"bottom-nav" },
     NAV_ITEMS.map(item => e("button", {
@@ -7981,7 +8003,7 @@ function App(){
   const [styleBlend, setStyleBlend] = useState(() => loadLocal("lore_style_blend", null));
   const [colorResult, setColorResult] = useState(() => loadLocal("lore_colorseason", null));
   const [closet, setCloset] = useState(() => loadLocal("lore_closet", []));
-  const [screen, setScreen] = useState("home");
+  const [screen, setScreen] = useState(loadLastScreen);
   const [viewingProfileId, setViewingProfileId] = useState(null);
   const [viewingConversation, setViewingConversation] = useState(null); // {id, otherId, otherName} | null
   const [unreadNotifCount, setUnreadNotifCount] = useState(0);
@@ -7991,6 +8013,8 @@ function App(){
   // server to drop it — Capacitor's PushNotifications plugin has no
   // synchronous "current token" getter, only the async registration event.
   const deviceTokenRef = useRef(null);
+  // Remember the tab for the next reload (see loadLastScreen above).
+  useEffect(() => { try{ localStorage.setItem(SCREEN_KEY, screen); }catch(err){} }, [screen]);
 
   // Style-LORE Premium entitlement. The server (has_premium(), synced
   // from RevenueCat's webhook — see api/revenuecat_webhook.php) is always
@@ -8065,7 +8089,7 @@ function App(){
   // since history.go() resolves asynchronously while pushState() is
   // synchronous, and React runs a commit's effect cleanups before any of its
   // new effect setups.
-  const navStackRef = useRef([{ screen: "home", viewingProfileId: null, viewingConversation: null }]);
+  const navStackRef = useRef([{ screen, viewingProfileId: null, viewingConversation: null }]);
   const handlingPopRef = useRef(false);
   const suppressNavPopRef = useRef(0);
   function navFrameKey(f){
@@ -8554,13 +8578,15 @@ function App(){
     }
     setProfile(null);
     setSessionExpired(false);
+    // Don't leave the next reload pointed at an account-only tab.
+    goTo("home");
     removeLocal("lore_profile"); // clear now that logging back in requires a real password
   }
   function handleAccountDeleted(){
     // The account is gone server-side; also clear every local key tied to
     // it so a shared/public device doesn't keep showing this person's quiz
     // results, closet, or style profile after they've deleted their account.
-    ["lore_profile", "lore_kibbe", "lore_style_blend", "lore_colorseason", "lore_closet", "lore_history"].forEach(removeLocal);
+    ["lore_profile", "lore_kibbe", "lore_style_blend", "lore_colorseason", "lore_closet", "lore_history", SCREEN_KEY].forEach(removeLocal);
     setProfile(null);
     setKibbeResult(null);
     setStyleBlend(null);
