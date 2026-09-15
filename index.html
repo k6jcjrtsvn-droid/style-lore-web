@@ -850,6 +850,29 @@
   .link-btn{color:var(--accent); font-weight:600;}
   .kicker-num{font-family:'IBM Plex Mono',monospace; font-size:11px; color:var(--ink-soft);}
 
+  /* Landing page below the welcome screen (website only) */
+  .landing{ max-width:480px; margin:0 auto; padding:8px 24px 48px; }
+  .landing h2{ font-family:'Bodoni Moda', Georgia, serif; font-weight:700; font-size:26px; line-height:1.1; margin:44px 0 8px; letter-spacing:-.01em; }
+  .landing .lede{ font-size:14.5px; line-height:1.55; color:var(--ink-soft); margin:0 0 16px; }
+  .landing-shots{ display:flex; gap:12px; overflow-x:auto; scroll-snap-type:x mandatory; padding:4px 0 10px; -webkit-overflow-scrolling:touch; }
+  .landing-shots figure{ flex:0 0 200px; margin:0; scroll-snap-align:start; }
+  .landing-shots img{ width:100%; height:auto; border-radius:18px; border:1px solid var(--line); box-shadow:var(--shadow); display:block; }
+  .landing-shots figcaption{ font-size:12px; color:var(--ink-soft); margin-top:8px; line-height:1.4; }
+  .landing-steps{ display:grid; grid-template-columns:1fr 1fr; gap:10px; margin:0; padding:0; list-style:none; }
+  .landing-steps li{ background:var(--paper-raised); border:1px solid var(--line); border-radius:14px; padding:12px; font-size:13px; line-height:1.45; }
+  .landing-steps b{ display:block; font-family:'Bodoni Moda', Georgia, serif; font-size:17px; margin-bottom:4px; }
+  .landing-steps .n{ font-size:11px; letter-spacing:.08em; text-transform:uppercase; color:var(--accent); display:block; margin-bottom:6px; }
+  .landing-types{ display:grid; grid-template-columns:repeat(4,1fr); gap:8px; }
+  .landing-types a{ text-decoration:none; color:var(--ink); font-size:11px; line-height:1.2; text-align:center; }
+  .landing-types img{ width:100%; height:auto; border-radius:12px; display:block; margin-bottom:4px; }
+  .landing-faq details{ border-top:1px solid var(--line); padding:12px 0; }
+  .landing-faq summary{ cursor:pointer; font-weight:600; font-size:14px; list-style:none; display:flex; justify-content:space-between; align-items:center; }
+  .landing-faq summary::-webkit-details-marker{ display:none; }
+  .landing-faq summary::after{ content:"+"; color:var(--accent); font-size:18px; }
+  .landing-faq details[open] summary::after{ content:"–"; }
+  .landing-faq p{ font-size:13.5px; line-height:1.55; color:var(--ink-soft); margin:8px 0 0; }
+  .landing-foot{ font-size:12px; color:var(--ink-soft); text-align:center; margin-top:36px; line-height:1.8; }
+  .landing-foot a{ color:var(--ink-soft); }
   .gate-wrap{
     min-height:100vh;
     display:flex;
@@ -2760,7 +2783,13 @@ function roundRect(ctx, x, y, w, h, r){
   ctx.beginPath(); ctx.moveTo(x + r, y); ctx.arcTo(x + w, y, x + w, y + h, r); ctx.arcTo(x + w, y + h, x, y + h, r);
   ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r); ctx.closePath();
 }
-async function renderResultCard({ typeName, tag, color, words, seasonName, swatches }){
+/* Share links carry the sharer's referral code when they have one, so a
+   shared result doubles as an invite (a free month of Premium each way). */
+window.STYLE_LORE_REF_CODE = window.STYLE_LORE_REF_CODE || null;
+function shareLink(){ const c = window.STYLE_LORE_REF_CODE; return "https://style-lore.com/" + (c ? "?ref=" + encodeURIComponent(c) : ""); }
+function shareTail(){ return window.STYLE_LORE_REF_CODE ? ("Which type are you? " + shareLink() + " — join with my link and we both get a month of Premium free.") : ("Find yours: " + shareLink()); }
+function loadImage(src){ return new Promise((res, rej) => { const im = new Image(); im.onload = () => res(im); im.onerror = rej; im.src = src; }); }
+async function renderResultCard({ typeName, typeId, tag, color, words, seasonName, swatches }){
   try{ if(document.fonts && document.fonts.load){ await Promise.all([document.fonts.load("700 96px 'Bodoni Moda'"), document.fonts.load("600 34px 'Work Sans'")]); } }catch(err){}
   const W = 1080, H = 1350;
   const c = document.createElement("canvas"); c.width = W; c.height = H;
@@ -2773,6 +2802,19 @@ async function renderResultCard({ typeName, tag, color, words, seasonName, swatc
   ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
   const serif = "'Bodoni Moda', Georgia, 'Times New Roman', serif";
   const sans = "'Work Sans', -apple-system, 'Segoe UI', Roboto, sans-serif";
+  // Outfit illustration (the same drawing the result screen shows), top
+  // right, when this is a type card and the file is reachable.
+  let art = null;
+  if (typeId){
+    try{ art = await loadImage(kibbeArtSrc(typeId, getWardrobe() === "men" ? "men" : "women")); }catch(err){ art = null; }
+  }
+  const artW = 330, artH = Math.round(artW * 440 / 360);
+  if (art){
+    ctx.save(); roundRect(ctx, W - 80 - artW, 200, artW, artH, 28); ctx.clip();
+    ctx.drawImage(art, W - 80 - artW, 200, artW, artH); ctx.restore();
+    ctx.strokeStyle = "rgba(255,255,255,.55)"; ctx.lineWidth = 3; roundRect(ctx, W - 80 - artW, 200, artW, artH, 28); ctx.stroke();
+  }
+  const textW = art ? (W - 160 - artW - 40) : (W - 160);
   ctx.fillStyle = "#fff";
   ctx.font = "700 44px " + serif; ctx.fillText("Style-LORE", 80, 120);
   ctx.globalAlpha = .8; ctx.font = "600 26px " + sans; ctx.fillText((typeName ? "MY KIBBE TYPE" : "MY STYLE WORDS"), 80, 320); ctx.globalAlpha = 1;
@@ -2781,11 +2823,12 @@ async function renderResultCard({ typeName, tag, color, words, seasonName, swatc
   let size = typeName ? 132 : 96;
   ctx.font = "700 " + size + "px " + serif;
   const wrap = (text, maxW) => { const out = []; let line = ""; for (const w of text.split(" ")){ const t = line ? line + " " + w : w; if (ctx.measureText(t).width > maxW && line){ out.push(line); line = w; } else line = t; } if (line) out.push(line); return out; };
-  let lines = wrap(headline, W - 160);
-  while (lines.length > 3 && size > 70){ size -= 10; ctx.font = "700 " + size + "px " + serif; lines = wrap(headline, W - 160); }
+  let lines = wrap(headline, textW);
+  while (lines.length > 3 && size > 70){ size -= 10; ctx.font = "700 " + size + "px " + serif; lines = wrap(headline, textW); }
   let y = 320 + size + 10;
   for (const ln of lines){ ctx.fillText(ln, 80, y); y += size * 1.05; }
-  if (tag){ ctx.globalAlpha = .92; ctx.font = "400 36px " + sans; for (const ln of wrap(tag, W - 160)){ ctx.fillText(ln, 80, y + 10); y += 46; } ctx.globalAlpha = 1; y += 20; }
+  if (tag){ ctx.globalAlpha = .92; ctx.font = "400 36px " + sans; for (const ln of wrap(tag, textW)){ ctx.fillText(ln, 80, y + 10); y += 46; } ctx.globalAlpha = 1; y += 20; }
+  if (art && y < 200 + artH + 40) y = 200 + artH + 40; // chips and swatches go below the picture
   // word chips
   if (typeName && words && words.length){
     y += 40; let x = 80; ctx.font = "600 30px " + sans;
@@ -2807,7 +2850,14 @@ async function renderResultCard({ typeName, tag, color, words, seasonName, swatc
     y += sw;
   }
   ctx.fillStyle = "#fff"; ctx.globalAlpha = .85; ctx.font = "500 30px " + sans;
-  ctx.fillText("Find yours at style-lore.com", 80, H - 80); ctx.globalAlpha = 1;
+  if (window.STYLE_LORE_REF_CODE){
+    ctx.fillText("Which type are you? Take the free quiz —", 80, H - 120);
+    ctx.font = "700 30px " + sans; ctx.fillText(shareLink().replace("https://", ""), 80, H - 76);
+    ctx.font = "400 24px " + sans; ctx.globalAlpha = .7; ctx.fillText("Join with this link and we both get a month of Premium free", 80, H - 38);
+  } else {
+    ctx.fillText("Find yours at style-lore.com", 80, H - 80);
+  }
+  ctx.globalAlpha = 1;
   return c.toDataURL("image/png");
 }
 async function shareResultCard(opts, fallbackText){
@@ -3274,7 +3324,7 @@ const Api = {
   },
   async getSubscriptionStatus(accountId){
     const r = await fetch("/api/subscription/status?accountId=" + encodeURIComponent(accountId), { cache:"no-store" });
-    if(!r.ok) return { isPremium:false, closetFreeLimit:20 };
+    if(!r.ok) return { isPremium:false, closetFreeLimit:100 };
     return r.json();
   },
   // The AI Stylist — Style-LORE Premium's flagship feature. A real Claude
@@ -3990,6 +4040,57 @@ function Avatar({ url, name, size }){
    ACCOUNT GATE
 ===================================================================== */
 
+/* The website's front door, shown under the welcome screen for people who
+   arrived from a search or a link and need the story before the quiz.
+   Website only (the app has its own store listing for this). */
+function LandingBelowFold({ onQuiz }){
+  const w = getWardrobe() === "men" ? "m" : "w";
+  const shots = [
+    ["result", "Your type, with an outfit drawn in your lines"],
+    ["closet", "A closet that tells you what's missing"],
+    ["checker", "Check anything before you buy it"],
+    ["community", "People who dress like you"],
+  ];
+  return e("section", { className:"landing", "aria-label":"About Style-LORE" },
+    e("h2", null, "See it before you sign up"),
+    e("p", { className:"lede" }, "The quiz is free and needs no account. Here's what you get on the other side."),
+    e("div", { className:"landing-shots" },
+      shots.map(([k, cap]) => e("figure", { key:k },
+        e("img", { src:"/assets/landing/" + k + ".jpg", alt:cap, loading:"lazy", width:480, height:820 }),
+        e("figcaption", null, cap)
+      ))
+    ),
+    e("h2", null, "How it works"),
+    e("ol", { className:"landing-steps" },
+      e("li", null, e("span", { className:"n" }, "Step 1"), e("b", null, "Two minutes of questions"), "About your frame and how you like to dress. Add a photo for a closer read — it never leaves your phone."),
+      e("li", null, e("span", { className:"n" }, "Step 2"), e("b", null, "Your type, words and colors"), "One of 13 Kibbe body types, your style words, and a color season you can hold up to a garment."),
+      e("li", null, e("span", { className:"n" }, "Step 3"), e("b", null, "Log what you own"), "Your closet learns your lines and tells you what's missing and what to wear today."),
+      e("li", null, e("span", { className:"n" }, "Step 4"), e("b", null, "Check before you buy"), "Describe it or snap it, and get a verdict against your type — no more fitting-room guessing.")
+    ),
+    e("h2", null, "Which one are you?"),
+    e("p", { className:"lede" }, "Thirteen body types, each with its own lines — and its own outfit. Tap one to read the guide, or take the quiz to find yours."),
+    e("div", { className:"landing-types" },
+      KIBBE_TYPES.map(t => e("a", { key:t.id, href:"/types/" + t.id + ".html" },
+        e("img", { src:kibbeArtSrc(t.id, w === "m" ? "men" : "women"), alt:t.name + " outfit", loading:"lazy", width:360, height:440 }),
+        t.name
+      ))
+    ),
+    e("button", { type:"button", className:"btn btn-accent btn-block", style:{ marginTop:18 }, onClick:onQuiz }, "Find my type — free"),
+    e("h2", null, "Good to know"),
+    e("div", { className:"landing-faq" },
+      e("details", null, e("summary", null, "Is the quiz really free?"), e("p", null, "Yes. Your body type, style words and colors are free, and you can keep them without an account. An account is only for saving across devices, the closet sync and the community.")),
+      e("details", null, e("summary", null, "Is my photo uploaded anywhere?"), e("p", null, "No. The photo step of the quiz runs on your own phone or computer — the picture never leaves your device. The optional AI Stylist read (Premium) does send that one photo to be analysed, and only when you ask for it.")),
+      e("details", null, e("summary", null, "Does it work for menswear?"), e("p", null, "Yes. Choose menswear, womenswear or both, and the questions, outfit ideas and shopping links follow suit.")),
+      e("details", null, e("summary", null, "What does Premium add?"), e("p", null, "A stylist's read on any photo, a closet with no limit plus a gap list and capsule, and every check saved. $4.99 a month or $39.99 a year, with a free trial. Everything else stays free.")),
+      e("details", null, e("summary", null, "Is there an app?"), e("p", null, "Yes — Style-LORE is on Google Play (beta) with iPhone coming. The website is the same app, so you can start here and pick up on your phone."))
+    ),
+    e("p", { className:"landing-foot" },
+      e("a", { href:"/types/" }, "Body type guides"), " · ", e("a", { href:"/beta.html" }, "Android beta"), " · ",
+      e("a", { href:"/terms.html" }, "Terms"), " · ", e("a", { href:"/privacy.html" }, "Privacy"), e("br"),
+      "© " + new Date().getFullYear() + " Style-LORE · support@style-lore.com")
+  );
+}
+
 function AccountGate({ onComplete, onExplore, startWithForm }){
   const [mode, setMode] = useState("signup"); // signup | login | forgot
   // Landing first: a promise and two buttons. The form only appears once
@@ -4098,7 +4199,8 @@ function AccountGate({ onComplete, onExplore, startWithForm }){
         " if you'd rather save your results now, or ",
         e("button", { type:"button", className:"link-btn", onClick: () => onExplore("home") }, "just look around"),
         "."),
-      e("p", { className:"footnote", style:{ textAlign:"center", marginTop:6 } }, e(LegalLinks, null))
+      e("p", { className:"footnote", style:{ textAlign:"center", marginTop:6 } }, e(LegalLinks, null)),
+      (!IS_NATIVE_APP) ? e(LandingBelowFold, { onQuiz: () => onExplore("quiz") }) : null
     );
   }
 
@@ -4451,7 +4553,7 @@ function HomeScreen({ profile, blend, styleBlend, kibbeResult, colorResult, clos
       ) : null,
       e("div", { className:"hero-actions" },
         e("button", { className:"btn btn-sm", onClick:()=>onNavigate("quiz") }, "See full result"),
-        e("button", { className:"btn btn-sm", onClick: () => shareResultCard({ typeName: homeType.name, tag: homeType.tag, color: homeType.color, words: homeWords.map(w => w.name), seasonName: homeSeason ? homeSeason.name : null, swatches: homeSeason ? homeSeason.swatches : null }, "I'm a " + homeType.name + " on Style-LORE. Find yours: https://style-lore.com") }, "Share"),
+        e("button", { className:"btn btn-sm", onClick: () => shareResultCard({ typeName: homeType.name, typeId: homeType.id, tag: homeType.tag, color: homeType.color, words: homeWords.map(w => w.name), seasonName: homeSeason ? homeSeason.name : null, swatches: homeSeason ? homeSeason.swatches : null }, "I'm a " + homeType.name + " on Style-LORE. " + shareTail()) }, "Share"),
         !homeSeason ? e("button", { className:"btn btn-sm", onClick:()=>onNavigate("color") }, "Find my colors") : null
       )
     ) : e(React.Fragment, null,
@@ -4863,12 +4965,12 @@ function StyleQuizScreen({ kibbeResult, styleLanguageResult, onSaveKibbe, onSave
       (hasKibbe && hasStyle) ? e("div", { className:"result-words" }, words.slice(0, 4).map(w => e("span", { key:w.id }, w.name))) : null,
       e("div", { className:"hero-actions" },
         e("button", { className:"btn btn-sm", onClick: () => shareResultCard({
-            typeName: hasKibbe ? kibbeType.name : null, tag: hasKibbe ? kibbeType.tag : null, color: hasKibbe ? kibbeType.color : "var(--accent)",
+            typeName: hasKibbe ? kibbeType.name : null, typeId: hasKibbe ? kibbeType.id : null, tag: hasKibbe ? kibbeType.tag : null, color: hasKibbe ? kibbeType.color : "var(--accent)",
             words: words.map(w => w.name), seasonName: colorSeasonForShare ? colorSeasonForShare.name : null, swatches: colorSeasonForShare ? colorSeasonForShare.swatches : null,
           },
           (hasKibbe ? ("I'm a " + kibbeType.name + " on Style-LORE") : "I took the Style-LORE style quiz") +
           (styleQuizBlend ? (" — my style language is " + topWords(styleQuizBlend, STYLE_WORDS, 3).map(w => w.name || w.id).join(", ")) : "") +
-          ". Find yours: https://style-lore.com") }, "Share my result")
+          ". " + shareTail()) }, "Share my result")
       )
     ),
 
@@ -5195,12 +5297,17 @@ function ClosetScreen({ closet, setCloset, blend, styleWordBlend, kibbeTypeName,
     if (gapAnalysis.itemsWithSignal === 0){
       gapBanner = e("p", { className:"footnote", style:{ marginBottom:14 } }, "Tip: name the fabric and the cut when you add an item (\"silk slip dress\", \"boxy denim jacket\") and the closet starts telling you what's missing.");
     } else if (gapAnalysis.gaps.length > 0){
+      // Free users see the first gap in full; the rest is there but blurred,
+      // so the value of the full gap list is visible before it's paid for.
+      const gapsShown = gapAnalysis.gaps.slice(0, 3);
+      const lockRest = !isPremium && gapsShown.length > 1;
       gapBanner = e("div", { className:"card", style:{ marginBottom:14, padding:14 } },
         e("div", { className:"eyebrow", style:{ marginBottom:4 } }, "What your closet is missing"),
         e("div", { style:{ display:"flex", flexDirection:"column", gap:6 } },
-          gapAnalysis.gaps.slice(0, 3).map((g, i) => e("div", { key:i, style:{ fontSize:13.5, lineHeight:1.5 } }, g))
+          gapsShown.map((g, i) => e("div", { key:i, style: Object.assign({ fontSize:13.5, lineHeight:1.5 }, lockRest && i > 0 ? { filter:"blur(5px)", userSelect:"none", pointerEvents:"none" } : {}) }, g))
         ),
-        gapAnalysis.gapLabels && gapAnalysis.gapLabels.length ? e(ShopTheGap, { labels: gapAnalysis.gapLabels.slice(0, 2) }) : null
+        lockRest ? e("button", { className:"btn-text", style:{ padding:0, marginTop:8, fontSize:13 }, onClick:()=>onUpgrade && onUpgrade("closet") }, "See your full gap list — Premium") : null,
+        (!lockRest && gapAnalysis.gapLabels && gapAnalysis.gapLabels.length) ? e(ShopTheGap, { labels: gapAnalysis.gapLabels.slice(0, 2) }) : null
       );
     } else {
       gapBanner = e("div", { className:"card", style:{ marginBottom:14, padding:14 } },
@@ -5469,9 +5576,9 @@ function PaywallSheet({ reason, onClose, onPurchased, profile, webCheckout: webC
   if (!isNative && webCheckout){
     // Website: Stripe's hosted Checkout. Card details never touch our server.
     plansContent = e("div", { style:{ display:"flex", flexDirection:"column", gap:10, marginBottom:12 } },
-      e("button", { className:"btn btn-accent btn-block", disabled:!!webBusy, onClick:()=>webBuy("yearly") }, webBusy === "yearly" ? "Opening checkout…" : "Yearly — $39.99 / year (save 33%)"),
-      e("button", { className:"btn btn-ghost btn-block", disabled:!!webBusy, onClick:()=>webBuy("monthly") }, webBusy === "monthly" ? "Opening checkout…" : "Monthly — $4.99 / month"),
-      e("p", { className:"footnote", style:{ margin:"4px 0 0", textAlign:"center" } }, "Secure checkout by Stripe. Cancel anytime from your account. ",
+      e("button", { className:"btn btn-accent btn-block", disabled:!!webBusy, onClick:()=>webBuy("yearly") }, webBusy === "yearly" ? "Opening checkout…" : "Start 7-day free trial — then $39.99 / year"),
+      e("button", { className:"btn btn-ghost btn-block", disabled:!!webBusy, onClick:()=>webBuy("monthly") }, webBusy === "monthly" ? "Opening checkout…" : "Monthly — $4.99 / month (7-day free trial)"),
+      e("p", { className:"footnote", style:{ margin:"4px 0 0", textAlign:"center" } }, "Free for 7 days, then billed; cancel anytime before and you pay nothing. Secure checkout by Stripe. ",
         e("a", { href:"https://style-lore.com/terms.html", target:"_blank", rel:"noopener" }, "Terms"), " · ", e("a", { href:"https://style-lore.com/privacy.html", target:"_blank", rel:"noopener" }, "Privacy"))
     );
   } else if (!isNative){
@@ -7302,7 +7409,7 @@ function App(){
   // the UI's cap warning never drifts out of sync with what the server
   // actually enforces.
   const [isPremium, setIsPremium] = useState(false);
-  const [closetFreeLimit, setClosetFreeLimit] = useState(20);
+  const [closetFreeLimit, setClosetFreeLimit] = useState(100);
   // Free AI Stylist reads left on this account (one, ever) — the taste
   // that sells Premium. Server-enforced; this just shapes the button.
   const [freeAiReadsLeft, setFreeAiReadsLeft] = useState(0);
@@ -7652,12 +7759,13 @@ function App(){
   // RevenueCat's webhook is what keeps has_premium() in sync server-side
   // in the background, independent of whether this tab/app is even open.
   useEffect(() => {
-    if(!profile || !profile.visitorId){ setIsPremium(false); return; }
+    if(!profile || !profile.visitorId){ setIsPremium(false); window.STYLE_LORE_REF_CODE = null; return; }
     let cancelled = false;
     Api.getSubscriptionStatus(profile.visitorId).then(({ isPremium, closetFreeLimit, freeAiReadsLeft, digestOptOut, billing, webCheckout, giftNotice, referralCode, referralCount }) => {
       if(cancelled) return;
       setGiftNotice(giftNotice && giftNotice.active ? giftNotice : null);
       setReferral({ code: referralCode || null, count: referralCount || 0 });
+      window.STYLE_LORE_REF_CODE = referralCode || null;
       try{ if(localStorage.getItem("lore_ref")) localStorage.removeItem("lore_ref"); }catch(err){}
       setIsPremium(!!isPremium);
       if(closetFreeLimit) setClosetFreeLimit(closetFreeLimit);

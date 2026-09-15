@@ -549,7 +549,7 @@ const REPORT_HIDE_THRESHOLD = 3;
 
 /** Free-tier cap on closet items (see api/closet.php) -- Style-LORE
  *  Premium accounts (has_premium()) are unlimited. */
-const CLOSET_FREE_LIMIT = 20;
+const CLOSET_FREE_LIMIT = 100; // was 20 until 2026-09-15: hard caps are the #1 complaint in every closet-app review; Premium sells on the stylist + gap list, not storage
 
 /**
  * Whether $accountId currently has an active Style-LORE Premium

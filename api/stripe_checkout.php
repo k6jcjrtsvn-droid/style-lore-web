@@ -48,6 +48,16 @@ $params = [
 ];
 if ($existingCustomer) $params['customer'] = $existingCustomer;
 elseif ($email !== '') $params['customer_email'] = $email;
+// 7-day free trial for first-time subscribers (no Stripe customer yet and no
+// subscription row ever). Returning customers pay from day one, so nobody
+// can cycle trials by cancelling and re-subscribing.
+$hadSub = false;
+try { $st = $pdo->prepare('SELECT 1 FROM subscriptions WHERE account_id = ?'); $st->execute([$visitorId]); $hadSub = (bool)$st->fetchColumn(); } catch (Throwable $e) {}
+if (!$existingCustomer && !$hadSub) {
+    $params['subscription_data[trial_period_days]'] = 7;
+    // If they never add a card... they do here: Checkout collects the card up front
+    // and charges when the trial ends, cancellable from the portal any time before.
+}
 
 $session = stripe_request('POST', '/v1/checkout/sessions', $params);
 if (empty($session['url'])) {
