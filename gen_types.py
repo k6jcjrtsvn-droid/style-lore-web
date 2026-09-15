@@ -192,7 +192,7 @@ def page(title, desc, body, canonical, color='#B8285A', jsonld=''):
 <meta property="og:description" content="{html.escape(desc)}">
 <meta property="og:url" content="{canonical}">
 <meta name="twitter:card" content="summary">
-<link rel="icon" href="/email-assets/logo.png">
+<link rel="icon" href="/favicon.ico" sizes="48x48"><link rel="icon" type="image/png" sizes="96x96" href="/favicon-96.png"><link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png">
 {jsonld}
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Bodoni+Moda:wght@700&family=Work+Sans:wght@400;500;600&display=swap');
