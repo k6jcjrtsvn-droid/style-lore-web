@@ -1471,8 +1471,27 @@ function styleGapAnalysis(closet, profile){
 // session earns a commission. The FTC-required disclosure sits under the
 // links (ShopTheGap) and on the Terms page.
 const AMAZON_ASSOCIATE_TAG = "stylelore-20";
+/* "Shopping for" preference — womenswear, menswear or both. Chosen on the
+   style-quiz intro (optional), remembered on this device, and used to word
+   quiz options, shop links, the outfit builder and the AI Stylist so a
+   menswear shopper never gets told to try a slip dress. */
+function getWardrobe(){
+  try{ const v = localStorage.getItem("lore_wardrobe"); return (v === "women" || v === "men" || v === "both") ? v : null; }catch(err){ return null; }
+}
+function setWardrobe(v){
+  try{ if(v) localStorage.setItem("lore_wardrobe", v); else localStorage.removeItem("lore_wardrobe"); }catch(err){}
+}
+function optionLabel(opt, wardrobe){
+  if(!opt) return "";
+  if(wardrobe === "men" && opt.men) return opt.men;
+  if(wardrobe === "both" && opt.both) return opt.both;
+  return opt.label;
+}
 function shopSearchUrl(query){
-  return "https://www.amazon.com/s?k=" + encodeURIComponent(query + " women") + "&i=fashion-womens&tag=" + AMAZON_ASSOCIATE_TAG + "&ref_=style_lore";
+  const w = getWardrobe();
+  const suffix = w === "men" ? " men" : w === "both" ? "" : " women";
+  const dept = w === "men" ? "fashion-mens" : w === "both" ? "fashion" : "fashion-womens";
+  return "https://www.amazon.com/s?k=" + encodeURIComponent(query + suffix) + "&i=" + dept + "&tag=" + AMAZON_ASSOCIATE_TAG + "&ref_=style_lore";
 }
 function shopQueryFromAxisLabel(label){
   return label.replace(/\s*&\s*/g, " ") + " clothing";
@@ -1530,8 +1549,9 @@ function buildOutfit(closet, profile, seed){
   const canDress = buckets.dress.length > 0;
   const canSeparates = buckets.top.length > 0 && buckets.bottom.length > 0;
   if (!canDress && !canSeparates){
-    return { ready:false, need: buckets.top.length && !buckets.bottom.length ? "a bottom (jeans, a skirt, trousers)"
-      : buckets.bottom.length && !buckets.top.length ? "a top" : "a top and a bottom, or a dress" };
+    const men = getWardrobe() === "men";
+    return { ready:false, need: buckets.top.length && !buckets.bottom.length ? (men ? "a bottom (jeans, chinos, trousers)" : "a bottom (jeans, a skirt, trousers)")
+      : buckets.bottom.length && !buckets.top.length ? "a top" : (men ? "a top and a bottom" : "a top and a bottom, or a dress") };
   }
   // Weighted pick: better-scoring pieces come up more often, but nothing is
   // excluded — a closet should feel used, not judged.
@@ -1699,7 +1719,7 @@ function buildCapsule(closet, profile, size){
   for (const k of Object.keys(buckets)) buckets[k].sort((a, b) => b.score - a.score);
   const n = size || 12;
   // Rough allocation for a 12-piece capsule: 4 tops, 3 bottoms, 1 dress, 2 layers, 2 shoes; anything missing goes to tops/bottoms.
-  const want = { top: Math.round(n * .33), bottom: Math.round(n * .25), dress: Math.max(1, Math.round(n * .08)), outerwear: Math.round(n * .17), shoes: Math.max(1, Math.round(n * .17)) };
+  const want = { top: Math.round(n * .33), bottom: Math.round(n * .25), dress: getWardrobe() === "men" ? 0 : Math.max(1, Math.round(n * .08)), outerwear: Math.round(n * .17), shoes: Math.max(1, Math.round(n * .17)) };
   const pick = {};
   let total = 0;
   for (const k of Object.keys(want)){ pick[k] = buckets[k].slice(0, want[k]); total += pick[k].length; }
@@ -2113,7 +2133,7 @@ const STYLE_LANGUAGE_QUESTIONS = [
     options:[
       { label:"Soft leggings or joggers and something oversized", w:{comfortable:2, relaxed:1} },
       { label:"Worn-in jeans and a plain tee", w:{effortless:2, minimalist:1} },
-      { label:"A flowy dress or skirt, no real reason", w:{flowy:2, boho:1} },
+      { label:"A flowy dress or skirt, no real reason", men:"Loose linen trousers or an open, breezy shirt", both:"Something loose and flowing — linen, an easy skirt or wide trousers", w:{flowy:2, boho:1} },
       { label:"Whatever's sharp and put-together, even for errands", w:{polished:2, structured:1} },
       { label:"Something a little loud — color, print, or both", w:{colorful:2, playful:1} },
       SKIP_OPTION,
@@ -2124,7 +2144,7 @@ const STYLE_LANGUAGE_QUESTIONS = [
       { label:"Sequins, metallics, or anything that catches light", w:{glamorous:2, statement:1} },
       { label:"A leather jacket and boots", w:{edgy:2, grunge:1} },
       { label:"A tailored blazer or set", w:{tailored:2, sophisticated:1} },
-      { label:"Something soft and romantic — lace, florals, a flowing skirt", w:{romantic:2, feminine:1} },
+      { label:"Something soft and romantic — lace, florals, a flowing skirt", men:"Something soft — a fine knit, a silky shirt, an easy drape", both:"Something soft and romantic — a fluid fabric, a gentle print", w:{romantic:2, feminine:1} },
       SKIP_OPTION,
     ]},
   { id:"colors", prompt:"What does your closet actually look like, color-wise?", hint:"Color instinct",
@@ -2148,9 +2168,9 @@ const STYLE_LANGUAGE_QUESTIONS = [
   { id:"decade", prompt:"If your closet leaned into one decade, which one?", hint:"Era pull",
     options:[
       { label:"70s — flares, suede, fringe", w:{boho:2, retro:1} },
-      { label:"90s minimalism — slip dresses, simple lines", w:{minimalist:2, sexy:1} },
+      { label:"90s minimalism — slip dresses, simple lines", men:"90s minimalism — slim, plain, nothing extra", both:"90s minimalism — simple lines, nothing extra", w:{minimalist:2, sexy:1} },
       { label:"80s power dressing — big shoulders, bold color", w:{bold:2, structured:1} },
-      { label:"50s ladylike — full skirts, tailored waists", w:{vintage:2, feminine:1} },
+      { label:"50s ladylike — full skirts, tailored waists", men:"50s Ivy — pleated trousers, cardigans, a clean collar", both:"50s classic — tailored waists, clean collars, a polished finish", w:{vintage:2, feminine:1} },
       { label:"Right now, honestly — I don't chase eras", w:{confident:2, polished:1} },
       SKIP_OPTION,
     ]},
@@ -2158,18 +2178,18 @@ const STYLE_LANGUAGE_QUESTIONS = [
     options:[
       { label:"Sneakers, always", w:{sporty:2, athleisure:1} },
       { label:"Boots — combat, western, or otherwise sturdy", w:{rugged:2, edgy:1} },
-      { label:"A clean loafer or ballet flat", w:{classic:2, preppy:1} },
+      { label:"A clean loafer or ballet flat", men:"A clean loafer or leather derby", both:"A clean loafer or flat", w:{classic:2, preppy:1} },
       { label:"Sandals or something barely-there", w:{coastal:2, relaxed:1} },
-      { label:"Heels, whenever I can manage it", w:{glamorous:2, confident:1} },
+      { label:"Heels, whenever I can manage it", men:"Polished dress shoes or a sharp Chelsea boot, whenever I can", both:"Something polished with a heel or a shine, whenever I can", w:{glamorous:2, confident:1} },
       SKIP_OPTION,
     ]},
   { id:"accessories", prompt:"How do you accessorize?", hint:"Accessories",
     options:[
       { label:"Barely — maybe one small thing", w:{understated:2, minimalist:1} },
-      { label:"Layered gold jewelry and lots of it", w:{boho:2, eclectic:1} },
+      { label:"Layered gold jewelry and lots of it", men:"Rings, chains, a bracelet — I stack them", w:{boho:2, eclectic:1} },
       { label:"One statement piece and nothing else", w:{statement:2, bold:1} },
-      { label:"Fine, delicate pieces — a thin chain, small studs", w:{ethereal:2, feminine:1} },
-      { label:"A structured bag, real leather, quality over quantity", w:{luxe:2, polished:1} },
+      { label:"Fine, delicate pieces — a thin chain, small studs", men:"One fine chain or a slim watch, nothing heavy", w:{ethereal:2, feminine:1} },
+      { label:"A structured bag, real leather, quality over quantity", men:"A good watch, a leather belt — quality over quantity", both:"One good leather piece — a bag, a belt, a watch", w:{luxe:2, polished:1} },
       SKIP_OPTION,
     ]},
   { id:"fabric-feel", prompt:"What fabric feel do you actually gravitate toward?", hint:"Fabric feel",
@@ -3204,6 +3224,7 @@ const Api = {
     fd.append("photo", photoBlob, "photo.jpg");
     if(kibbeTypeName) fd.append("kibbeTypeName", kibbeTypeName);
     if(topStyleWords && topStyleWords.length) fd.append("topStyleWords", JSON.stringify(topStyleWords));
+    const wardrobe = getWardrobe(); if(wardrobe) fd.append("wardrobe", wardrobe);
     const r = await fetch("/api/checker/photo", { method:"POST", body:fd });
     const body = await r.json().catch(()=>({}));
     if(!r.ok){
@@ -4293,12 +4314,17 @@ function useUpdateAvailable(){
     if(!window.STYLE_LORE_NATIVE) return;
     let cancelled = false;
     const platform = (window.Capacitor && window.Capacitor.getPlatform) ? window.Capacitor.getPlatform() : "android";
+    // Builds up to 1.1 loaded style-lore.com inside their WebView instead of
+    // a bundled copy, so the version constant they see is the website's.
+    // Running natively on a non-localhost origin therefore means "old build".
+    const runningFromBundle = /^(https?|capacitor|ionic):\/\/localhost/.test(location.origin);
+    const current = runningFromBundle ? window.STYLE_LORE_APP_VERSION : "1.1";
     fetch("/app-versions.json", { cache:"no-store" })
       .then(r => r.ok ? r.json() : null)
       .then(j => {
         if(cancelled || !j || !j[platform]) return;
         const latest = j[platform];
-        if(latest.version && compareVersions(latest.version, window.STYLE_LORE_APP_VERSION) > 0){
+        if(latest.version && compareVersions(latest.version, current) > 0){
           setUpdate({ version: latest.version, notes: latest.notes || "", url: latest.url || (platform === "ios" ? j.iosStoreUrl : j.androidStoreUrl) });
         }
       })
@@ -4314,7 +4340,7 @@ function UpdateBanner({ update }){
     e("div", { className:"display", style:{ fontSize:19, fontWeight:700, marginBottom:6 } }, "Style-LORE " + update.version + " is ready"),
     update.notes ? e("p", { className:"screen-lede", style:{ fontSize:13.5, marginBottom:10 } }, update.notes) : null,
     e("p", { className:"screen-lede", style:{ fontSize:12.5, marginBottom:10, color:"var(--ink-soft)" } },
-      "You're on " + window.STYLE_LORE_APP_VERSION + ". Tap below, then Update on the store page (if it isn't there yet, give it an hour and try again)."),
+      "Tap below, then Update on the store page (if it isn't there yet, give it an hour and try again)."),
     e("a", { className:"btn btn-accent btn-block", href: update.url, target:"_blank", rel:"noopener" }, "Get the update")
   );
 }
@@ -4534,7 +4560,8 @@ function StyleQuizScreen({ kibbeResult, styleLanguageResult, onSaveKibbe, onSave
   const [styleQuizBlend, setStyleQuizBlend] = useState(styleLanguageResult);
   // Optional, skippable — "women" | "men" | "both" | null (null and
   // "both" behave identically: no reweighting at all).
-  const [genderLean, setGenderLean] = useState(null);
+  const [genderLean, setGenderLeanState] = useState(() => getWardrobe());
+  const setGenderLean = (updater) => setGenderLeanState(prev => { const next = typeof updater === "function" ? updater(prev) : updater; setWardrobe(next); return next; });
 
   function choose(q, idx){
     haptic("light");
@@ -4716,7 +4743,7 @@ function StyleQuizScreen({ kibbeResult, styleLanguageResult, onSaveKibbe, onSave
             onClick: () => setGenderLean(prev => prev === val ? null : val)
           }, label))
         ),
-        e("div", { className:"field-hint" }, "Nudges your word results toward pieces more associated with what you shop for. Skip it and nothing changes.")
+        e("div", { className:"field-hint" }, "Words the questions, your shop links and the AI Stylist for what you actually buy — menswear, womenswear or both. Remembered on this device; skip it and nothing changes.")
       ),
       e("button", { className:"btn btn-accent btn-block", onClick:()=>setStage("style-quiz") }, "Start this part"),
       styleQuizBlend ? e("button", { className:"btn btn-ghost btn-block", style:{ marginTop:10 }, onClick:()=>setStage("result") }, "See my last result") : null
@@ -4735,7 +4762,7 @@ function StyleQuizScreen({ kibbeResult, styleLanguageResult, onSaveKibbe, onSave
         className:"option-btn",
         "aria-pressed": styleAnswers[q.id] === idx ? "true" : "false",
         onClick: () => chooseStyle(q.id, idx)
-      }, opt.label)),
+      }, optionLabel(opt, genderLean))),
       q.options.map((opt, idx) => isSkipOption(opt) ? e("button", { key:"skip"+idx, type:"button", className:"skip-link", onClick: () => chooseStyle(q.id, idx) }, "Not sure — skip this one") : null),
       styleQIndex > 0 ? e("button", { className:"btn-text", onClick:()=>setStyleQIndex(styleQIndex-1) }, "← Back") : null
     );
@@ -5537,7 +5564,7 @@ function CheckerScreen({ blend, styleWordBlend, kibbeTypeName, topStyleWords, vi
     e("div", { className:"field" },
       e("label", { htmlFor:"checker-desc" }, "Describe the item"),
       e("textarea", { id:"checker-desc", value:description, maxLength:200,
-        placeholder:"e.g. black leather biker jacket, or a silk slip dress with lace trim",
+        placeholder: getWardrobe() === "men" ? "e.g. black leather biker jacket, or a navy wool overshirt" : "e.g. black leather biker jacket, or a silk slip dress with lace trim",
         onChange: ev=>setDescription(ev.target.value) })
     ),
     e("button", { className:"btn btn-accent btn-block", disabled:!description.trim(), onClick:runCheck, style:{ marginBottom:20 } }, "Check fit"),

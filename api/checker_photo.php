@@ -1,7 +1,8 @@
 <?php
 /**
  * POST /api/checker/photo — multipart form: photo (file), kibbeTypeName
- * (optional string), topStyleWords (optional JSON array string),
+ * (optional string), topStyleWords (optional JSON array string), wardrobe
+ * (optional: women|men|both),
  * visitorId, authToken.
  *
  * STYLE-LORE PREMIUM FEATURE ("AI Stylist"). The free on-device photo
@@ -139,12 +140,25 @@ $topStyleWords = json_decode($topStyleWordsRaw, true);
 if (!is_array($topStyleWords)) $topStyleWords = [];
 $topStyleWords = array_slice(array_map('strval', $topStyleWords), 0, 8);
 
+$wardrobe = (string)($_POST['wardrobe'] ?? '');
+if (!in_array($wardrobe, ['women', 'men', 'both'], true)) $wardrobe = '';
+
 $context = 'No Kibbe type or style-quiz words are on file for this person yet — judge the photo on general fit and styling principles instead.';
 if ($kibbeTypeName || $topStyleWords) {
     $parts = [];
     if ($kibbeTypeName) $parts[] = "their Kibbe body type is \"$kibbeTypeName\"";
     if ($topStyleWords) $parts[] = 'their own stated style words are: ' . implode(', ', $topStyleWords);
     $context = 'Context on this person: ' . implode('; ', $parts) . '.';
+}
+// "Shopping for" preference from the quiz: keep suggestions inside the
+// wardrobe the person actually buys from. Menswear shoppers should never be
+// told to try a dress, skirt or heels; "both" means suggest freely.
+if ($wardrobe === 'men') {
+    $context .= ' This person shops menswear: every suggestion must be a menswear piece (shirts, knits, trousers, tailoring, outerwear, men\'s shoes and accessories). Never suggest dresses, skirts, heels, blouses or other womenswear, and describe fit and proportion in menswear terms (drop, rise, break, collar, shoulder line).';
+} elseif ($wardrobe === 'women') {
+    $context .= ' This person shops womenswear.';
+} elseif ($wardrobe === 'both') {
+    $context .= ' This person shops both menswear and womenswear — suggest from either without assuming a gender.';
 }
 
 $instructions = <<<TXT
