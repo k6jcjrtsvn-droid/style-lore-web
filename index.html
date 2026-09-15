@@ -862,6 +862,11 @@
   .gate-welcome > .btn-block{ max-width:360px; margin-left:auto; margin-right:auto; }
   .gate-welcome .footnote{ max-width:360px; margin-left:auto; margin-right:auto; }
   .landing-cta{ max-width:360px; margin:18px auto 0; display:block; }
+  .gate-hero-title{ font-size:34px; }
+  .gate-hero-actions{ display:flex; flex-direction:column; gap:10px; margin-bottom:18px; }
+  .gate-hero-actions .btn-block{ margin:0 auto; max-width:360px; width:100%; }
+  .gate-hero-art{ display:none; }
+
   .landing-shots{ display:flex; gap:12px; overflow-x:auto; scroll-snap-type:x mandatory; padding:4px 0 10px; -webkit-overflow-scrolling:touch; }
   .landing-shots figure{ flex:0 0 200px; margin:0; scroll-snap-align:start; }
   .landing-shots img{ width:100%; height:auto; border-radius:18px; border:1px solid var(--line); box-shadow:var(--shadow); display:block; }
@@ -1000,6 +1005,68 @@
   .primer-swatch{ width:28px; height:28px; border-radius:8px; flex-shrink:0; margin-top:1px; border:1px solid var(--line); background:var(--accent-soft); }
   .primer-text b{ font-size:13px; }
   .primer-text p{ font-size:12.5px; color:var(--ink-soft); margin-top:2px; line-height:1.45; }
+  /* ---------- Desktop (≥1024px): side rail + wide column; the phone
+     layout below this width is untouched. ---------- */
+  @media (min-width:1024px){
+    body{ padding:32px 24px; }
+    .app{
+      max-width:1120px;
+      display:grid;
+      grid-template-columns:232px minmax(0,1fr);
+      grid-template-rows:auto auto minmax(0,1fr);
+      min-height:calc(100vh - 64px);
+    }
+    .app > .service-notice{ grid-column:1 / -1; grid-row:1; }
+    .app > .topbar{ grid-column:1 / -1; grid-row:2; padding:22px 32px 14px; }
+    .app > .app-main{ grid-column:2; grid-row:3; padding:36px 48px 64px; max-width:860px; width:100%; }
+    .app > .app-main + .app-main{ grid-row:4; }
+    .app > .bottom-nav{
+      grid-column:1; grid-row:3 / span 2;
+      position:sticky; top:0; align-self:start;
+      flex-direction:column; gap:4px;
+      border-top:0; border-right:1px solid var(--line-soft);
+      background:transparent;
+      padding:24px 14px 32px;
+      height:auto;
+    }
+    .nav-btn{
+      flex:0 0 auto; flex-direction:row; justify-content:flex-start;
+      gap:12px; padding:11px 14px; margin:0;
+      font-size:13.5px; letter-spacing:0; text-transform:none; font-weight:500;
+      border-radius:var(--radius-m);
+    }
+    .nav-btn svg{ width:20px; height:20px; }
+    .toast{ left:auto; right:32px; bottom:32px; max-width:420px; }
+    .sheet-backdrop{ align-items:center; padding:24px; }
+    .sheet{ border-radius:20px; max-width:540px; max-height:88vh; padding-bottom:22px; }
+
+    /* Welcome + landing page */
+    .gate-wrap.gate-welcome{ max-width:1100px; padding:48px 40px 64px; text-align:left; }
+    .gate-welcome .wordmark{ justify-content:flex-start; }
+    .gate-welcome .screen-lede{ margin-left:0; max-width:520px; font-size:17px; }
+    .gate-welcome .footnote{ margin-left:0; max-width:420px; }
+    .gate-hero{ display:grid; grid-template-columns:minmax(0,1.15fr) minmax(0,.85fr); gap:56px; align-items:center; min-height:calc(100vh - 160px); }
+    .gate-hero-title{ font-size:56px; letter-spacing:-.015em; max-width:11ch; }
+    .gate-hero-actions{ flex-direction:row; gap:12px; margin-bottom:16px; }
+    .gate-hero-actions .btn-block{ width:auto; min-width:200px; margin:0; }
+    .gate-hero-art{ display:block; position:relative; justify-self:center; }
+    .gate-hero-art img{ width:300px; height:auto; display:block; border-radius:28px; border:1px solid var(--line); box-shadow:0 30px 60px -24px rgba(28,10,18,.45); transform:rotate(-2deg); }
+    .gate-hero-art::before{ content:""; position:absolute; inset:-40px -60px; background:radial-gradient(closest-side, var(--accent-soft), transparent 70%); z-index:-1; }
+    .landing{ padding:24px 0 48px; }
+    .landing h2{ font-size:34px; text-align:left; margin-top:72px; }
+    .landing .lede{ text-align:left; margin-left:0; max-width:560px; font-size:16px; }
+    .landing-shots{ display:grid; grid-template-columns:repeat(4,1fr); gap:20px; overflow:visible; padding:8px 0 0; }
+    .landing-shots figure{ flex:auto; }
+    .landing-shots figcaption{ font-size:13px; }
+    .landing-steps{ grid-template-columns:repeat(4,1fr); gap:14px; }
+    .landing-steps li{ padding:18px; font-size:13.5px; }
+    .landing-types{ gap:14px; justify-content:center; }
+    .landing-types a{ flex-basis:calc(100% / 7 - 12px); font-size:12.5px; }
+    .landing-cta{ margin:28px auto 0; }
+    .landing-faq{ display:grid; grid-template-columns:1fr 1fr; column-gap:40px; }
+    .landing-faq details{ break-inside:avoid; }
+    .landing-foot{ margin-top:56px; }
+  }
 </style>
 </head>
 <body>
@@ -4352,26 +4419,35 @@ function AccountGate({ onComplete, onExplore, startWithForm }){
 
   if(!showForm){
     return e("div", { className:"gate-wrap gate-welcome" },
-      e("div", { className:"wordmark", style:{ marginBottom:18, display:"flex", alignItems:"center", gap:"0.12em" } },
-          e(LogoMark, { size:"0.85em" }), "Style-LORE"),
-      e("div", { className:"eyebrow", style:{ marginBottom:10 } }, "Your body type · your colors · your closet"),
-      pendingReferral() ? e("div", { className:"card", style:{ marginBottom:16, padding:"12px 14px", borderColor:"var(--accent)" } },
-        e("div", { className:"eyebrow", style:{ marginBottom:2 } }, "A gift from a friend"),
-        e("div", { style:{ fontSize:14 } }, "Your friend gave you ", e("b", null, "a month of Premium, free"), ". Create an account and it's on your account the moment you do.")
-      ) : null,
-      e("h1", { className:"display", style:{ fontSize:34, lineHeight:1.08, fontWeight:700, margin:"0 0 14px" } },
-        "Dress for the body you actually have."),
-      e("p", { className:"screen-lede", style:{ marginBottom:26, fontSize:16 } },
-        "Two minutes of questions give you your Kibbe type, your style words and your best colors. Then log your closet, check anything before you buy it, and meet people who dress like you."),
-      e("button", { type:"button", className:"btn btn-accent btn-block", style:{ marginBottom:10 }, onClick: () => onExplore("quiz") }, "Take the free quiz"),
-      e("button", { type:"button", className:"btn btn-ghost btn-block", style:{ marginBottom:18 }, onClick: () => { setMode("login"); setShowForm(true); } }, "Log in"),
-      e("p", { className:"footnote", style:{ textAlign:"center" } },
-        "No account needed to start. ",
-        e("button", { type:"button", className:"link-btn", onClick: () => { setMode("signup"); setShowForm(true); } }, "Create an account"),
-        " if you'd rather save your results now, or ",
-        e("button", { type:"button", className:"link-btn", onClick: () => onExplore("home") }, "just look around"),
-        "."),
-      e("p", { className:"footnote", style:{ textAlign:"center", marginTop:6 } }, e(LegalLinks, null)),
+      e("div", { className:"gate-hero" },
+        e("div", { className:"gate-hero-copy" },
+          e("div", { className:"wordmark", style:{ marginBottom:18, display:"flex", alignItems:"center", gap:"0.12em" } },
+              e(LogoMark, { size:"0.85em" }), "Style-LORE"),
+          e("div", { className:"eyebrow", style:{ marginBottom:10 } }, "Your body type · your colors · your closet"),
+          pendingReferral() ? e("div", { className:"card", style:{ marginBottom:16, padding:"12px 14px", borderColor:"var(--accent)" } },
+            e("div", { className:"eyebrow", style:{ marginBottom:2 } }, "A gift from a friend"),
+            e("div", { style:{ fontSize:14 } }, "Your friend gave you ", e("b", null, "a month of Premium, free"), ". Create an account and it's on your account the moment you do.")
+          ) : null,
+          e("h1", { className:"display gate-hero-title", style:{ lineHeight:1.08, fontWeight:700, margin:"0 0 14px" } },
+            "Dress for the body you actually have."),
+          e("p", { className:"screen-lede", style:{ marginBottom:26, fontSize:16 } },
+            "Two minutes of questions give you your Kibbe type, your style words and your best colors. Then log your closet, check anything before you buy it, and meet people who dress like you."),
+          e("div", { className:"gate-hero-actions" },
+            e("button", { type:"button", className:"btn btn-accent btn-block", onClick: () => onExplore("quiz") }, "Take the free quiz"),
+            e("button", { type:"button", className:"btn btn-ghost btn-block", onClick: () => { setMode("login"); setShowForm(true); } }, "Log in")
+          ),
+          e("p", { className:"footnote" },
+            "No account needed to start. ",
+            e("button", { type:"button", className:"link-btn", onClick: () => { setMode("signup"); setShowForm(true); } }, "Create an account"),
+            " if you'd rather save your results now, or ",
+            e("button", { type:"button", className:"link-btn", onClick: () => onExplore("home") }, "just look around"),
+            "."),
+          e("p", { className:"footnote", style:{ marginTop:6 } }, e(LegalLinks, null))
+        ),
+        (!IS_NATIVE_APP) ? e("div", { className:"gate-hero-art", "aria-hidden":"true" },
+          e("img", { src:"/assets/landing/result.jpg", alt:"", width:480, height:820, loading:"eager" })
+        ) : null
+      ),
       (!IS_NATIVE_APP) ? e(LandingBelowFold, { onQuiz: () => onExplore("quiz") }) : null
     );
   }

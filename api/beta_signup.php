@@ -1,23 +1,26 @@
 <?php
 /**
- * api/beta_signup — public sign-up form endpoint for Play Store closed-
- * testing tester recruitment (see beta.html).
+ * api/beta_signup — public sign-up endpoint for Play Store closed-testing
+ * tester recruitment (see beta.html).
  *
- * Google doesn't offer an API to add someone to a Play Console closed-
- * testing tester list, so this endpoint can't grant Play Store access by
- * itself. It just records the email as "pending" and sends an immediate
- * "you're on the list" confirmation. Kenneth periodically opens
- * beta-admin.html to copy pending emails into Play Console's tester list
- * by hand (see api/admin_beta_testers.php), then sends everyone the real
- * download link once Google actually has them allow-listed.
+ * Fully self-serve since 2026-09-15: the Beta track's tester list is the
+ * Google Group style-lore-testers@googlegroups.com, and that group is set
+ * to "Anyone on the web can join". So nobody has to be added by hand any
+ * more — the person joins the group themselves with one tap (signed in to
+ * the Google account they use on their phone), then opens the Play opt-in
+ * link and installs. This endpoint records the sign-up, marks it
+ * 'sent' straight away, and emails the three steps with buttons. The
+ * same steps are shown on beta.html the moment they submit.
+ *
+ * (Google still offers no API to add someone to a tester list; the open
+ * group is what makes this automatic.)
  */
 require_once __DIR__ . '/../includes/helpers.php';
 
-// Where new-signup notifications go. Google offers no API for adding
-// someone to a Play Console closed-testing list, so Kenneth has to do it
-// by hand -- he gets pinged the moment someone signs up rather than having
-// to remember to check beta-admin.html. Change this to move the alerts.
-const ADMIN_NOTIFY_EMAIL = 'kgoodman96@gmail.com';
+const ADMIN_NOTIFY_EMAIL = 'support@style-lore.com';
+const TESTER_GROUP_URL = 'https://groups.google.com/g/style-lore-testers';
+const PLAY_OPT_IN_URL = 'https://play.google.com/apps/testing/com.stylelore.app';
+const PLAY_LISTING_URL = 'https://play.google.com/store/apps/details?id=com.stylelore.app';
 
 require_method('POST');
 
@@ -38,35 +41,52 @@ $row = $existing->fetch();
 if (!$row) {
     $pdo->prepare(
         'INSERT INTO beta_testers (id, email, name, status, created_at) VALUES (?, ?, ?, ?, ?)'
-    )->execute([uuidv4(), $email, $name, 'pending', current_time_ms()]);
+    )->execute([uuidv4(), $email, $name, 'sent', current_time_ms()]);
+} elseif ($row['status'] === 'pending') {
+    $pdo->prepare('UPDATE beta_testers SET status = ? WHERE id = ?')->execute(['sent', $row['id']]);
+}
 
-    $safeName = htmlspecialchars($name !== '' ? $name : 'there');
-    $html = style_lore_email_html(
-        "You're on the list!",
-        "<p style=\"margin:0 0 16px;\">Hi $safeName,</p><p style=\"margin:0;\">Thanks for signing up to beta test Style-LORE! We add new testers to our Google Play testing list in small batches, so keep an eye on your inbox &mdash; you'll get a follow-up email with your direct download link soon.</p>",
-        null,
-        null,
-        "Questions in the meantime? Just reply to this email."
-    );
-    send_app_html_email(
-        $email,
-        "You're on the Style-LORE beta list",
-        $html,
-        "Hi " . ($name !== '' ? $name : 'there') . ",\n\nThanks for signing up to beta test Style-LORE! We add new testers to our Google Play testing list in small batches, so keep an eye on your inbox -- you'll get a follow-up email with your direct download link soon.\n"
-    );
+// Same email whether new or repeat — a repeat submission is usually
+// someone who lost the first email.
+$safeName = htmlspecialchars($name !== '' ? $name : 'there');
+$step = function (int $n, string $title, string $body, string $btn, string $url): string {
+    return '<tr><td style="padding:0 0 18px;vertical-align:top;">'
+        . '<div style="font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:#C92C69;margin:0 0 4px;">Step ' . $n . '</div>'
+        . '<div style="font-size:16px;font-weight:700;margin:0 0 6px;">' . $title . '</div>'
+        . '<div style="font-size:14px;line-height:1.5;margin:0 0 10px;">' . $body . '</div>'
+        . '<a href="' . htmlspecialchars($url) . '" style="display:inline-block;background:#C92C69;color:#fff;text-decoration:none;font-weight:700;font-size:14px;padding:10px 18px;border-radius:999px;">' . $btn . '</a>'
+        . '</td></tr>';
+};
+$stepsHtml = '<table role="presentation" cellpadding="0" cellspacing="0" style="width:100%;border-collapse:collapse;margin-top:6px;">'
+    . $step(1, 'Join the tester group', 'Tap Join, signed in with the <b>same Google account you use on your Android phone</b>. That is what makes you eligible — it is instant.', 'Join the tester group', TESTER_GROUP_URL)
+    . $step(2, 'Become a tester on Google Play', 'On your phone, open this link and tap <b>Become a tester</b>.', 'Open the opt-in page', PLAY_OPT_IN_URL)
+    . $step(3, 'Install Style-LORE', 'Then install from Google Play like any other app. Updates arrive automatically.', 'Download on Google Play', PLAY_LISTING_URL)
+    . '</table>';
+$html = style_lore_email_html(
+    "You're in — here's your download",
+    "<p style=\"margin:0 0 16px;\">Hi $safeName,</p><p style=\"margin:0 0 18px;\">Thanks for testing Style-LORE. Three taps and you're in:</p>" . $stepsHtml
+    . "<p style=\"margin:8px 0 0;font-size:13px;color:#6C4C56;\">Step 1 not working? Make sure you're signed in to Google as the account your phone uses, then try again. If Google Play says the app isn't available, give it a few minutes after joining the group.</p>",
+    null,
+    null,
+    "Questions or feedback? Just reply to this email — it goes straight to us."
+);
+send_app_html_email(
+    $email,
+    "Your Style-LORE beta download — 3 quick steps",
+    $html,
+    "Hi " . ($name !== '' ? $name : 'there') . ",\n\nThanks for testing Style-LORE. Three quick steps:\n\n1) Join the tester group (signed in as the Google account your phone uses): " . TESTER_GROUP_URL . "\n2) On your phone, become a tester: " . PLAY_OPT_IN_URL . "\n3) Install from Google Play: " . PLAY_LISTING_URL . "\n\nReply to this email with any questions.\n"
+);
 
-    // Ping Kenneth so a brand-new tester doesn't sit unnoticed. Only fires
-    // for genuinely new sign-ups (we're inside the !$row branch), so a
-    // double-click or repeat submission never re-notifies.
-    $pendingCount = (int)$pdo->query("SELECT COUNT(*) FROM beta_testers WHERE status = 'pending'")->fetchColumn();
+if (!$row) {
+    // FYI only — nothing to do by hand any more.
     $adminName = $name !== '' ? $name : '(no name given)';
     $safeAdminName = htmlspecialchars($adminName);
     $safeEmail = htmlspecialchars($email);
-    $plural = $pendingCount === 1 ? '' : 's';
+    $total = (int)$pdo->query("SELECT COUNT(*) FROM beta_testers")->fetchColumn();
     $adminHtml = style_lore_email_html(
         'New beta tester signed up',
-        "<p style=\"margin:0 0 16px;\"><strong>$safeAdminName</strong><br>$safeEmail</p><p style=\"margin:0;\">That's $pendingCount tester$plural now waiting to be added to the Play Console tester list.</p>",
-        'Open tester sync',
+        "<p style=\"margin:0 0 16px;\"><strong>$safeAdminName</strong><br>$safeEmail</p><p style=\"margin:0;\">They've been sent the join-group / opt-in / install steps automatically. $total sign-ups so far.</p>",
+        'Open tester list',
         SITE_BASE_URL . '/beta-admin.html',
         'You are receiving this because you are the Style-LORE admin.'
     );
@@ -74,10 +94,10 @@ if (!$row) {
         ADMIN_NOTIFY_EMAIL,
         'New Style-LORE beta tester: ' . ($name !== '' ? $name : $email),
         $adminHtml,
-        "New beta tester signed up.\n\nName: $adminName\nEmail: $email\n\nPending testers waiting to be added: $pendingCount\n\nAdd them here: " . SITE_BASE_URL . "/beta-admin.html\n"
+        "New beta tester signed up (steps emailed automatically).\n\nName: $adminName\nEmail: $email\nTotal sign-ups: $total\n"
     );
 }
 
 // Whether they were already signed up or brand new, respond the same way
 // so a repeat submission (e.g. double-click) never looks like an error.
-json_response(['ok' => true]);
+json_response(['ok' => true, 'groupUrl' => TESTER_GROUP_URL, 'optInUrl' => PLAY_OPT_IN_URL, 'storeUrl' => PLAY_LISTING_URL]);
