@@ -11,13 +11,16 @@ require_once __DIR__ . '/../includes/helpers.php';
 require_method('GET');
 
 $pdo = db();
+ensure_closet_columns($pdo);
 
 $limit = (int)($_GET['limit'] ?? 50);
 if ($limit <= 0 || $limit > 200) $limit = 50;
 
 $stmt = $pdo->prepare(
-    "SELECT id, account_id, description, photo_data, created_at, visibility, author_name
-     FROM closet_items WHERE visibility = 'public' ORDER BY created_at DESC LIMIT $limit"
+    "SELECT id, account_id, client_id, description, photo_data, created_at, visibility, author_name
+     FROM closet_items
+     WHERE visibility = 'public' AND deleted_at IS NULL
+     ORDER BY created_at DESC LIMIT $limit"
 );
 $stmt->execute();
 json_response(array_map('closet_item_to_public', $stmt->fetchAll()));

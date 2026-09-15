@@ -695,6 +695,55 @@ function ensure_device_token_columns(PDO $pdo): void {
     catch (Throwable $e) { error_log('ensure_device_token_columns: ' . $e->getMessage()); }
 }
 
+/**
+ * closet_items sync columns. Lazy, idempotent — same pattern as the two above.
+ *
+ *   client_id  the id the APP gave the item. Stable for the life of the item
+ *              on every device. Before 2026-09-15 this table had no such
+ *              column and api/closet.php minted a new uuidv4() per row on
+ *              every save, so an item's identity changed each time a closet
+ *              was saved. That is what let the sign-in merge append the whole
+ *              closet over and over until two garments became 31 rows.
+ *   updated_at when this row was last edited, in ms. Drives last-write-wins
+ *              when two devices change the same item while offline.
+ *   deleted_at soft delete. A removed item stays as a tombstone so other
+ *              devices learn about the deletion instead of helpfully syncing
+ *              the item back, and so a bad sync is recoverable.
+ *
+ * The unique index on (account_id, client_id) is what makes the upsert in
+ * api/closet.php safe: it is the natural key the whole protocol turns on.
+ * Adding it can fail on a table that still holds duplicates, so it is
+ * best-effort: api/closet.php reads the account's existing rows and decides
+ * per item, so it stays correct whether or not the index was created.
+ */
+function ensure_closet_columns(PDO $pdo): void {
+    static $done = false; if ($done) return; $done = true;
+    try {
+        $pdo->exec('ALTER TABLE closet_items
+            ADD COLUMN IF NOT EXISTS client_id VARCHAR(64) DEFAULT NULL,
+            ADD COLUMN IF NOT EXISTS updated_at BIGINT DEFAULT NULL,
+            ADD COLUMN IF NOT EXISTS deleted_at BIGINT DEFAULT NULL');
+    } catch (Throwable $e) { error_log('ensure_closet_columns (add): ' . $e->getMessage()); }
+    // Backfill so every existing row has a usable identity and timestamp.
+    try { $pdo->exec('UPDATE closet_items SET client_id = id WHERE client_id IS NULL'); }
+    catch (Throwable $e) { error_log('ensure_closet_columns (backfill client_id): ' . $e->getMessage()); }
+    try { $pdo->exec('UPDATE closet_items SET updated_at = created_at WHERE updated_at IS NULL'); }
+    catch (Throwable $e) { error_log('ensure_closet_columns (backfill updated_at): ' . $e->getMessage()); }
+    try { $pdo->exec('ALTER TABLE closet_items ADD UNIQUE INDEX IF NOT EXISTS uniq_account_client (account_id, client_id)'); }
+    catch (Throwable $e) { error_log('ensure_closet_columns (index): ' . $e->getMessage()); }
+    try { $pdo->exec('ALTER TABLE closet_items ADD INDEX IF NOT EXISTS idx_account_deleted (account_id, deleted_at)'); }
+    catch (Throwable $e) { error_log('ensure_closet_columns (deleted index): ' . $e->getMessage()); }
+}
+
+/** The content identity of a closet item — mirrors closetItemKey() in the
+ *  client. Used to adopt pre-2026-09-15 rows, which carry a server-minted
+ *  client_id that no device will ever send. */
+function closet_fingerprint(string $description, ?string $photo): string {
+    $desc = preg_replace('/\s+/u', ' ', mb_strtolower(trim($description)));
+    $p = (string)($photo ?? '');
+    return sha1($desc . '|' . ($p === '' ? '' : sha1($p)));
+}
+
 function digest_opt_out(PDO $pdo, string $accountId): bool {
     ensure_digest_columns($pdo);
     try { $st = $pdo->prepare('SELECT digest_opt_out FROM accounts WHERE id = ?'); $st->execute([$accountId]); return (bool)$st->fetchColumn(); }
@@ -1094,7 +1143,10 @@ function story_to_public(array $row, bool $viewed): array {
  */
 function closet_item_to_public(array $row): array {
     return [
-        'id' => $row['id'],
+        // The app's own id for this item when we have it. The server row id
+        // is an internal detail and used to change on every sync — handing
+        // it out is what let the client lose track of its own items.
+        'id' => (string)($row['client_id'] ?? '') !== '' ? $row['client_id'] : $row['id'],
         'description' => $row['description'],
         'photo' => $row['photo_data'],
         'createdAt' => (int)$row['created_at'],

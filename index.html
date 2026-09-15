@@ -1881,14 +1881,25 @@ function dedupeCloset(list){
    device someone actually uses, short enough that re-adding the same
    garment a season later still works. */
 const CLOSET_TOMBSTONE_KEY = "lore_closet_removed", TOMBSTONE_TTL_MS = 90 * 24 * 60 * 60 * 1000, TOMBSTONE_MAX = 400;
+// A tombstone records BOTH identities of the removed item: `id` is what the
+// server keys on (client ids are stable now), `key` is its content, which is
+// the only thing that can match a row created before stable ids existed.
+// `at` is WHEN THE DELETION HAPPENED — it orders the deletion against a
+// later re-add. `seenAt` is when this device recorded the tombstone, and it
+// is what the 90-day expiry measures. Those must be separate: a deletion
+// made on another device months ago, learned about today, has an ancient
+// `at` and would be discarded on arrival if expiry used it — after which
+// this device would cheerfully sync the deleted item back.
 function loadTombstones(){
   const now = Date.now();
   const raw = loadLocal(CLOSET_TOMBSTONE_KEY, []) || [];
-  return raw.filter(t => t && t.key && (now - (t.at || 0)) < TOMBSTONE_TTL_MS);
+  return raw.filter(t => t && (t.key || t.id) && (now - (t.seenAt || t.at || 0)) < TOMBSTONE_TTL_MS);
 }
 function addTombstone(item){
   const key = closetItemKey(item);
-  const list = [{ key, at: Date.now() }, ...loadTombstones().filter(t => t.key !== key)].slice(0, TOMBSTONE_MAX);
+  const id = item && item.id;
+  const now = Date.now();
+  const list = [{ key, id, at: now, seenAt: now }, ...loadTombstones().filter(t => t.key !== key && t.id !== id)].slice(0, TOMBSTONE_MAX);
   saveLocal(CLOSET_TOMBSTONE_KEY, list);
   return list;
 }
@@ -1896,12 +1907,98 @@ function addTombstone(item){
 // or the next merge would quietly delete it again.
 function clearTombstone(item){
   const key = closetItemKey(item);
-  const list = loadTombstones().filter(t => t.key !== key);
+  const id = item && item.id;
+  const list = loadTombstones().filter(t => t.key !== key && (!id || t.id !== id));
   saveLocal(CLOSET_TOMBSTONE_KEY, list);
   return list;
 }
 function tombstonedKeys(){
-  return new Set(loadTombstones().map(t => t.key));
+  return new Set(loadTombstones().map(t => t.key).filter(Boolean));
+}
+// What to send the server as `deleted` on the next sync.
+function pendingDeletions(){
+  return loadTombstones().filter(t => t.id).map(t => ({ id: t.id, deletedAt: t.at }));
+}
+// A deletion another device made, learned from api/closet/mine. Recorded
+// locally so this device stops offering the item back on its own syncs.
+function adoptRemoteTombstones(remoteDeleted){
+  if(!Array.isArray(remoteDeleted) || remoteDeleted.length === 0) return loadTombstones();
+  const have = loadTombstones();
+  const byId = new Set(have.map(t => t.id).filter(Boolean));
+  const now = Date.now();
+  const additions = remoteDeleted
+    .filter(d => d && d.id && !byId.has(d.id))
+    .map(d => ({ id: d.id, key: null, at: d.deletedAt || now, seenAt: now }));
+  if(additions.length === 0) return have;
+  const list = [...additions, ...have].slice(0, TOMBSTONE_MAX);
+  saveLocal(CLOSET_TOMBSTONE_KEY, list);
+  return list;
+}
+
+/* Reconcile the server's copy of a closet with this device's.
+
+   Rules, in order:
+     1. A deletion beats everything. An item tombstoned here or on the server
+        is gone, unless it was re-added AFTER the deletion (a later
+        createdAt/updatedAt), which is someone deliberately bringing it back.
+     2. Otherwise match on client id, which is stable now, and fall back to
+        content for rows that predate stable ids.
+     3. When both sides have the item, the newer updatedAt wins outright —
+        last-write-wins, per item, not per closet.
+
+   This replaces a union merge that could never express "this is gone". */
+function reconcileCloset(local, remoteItems, remoteDeleted){
+  const localList = Array.isArray(local) ? local : [];
+  const remoteList = Array.isArray(remoteItems) ? remoteItems : [];
+
+  const deadIds = new Map();     // client id -> when it died
+  const deadKeys = new Map();    // content key -> when it died
+  for(const t of loadTombstones()){
+    if(t.id) deadIds.set(t.id, Math.max(deadIds.get(t.id) || 0, t.at || 0));
+    if(t.key) deadKeys.set(t.key, Math.max(deadKeys.get(t.key) || 0, t.at || 0));
+  }
+  for(const d of (Array.isArray(remoteDeleted) ? remoteDeleted : [])){
+    if(d && d.id) deadIds.set(d.id, Math.max(deadIds.get(d.id) || 0, d.deletedAt || 0));
+  }
+
+  const stamp = it => (it && it.updatedAt) || (it && it.createdAt) || 0;
+  const isDead = it => {
+    const diedId = deadIds.has(it.id) ? deadIds.get(it.id) : null;
+    const diedKey = deadKeys.has(closetItemKey(it)) ? deadKeys.get(closetItemKey(it)) : null;
+    const died = Math.max(diedId || 0, diedKey || 0);
+    if(!died) return false;
+    return stamp(it) <= died;   // re-added after the delete? then it lives.
+  };
+
+  const out = new Map();         // client id -> item
+  const byContent = new Map();   // content key -> client id
+  const take = it => {
+    if(!it || isDead(it)) return;
+    const norm = {
+      id: it.id,
+      description: it.description || "",
+      photo: it.photo || null,
+      createdAt: it.createdAt || Date.now(),
+      updatedAt: stamp(it) || Date.now(),
+      visibility: it.visibility === "public" ? "public" : "hidden",
+    };
+    const contentKey = closetItemKey(norm);
+    const existingId = out.has(norm.id) ? norm.id : byContent.get(contentKey);
+    if(existingId === undefined){
+      out.set(norm.id, norm);
+      byContent.set(contentKey, norm.id);
+      return;
+    }
+    const current = out.get(existingId);
+    if(stamp(norm) > stamp(current)){
+      out.set(existingId, Object.assign({}, norm, { id: current.id }));
+    }
+  };
+
+  for(const it of localList) take(it);
+  for(const it of remoteList) take(it);
+
+  return Array.from(out.values()).sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
 }
 
 const RAIN_LAYER_RE = /trench|rain|parka|anorak|windbreaker|shell|waterproof|mac\b/i;
@@ -3905,15 +4002,29 @@ const Api = {
   // seen this account's closet (a browser, a new phone) — see
   // closetHydratedRef in App(). Never call this for someone else's
   // profile; that's getCloset() above, which is public-only by design.
+  // The signed-in person's OWN closet plus the tombstones of what they've
+  // deleted. Normalised to {items, deleted} because the endpoint returned a
+  // bare array before syncVersion 2 and an app bundle in the wild may still
+  // be talking to an older server.
   async getMyCloset(visitorId, authToken){
     const r = await fetch("/api/closet/mine?visitorId=" + encodeURIComponent(visitorId) + "&authToken=" + encodeURIComponent(authToken));
     if(!r.ok) throw await apiError(r, "Couldn't load your closet.");
-    return r.json();
+    const data = await r.json();
+    if(Array.isArray(data)) return { items: data, deleted: [], serverTime: Date.now() };
+    return {
+      items: Array.isArray(data && data.items) ? data.items : [],
+      deleted: Array.isArray(data && data.deleted) ? data.deleted : [],
+      serverTime: (data && data.serverTime) || Date.now(),
+    };
   },
-  async syncCloset(visitorId, visitorName, authToken, items){
+  // syncVersion 2: the payload describes CHANGES, not the whole world. The
+  // server upserts what's in `items`, soft-deletes what's in `deleted`, and
+  // leaves everything else alone — so two devices holding different halves
+  // of a closet converge instead of overwriting each other.
+  async syncCloset(visitorId, visitorName, authToken, items, deleted){
     const r = await fetch("/api/closet", {
       method:"POST", headers:{ "Content-Type":"application/json" },
-      body: JSON.stringify({ visitorId, visitorName, authToken, items }),
+      body: JSON.stringify({ visitorId, visitorName, authToken, items, deleted: deleted || [], syncVersion: 2 }),
     });
     if(!r.ok) throw await apiError(r, "Couldn't sync your closet.");
     return r.json();
@@ -5929,7 +6040,8 @@ function ClosetScreen({ closet, setCloset, blend, styleWordBlend, kibbeTypeName,
       if(onUpgrade) onUpgrade("closet");
       return;
     }
-    const next = { ...item, id: uid(), createdAt: Date.now() };
+    const at = Date.now();
+    const next = { ...item, id: uid(), createdAt: at, updatedAt: at };
     // Adding something back lifts its tombstone (see addTombstone above),
     // otherwise the next sign-in merge would silently drop it again.
     clearTombstone(next);
@@ -5950,7 +6062,11 @@ function ClosetScreen({ closet, setCloset, blend, styleWordBlend, kibbeTypeName,
     });
   }
   function toggleItemVisibility(id){
-    setCloset(prev => (prev || []).map(x => x.id === id ? Object.assign({}, x, { visibility: x.visibility === "public" ? "hidden" : "public" }) : x));
+    // updatedAt is what last-write-wins compares, so every edit must stamp it
+    // or a stale copy on another device would win the next reconcile.
+    setCloset(prev => (prev || []).map(x => x.id === id
+      ? Object.assign({}, x, { visibility: x.visibility === "public" ? "hidden" : "public", updatedAt: Date.now() })
+      : x));
   }
   function handleAddClick(){
     if(atCap){ if(onUpgrade) onUpgrade("closet"); return; }
@@ -8442,26 +8558,17 @@ function App(){
     if(closetHydratedRef.current === profile.visitorId) return;
     try {
       const remote = await Api.getMyCloset(profile.visitorId, profile.token);
-      if(!Array.isArray(remote)) throw new Error("bad-shape");
+      if(!remote || !Array.isArray(remote.items)) throw new Error("bad-shape");
+      // Learn about deletions other devices made before reconciling, so this
+      // device stops offering those items back on its own syncs.
+      adoptRemoteTombstones(remote.deleted);
       setCloset(local => {
-        const buried = tombstonedKeys();
-        const merged = dedupeCloset([
-          ...(local || []),
-          ...remote
-            .map(it => ({
-              id: it.id,
-              description: it.description || "",
-              photo: it.photo || null,
-              createdAt: it.createdAt || Date.now(),
-              visibility: it.visibility === "public" ? "public" : "hidden",
-            }))
-            // Don't resurrect something this person deleted on another device.
-            .filter(it => !buried.has(closetItemKey(it))),
-        ]);
+        const merged = reconcileCloset(local, remote.items, remote.deleted);
         // Same set, same order? Keep the existing array so React skips the
         // re-render and the sync effect doesn't fire for nothing.
-        if(merged.length === (local || []).length && merged.every((it, i) => it === local[i])) return local;
-        return merged.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+        const same = merged.length === (local || []).length
+          && merged.every((it, i) => local[i] && it.id === local[i].id && (it.updatedAt || 0) === (local[i].updatedAt || 0));
+        return same ? local : merged;
       });
       closetHydratedRef.current = profile.visitorId;
       setClosetHydratedFor(profile.visitorId);
@@ -8480,11 +8587,11 @@ function App(){
     // See closetHydratedRef above — never push over a closet we haven't read.
     if(closetHydratedRef.current !== profile.visitorId) return;
     const force = !!(opts && opts.force);
-    const payload = JSON.stringify(closetRef.current);
+    const payload = JSON.stringify([closetRef.current, pendingDeletions()]);
     if(!force && payload === closetSyncedSnapshotRef.current) return;
     setClosetSyncStatus("saving");
     closetSyncChainRef.current = closetSyncChainRef.current.then(() =>
-      Api.syncCloset(profile.visitorId, profile.name, profile.token, closetRef.current)
+      Api.syncCloset(profile.visitorId, profile.name, profile.token, closetRef.current, pendingDeletions())
         .then(() => {
           closetSyncAttemptRef.current = 0;
           closetSyncedSnapshotRef.current = payload;
