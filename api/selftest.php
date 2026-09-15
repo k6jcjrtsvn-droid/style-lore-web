@@ -26,7 +26,8 @@ try {
     // classic cause of a silent 500 on one feature (e.g. a settings toggle
     // that "won't stick").
     $expect = [
-        'accounts' => ['id', 'email', 'auth_token_hash', 'digest_opt_out', 'digest_sent_at', 'referral_code', 'referred_by', 'referral_until', 'email_verified_at'],
+        'accounts' => ['id', 'email', 'auth_token_hash', 'digest_opt_out', 'digest_sent_at', 'referral_code', 'referred_by', 'referral_until', 'email_verified', 'verify_token_hash', 'reset_token_hash'],
+        'auth_tokens' => ['token_hash', 'account_id', 'last_used_at'],
         'profiles' => ['color_result_json'],
         'subscriptions' => ['account_id', 'product_id'],
         'ai_reads' => ['account_id', 'used'],

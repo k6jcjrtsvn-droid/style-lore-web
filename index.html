@@ -1024,10 +1024,17 @@ const { useState, useEffect, useRef, useCallback, useMemo } = React;
 const _backStack = [];
 let _backSeq = 0;
 let _suppressPopEvents = 0;
+/* Whether the most recent popstate belonged to a sheet (closed by tap or by
+   the back button). App-level navigation (the second popstate listener, in
+   App()) must then leave the screen alone — before this flag existed, closing
+   the "Add to closet" sheet ALSO navigated Closet → Home, so a freshly added
+   item looked like it vanished (found by the 2026-09-15 functionality test). */
+let _popConsumedBySheet = false;
 window.addEventListener("popstate", () => {
-  if(_suppressPopEvents > 0){ _suppressPopEvents--; return; }
+  _popConsumedBySheet = false;
+  if(_suppressPopEvents > 0){ _suppressPopEvents--; _popConsumedBySheet = true; return; }
   const top = _backStack.pop();
-  if(top) top.close();
+  if(top){ _popConsumedBySheet = true; top.close(); }
 });
 /* Polling that respects a backgrounded tab. A hidden tab was still
    re-fetching the whole feed every 4 seconds — the user's battery and our
@@ -7360,6 +7367,7 @@ function App(){
   }
   useEffect(() => {
     function onPopState(){
+      if(_popConsumedBySheet){ _popConsumedBySheet = false; return; } // a sheet opened/closed — not a screen change
       if(suppressNavPopRef.current > 0){ suppressNavPopRef.current--; return; }
       const stack = navStackRef.current;
       if(stack.length <= 1) return; // already at the root — let the normal browser/OS back action happen.
