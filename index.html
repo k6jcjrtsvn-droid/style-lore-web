@@ -4363,14 +4363,19 @@ function useUpdateAvailable(){
   return update;
 }
 function UpdateBanner({ update }){
-  if(!update) return null;
+  // Dismissable for the session: this card must never feel like a gate. It
+  // is informational — the app keeps working on the old version.
+  const [hidden, setHidden] = useState(() => { try{ return sessionStorage.getItem("lore_update_dismissed") === (update && update.version); }catch(err){ return false; } });
+  if(!update || hidden) return null;
+  const dismiss = () => { try{ sessionStorage.setItem("lore_update_dismissed", update.version); }catch(err){} setHidden(true); };
   return e("div", { className:"card premium-card", style:{ marginBottom:16 } },
     e("div", { className:"eyebrow" }, "Update available"),
     e("div", { className:"display", style:{ fontSize:19, fontWeight:700, marginBottom:6 } }, "Style-LORE " + update.version + " is ready"),
     update.notes ? e("p", { className:"screen-lede", style:{ fontSize:13.5, marginBottom:10 } }, update.notes) : null,
     e("p", { className:"screen-lede", style:{ fontSize:12.5, marginBottom:10, color:"var(--ink-soft)" } },
       "Tap below, then Update on the store page (if it isn't there yet, give it an hour and try again)."),
-    e("a", { className:"btn btn-accent btn-block", href: update.url, target:"_blank", rel:"noopener" }, "Get the update")
+    e("a", { className:"btn btn-accent btn-block", href: update.url, target:"_blank", rel:"noopener" }, "Get the update"),
+    e("button", { className:"btn-text", style:{ display:"block", margin:"8px auto 0" }, onClick:dismiss }, "Not now — keep using this version")
   );
 }
 
