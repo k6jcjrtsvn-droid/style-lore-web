@@ -1997,14 +1997,75 @@ function pushHistory(entry){
   }
   return list;
 }
+/* Square thumbnail for a "Your checks" row.
+
+   The row renders this in a 44x44 CSS box with object-fit:cover. The old
+   version made a 160px-longest-edge JPEG at quality 0.7 and let CSS do the
+   cropping — so on a 2x or 3x screen a portrait photo's 44px-wide square was
+   being drawn from roughly 90 source pixels, upscaled, on top of heavy JPEG
+   compression. That is why the check history looked soft.
+
+   Now: crop to a centred square on the canvas (no pixels wasted on parts
+   CSS was going to clip anyway), render at HISTORY_THUMB_PX so there is
+   enough for a 3x display, and encode at 0.85. Still only ~20-30KB each. */
+const HISTORY_THUMB_PX = 320;
 function thumbFromDataUrl(dataUrl, size){
   return new Promise(resolve => {
     try{
       const img = new Image();
-      img.onload = () => { const c = document.createElement("canvas"); const r = Math.min(1, (size || 160) / Math.max(img.width, img.height)); c.width = Math.round(img.width * r); c.height = Math.round(img.height * r); c.getContext("2d").drawImage(img, 0, 0, c.width, c.height); resolve(c.toDataURL("image/jpeg", 0.7)); };
+      img.onload = () => {
+        try{
+          const px = size || HISTORY_THUMB_PX;
+          const side = Math.min(img.width, img.height);
+          const sx = Math.round((img.width - side) / 2);
+          const sy = Math.round((img.height - side) / 2);
+          const out = Math.min(px, side);            // never upscale
+          const c = document.createElement("canvas");
+          c.width = out; c.height = out;
+          const ctx = c.getContext("2d");
+          ctx.imageSmoothingEnabled = true;
+          ctx.imageSmoothingQuality = "high";
+          ctx.drawImage(img, sx, sy, side, side, 0, 0, out, out);
+          resolve(c.toDataURL("image/jpeg", 0.85));
+        }catch(err){ resolve(null); }
+      };
       img.onerror = () => resolve(null);
       img.src = dataUrl;
     }catch(err){ resolve(null); }
+  });
+}
+
+/* The photo kept with a history entry, for the expanded detail view (which
+   displays it up to 360px wide, so up to ~1080 device px on a 3x screen).
+
+   Deliberately re-encoded rather than storing the 1080px analysis copy: the
+   whole history shares one ~5MB localStorage quota, and when pushHistory()
+   hits that quota it starts stripping `photo` off older entries — after
+   which the detail view falls back to the 44px thumb blown up to 360px,
+   which is the worst-looking case of all. A smaller stored photo means far
+   fewer entries ever get stripped. */
+const HISTORY_PHOTO_PX = 900;
+function historyPhotoFromDataUrl(dataUrl){
+  return new Promise(resolve => {
+    try{
+      const img = new Image();
+      img.onload = () => {
+        try{
+          const longest = Math.max(img.width, img.height);
+          if(longest <= HISTORY_PHOTO_PX){ resolve(dataUrl); return; }
+          const r = HISTORY_PHOTO_PX / longest;
+          const c = document.createElement("canvas");
+          c.width = Math.round(img.width * r); c.height = Math.round(img.height * r);
+          const ctx = c.getContext("2d");
+          ctx.imageSmoothingEnabled = true;
+          ctx.imageSmoothingQuality = "high";
+          ctx.drawImage(img, 0, 0, c.width, c.height);
+          resolve(c.toDataURL("image/jpeg", 0.86));
+        }catch(err){ resolve(dataUrl); }
+      };
+      img.onerror = () => resolve(dataUrl);
+      img.src = dataUrl;
+    }catch(err){ resolve(dataUrl); }
   });
 }
 function HistoryList({ isPremium, onUpgrade, version }){
@@ -2034,7 +2095,7 @@ function HistoryList({ isPremium, onUpgrade, version }){
         const hasMore = !!(h.detail || h.suggestion || (h.kind === "text" && h.input));
         return e("div", { key:h.id, className:"row-list-item history-row" + (open ? " open" : ""), style:{ alignItems:"flex-start", flexWrap:"wrap" } },
           e("button", { type:"button", className:"history-main", "aria-expanded": open ? "true" : "false", onClick:()=>setOpenId(open ? null : h.id) },
-            h.thumb ? e("img", { src:h.thumb, alt:"", style:{ width:44, height:44, borderRadius:8, objectFit:"cover", flexShrink:0 } })
+            h.thumb ? e("img", { src:h.thumb, alt:"", width:44, height:44, loading:"lazy", decoding:"async", style:{ width:44, height:44, borderRadius:8, objectFit:"cover", flexShrink:0 } })
               : e("span", { style:{ color:"var(--accent)", flexShrink:0, width:22, height:22 } }, Icon("check")),
             e("span", { style:{ flex:1, minWidth:0, textAlign:"left" } },
               e("div", { style:{ display:"flex", gap:8, alignItems:"center", marginBottom:2 } },
@@ -2048,7 +2109,20 @@ function HistoryList({ isPremium, onUpgrade, version }){
           ),
           e("button", { className:"history-remove", "aria-label":"Remove this check", title:"Remove", onClick:()=>remove(h.id) }, "×"),
           open ? e("div", { className:"history-detail" },
-            (h.photo || h.thumb) ? e("img", { src:h.photo || h.thumb, alt:"", style:{ width:"100%", maxWidth:360, borderRadius:12, display:"block", marginBottom:12, imageRendering:"auto" } }) : null,
+            // Only the full photo is worth showing large. When an older
+            // entry has had its photo stripped to fit the storage quota,
+            // showing the 44px-row thumbnail at 360px wide is what made the
+            // history look blurry — cap it at its natural size instead and
+            // say why it's small.
+            h.photo
+              ? e("img", { src:h.photo, alt:"The photo from this check", loading:"lazy", decoding:"async",
+                  style:{ width:"100%", maxWidth:360, borderRadius:12, display:"block", marginBottom:12 } })
+              : h.thumb
+                ? e("div", { style:{ marginBottom:12 } },
+                    e("img", { src:h.thumb, alt:"Thumbnail from this check", loading:"lazy", decoding:"async",
+                      style:{ width:HISTORY_THUMB_PX / 2, maxWidth:"100%", borderRadius:12, display:"block", marginBottom:6 } }),
+                    e("div", { className:"footnote", style:{ margin:0, fontSize:11.5 } }, "Only the thumbnail was kept for this one — storage on this device was full when it was saved."))
+                : null,
             e("div", { style:{ fontWeight:600, fontSize:14.5, marginBottom:6 } }, h.headline),
             h.kind === "text" && h.input ? e("p", { style:{ fontSize:13, color:"var(--ink-soft)", margin:"0 0 8px" } }, "“", h.input, "”") : null,
             h.detail ? e("p", { style:{ fontSize:13.5, lineHeight:1.5, margin:"0 0 8px" } }, h.detail) : null,
@@ -6255,7 +6329,12 @@ function CheckerScreen({ blend, styleWordBlend, kibbeTypeName, topStyleWords, vi
       const v = photoStyleVerdict(axes, profile, usedBodyCrop);
       setPhotoResult(v);
       if(v && v.status === "match") maybeAskForReview("verdict");
-      if (v && v.score !== null){ const thumb = await thumbFromDataUrl(photoPreview, 160); const photo = photoHiRes || photoPreview; remember({ kind:"photo", thumb, photo, headline: v.headline, detail: v.detail || "", score: v.score, verdictPill: v.verdictPill }); }
+      if (v && v.score !== null){
+        const source = photoHiRes || photoPreview;
+        const thumb = await thumbFromDataUrl(source);
+        const photo = await historyPhotoFromDataUrl(source);
+        remember({ kind:"photo", thumb, photo, headline: v.headline, detail: v.detail || "", score: v.score, verdictPill: v.verdictPill });
+      }
     }catch(err){
       setPhotoError(err.message || "Couldn't run the photo check right now.");
     }finally{
@@ -6274,8 +6353,9 @@ function CheckerScreen({ blend, styleWordBlend, kibbeTypeName, topStyleWords, vi
       const result = await Api.checkPhoto({ visitorId, authToken, photoBlob, kibbeTypeName, topStyleWords });
       setAiResult(result);
       if(!isPremium && onFreeAiReadUsed) onFreeAiReadUsed();
-      const thumb = await thumbFromDataUrl(photoPreview, 160);
-      const photo = photoHiRes || photoPreview;
+      const source = photoHiRes || photoPreview;
+      const thumb = await thumbFromDataUrl(source);
+      const photo = await historyPhotoFromDataUrl(source);
       remember({ kind:"ai", thumb, photo, headline: result.headline, input: result.suggestion || result.detail, detail: result.detail || "", suggestion: result.suggestion || "", verdictPill: result.verdict === "mismatch" ? "avoid" : result.verdict === "match" ? "match" : "neutral" });
     }catch(err){
       if(err.code === "premium_required"){
