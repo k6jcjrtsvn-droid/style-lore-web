@@ -14,7 +14,13 @@
   window.STYLE_LORE_API_BASE = window.STYLE_LORE_NATIVE ? "https://style-lore.com" : "";
   // Bump this with every app release; it travels with every bug report so we
   // know which build a problem came from.
-  window.STYLE_LORE_APP_VERSION = "1.2.0";
+  window.STYLE_LORE_APP_VERSION = "1.3.0";
+  // Native push needs Firebase (android/app/google-services.json). The
+  // Codemagic build flips this to false when that file is missing, so the
+  // app never calls Push.register() without Firebase — which crashes the
+  // Android app the instant the user taps "Allow" on the notification prompt
+  // (that was the 1.2 "kicked back to the Play Store" bug).
+  window.STYLE_LORE_PUSH_CONFIGURED = true;
 
   // Automatic bug reports. Anything that goes wrong in the page — an
   // uncaught error, a promise nobody handled, a feature that could not load —
@@ -7513,6 +7519,7 @@ function App(){
     const isNative = Capacitor && Capacitor.isNativePlatform && Capacitor.isNativePlatform();
     const Push = isNative && Capacitor.Plugins && Capacitor.Plugins.PushNotifications;
     if(!Push) return;
+    if(window.STYLE_LORE_PUSH_CONFIGURED === false) return; // build has no Firebase config — registering would crash the app
 
     let cancelled = false;
     const listeners = [];
@@ -7545,9 +7552,9 @@ function App(){
         routeFromNotificationData(action && action.notification && action.notification.data);
       }));
 
-      if(!cancelled) await Push.register();
+      if(!cancelled && window.STYLE_LORE_PUSH_CONFIGURED !== false) await Push.register();
     }
-    setUp().catch(()=>{});
+    setUp().catch(err => { try{ loreReport("push_setup_failed", String(err && err.message || err)); }catch(e){} });
 
     return () => {
       cancelled = true;
