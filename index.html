@@ -699,6 +699,14 @@
   }
   button.style-chip:hover{border-color:var(--accent); color:var(--accent);}
 
+  .kibbe-art{ display:block; width:100%; max-width:280px; height:auto; border-radius:18px; margin:0 auto; box-shadow:var(--shadow); }
+  .kibbe-art-wrap{ margin:0 0 14px; }
+  .kibbe-art-row{ display:flex; gap:10px; justify-content:center; }
+  .kibbe-art-row > div{ flex:1 1 0; min-width:0; }
+  .kibbe-art-row .kibbe-art{ max-width:none; }
+  .kibbe-art-cap{ font-size:11px; text-transform:uppercase; letter-spacing:.06em; color:var(--ink-soft); text-align:center; margin-top:6px; }
+  .kibbe-art-note{ font-size:12px; color:var(--ink-soft); text-align:center; margin-top:8px; }
+  .kibbe-tile-art{ width:100%; height:auto; aspect-ratio:360/440; border-radius:10px; display:block; margin-bottom:8px; }
   .kibbe-tile-grid{ display:grid; grid-template-columns:repeat(2,1fr); gap:10px; }
   .kibbe-tile{
     position:relative; border-radius:var(--radius-m); padding:14px 14px 12px;
@@ -1475,6 +1483,27 @@ const AMAZON_ASSOCIATE_TAG = "stylelore-20";
    style-quiz intro (optional), remembered on this device, and used to word
    quiz options, shop links, the outfit builder and the AI Stylist so a
    menswear shopper never gets told to try a slip dress. */
+/* Outfit illustrations for the 13 Kibbe types: web/img/kibbe/<id>-w.svg
+   (womenswear) and <id>-m.svg (menswear). Flat-lay clothes, no bodies —
+   an idea of the lines, never a figure to measure yourself against. The
+   picture follows the wardrobe preference; "both" shows the pair. Missing
+   files (an old app bundle, offline) just hide the image. */
+function kibbeArtSrc(id, which){ return "/img/kibbe/" + id + "-" + (which === "men" ? "m" : "w") + ".svg"; }
+function KibbeArt({ id, name, wardrobe, both, note, style }){
+  const w = wardrobe || getWardrobe();
+  const hide = ev => { ev.currentTarget.style.display = "none"; };
+  const one = (k, cap) => e("div", { key:k },
+    e("img", { className:"kibbe-art", src:kibbeArtSrc(id, k), alt:(name || "") + " outfit, " + (k === "men" ? "menswear" : "womenswear"), loading:"lazy", onError:hide }),
+    cap ? e("div", { className:"kibbe-art-cap" }, cap) : null
+  );
+  return e("div", { className:"kibbe-art-wrap", style },
+    (both || w === "both")
+      ? e("div", { className:"kibbe-art-row" }, one("women", "Womenswear"), one("men", "Menswear"))
+      : one(w === "men" ? "men" : "women", null),
+    note ? e("div", { className:"kibbe-art-note" }, note) : null
+  );
+}
+
 function getWardrobe(){
   try{ const v = localStorage.getItem("lore_wardrobe"); return (v === "women" || v === "men" || v === "both") ? v : null; }catch(err){ return null; }
 }
@@ -4810,6 +4839,7 @@ function StyleQuizScreen({ kibbeResult, styleLanguageResult, onSaveKibbe, onSave
       e("div", { className:"eyebrow", style:{ marginBottom:4 } }, "Body & shape type"),
       hasKibbe ? e(React.Fragment, null,
         e("div", { className:"card" },
+          e(KibbeArt, { id:kibbeType.id, name:kibbeType.name, note:"An outfit in " + kibbeType.name + " lines — a starting idea, not a rule." }),
           e("p", { style:{ fontSize:14, lineHeight:1.6, marginBottom:14 } }, kibbeType.desc),
           e(BlendBar, { blend: kibbeQuizResult.kibbeBlend, ids: KIBBE_TYPES }),
           e(BlendList, { blend: kibbeQuizResult.kibbeBlend, ids: KIBBE_TYPES })
@@ -5885,6 +5915,7 @@ function CommunityScreen({ profile, blend, onOpenProfile }){
       e("div", { className:"kibbe-strip" },
         (myTop ? [KIBBE_BY_ID[myTop.id], ...KIBBE_TYPES.filter(x => x.id !== myTop.id)] : KIBBE_TYPES).map(x => e("button", { key:x.id, className:"kibbe-tile", style:{ background:x.color }, onClick:()=>setSpace({kind:"kibbe", id:x.id}) },
           e("div", null,
+            e("img", { className:"kibbe-tile-art", src:kibbeArtSrc(x.id, getWardrobe()), alt:"", loading:"lazy", onError:ev => { ev.currentTarget.style.display = "none"; } }),
             e("div", { className:"kibbe-tile-name" }, x.name),
             e("div", { className:"kibbe-tile-desc" }, x.tag)
           ),
@@ -5995,7 +6026,10 @@ function CommunityScreen({ profile, blend, onOpenProfile }){
             groupIsMember ? e("button", { className:"btn-text", style:{ padding:0, fontSize:12, color:"var(--danger)" }, disabled:groupBusy, onClick:leaveCurrentGroup }, "Leave group") : null
           )
         )
-      : (kibbeInfo ? e("p", { className:"screen-lede", style:{ marginBottom:16 } }, kibbeInfo.desc) : e("div", { style:{ marginBottom:16 } })),
+      : (kibbeInfo ? e(React.Fragment, null,
+          e(KibbeArt, { id:kibbeInfo.id, name:kibbeInfo.name, style:{ maxWidth:240, margin:"0 auto 14px" } }),
+          e("p", { className:"screen-lede", style:{ marginBottom:16 } }, kibbeInfo.desc)
+        ) : e("div", { style:{ marginBottom:16 } })),
 
     loadError ? e(Banner, { kind:"error" }, loadError) : null,
     groupError ? e(Banner, { kind:"error" }, groupError) : null,
