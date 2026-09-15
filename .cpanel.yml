@@ -14,6 +14,7 @@ deployment:
     - /bin/cp -f sitemap.xml $DEPLOYPATH
     - /bin/cp -f robots.txt $DEPLOYPATH
     - /bin/cp -f app-versions.json $DEPLOYPATH
+    - /bin/cp -f status.json $DEPLOYPATH
     - /bin/mkdir -p $DEPLOYPATH/img/kibbe
     - /bin/cp -rf img/. $DEPLOYPATH/img/
     - /bin/mkdir -p $DEPLOYPATH/types

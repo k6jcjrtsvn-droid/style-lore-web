@@ -601,6 +601,14 @@
   .option-btn:hover{border-color:var(--accent); box-shadow:var(--shadow); transform:translateY(-1px);}
   .option-btn[aria-pressed="true"]{border-color:var(--accent); background:var(--accent-soft);}
 
+  .service-notice{
+    display:flex; align-items:flex-start; gap:10px;
+    margin:0; padding:11px 20px; font-size:13px; line-height:1.45;
+    background:var(--accent-soft); color:var(--ink); border-bottom:1px solid var(--line);
+  }
+  .service-notice-text{ flex:1; }
+  .service-notice-x{ background:none; border:0; font-size:20px; line-height:1; color:var(--ink-soft); cursor:pointer; padding:0 2px; }
+  .app > .topbar{ order:-1; } /* keeps the top bar above the service notice, which is first in the DOM */
   .banner{
     border-radius:var(--radius-m);
     padding:13px 15px;
@@ -2919,13 +2927,27 @@ window.fetch = function(input, init){
   if(API_BASE && typeof input === "string" && input.charAt(0) === "/" && input.charAt(1) !== "/"){
     input = API_BASE + input;
   }
-  if(init.signal) return _rawFetch(input, init);
-  try{
-    if(typeof AbortSignal !== "undefined" && AbortSignal.timeout){
-      init = Object.assign({}, init, { signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) });
-    }
-  }catch(err){ /* older browser — no timeout, same as before */ }
-  return _rawFetch(input, init);
+  const isApi = typeof input === "string" && input.indexOf("/api/") !== -1;
+  if(!init.signal){
+    try{
+      if(typeof AbortSignal !== "undefined" && AbortSignal.timeout){
+        init = Object.assign({}, init, { signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) });
+      }
+    }catch(err){ /* older browser — no timeout, same as before */ }
+  }
+  const p = _rawFetch(input, init);
+  if(!isApi) return p;
+  // Service-trouble signal for the ServiceNotice banner: a request that
+  // never reaches us, times out, or comes back 5xx means "we're down or
+  // broken", and the user deserves to hear that we know — not a silent
+  // spinner. A later successful reply clears it.
+  return p.then(r => {
+    try{ window.dispatchEvent(new CustomEvent(r.status >= 500 ? "lore:trouble" : "lore:ok", { detail:{ status:r.status, url:String(input) } })); }catch(err){}
+    return r;
+  }, err => {
+    try{ window.dispatchEvent(new CustomEvent("lore:trouble", { detail:{ status:0, url:String(input), error:String(err && err.name) } })); }catch(e){}
+    throw err;
+  });
 };
 
 // A dead auth token can surface from anywhere in the tree, so App()
@@ -7181,6 +7203,58 @@ function ConversationScreen({ profile, conversationId, otherName, onBack }){
    ROOT APP
 ===================================================================== */
 
+/* ServiceNotice — the "we know, we're on it" strip under the top bar.
+   Two sources:
+   1. /status.json on style-lore.com (checked on launch and every 5 min):
+      {"active":true,"id":"2026-09-15-push","message":"…"}. Kenneth or
+      the watchdog sets it during an incident (a bad update, a fix in
+      progress) so people hear from us inside the app, not from a blank
+      screen. Dismissable per id.
+   2. Automatic: two API failures (network error, timeout or 5xx) within a
+      minute, or one while offline, shows a generic "having trouble
+      connecting — we're on it" notice that clears itself on the next
+      successful reply. This one also works when the site is entirely
+      down, because it needs nothing from the server. */
+function ServiceNotice(){
+  const [remote, setRemote] = useState(null);
+  const [auto, setAuto] = useState(false);
+  const [dismissedId, setDismissedId] = useState(() => { try{ return sessionStorage.getItem("lore_notice_dismissed") || ""; }catch(err){ return ""; } });
+  useEffect(() => {
+    let cancelled = false;
+    const load = () => (window.__loreRawFetch || fetch)((window.STYLE_LORE_API_BASE || "") + "/status.json?t=" + Date.now(), { cache:"no-store" })
+      .then(r => r.ok ? r.json() : null)
+      .then(j => { if(!cancelled) setRemote(j && j.active && j.message ? j : null); })
+      .catch(() => {});
+    load();
+    const t = setInterval(load, 5 * 60 * 1000);
+    return () => { cancelled = true; clearInterval(t); };
+  }, []);
+  useEffect(() => {
+    const fails = [];
+    const onTrouble = ev => {
+      const now = Date.now();
+      fails.push(now);
+      while(fails.length && now - fails[0] > 60000) fails.shift();
+      const offline = typeof navigator !== "undefined" && navigator.onLine === false;
+      if(fails.length >= 2 || offline) setAuto(true);
+    };
+    const onOk = () => { fails.length = 0; setAuto(false); };
+    window.addEventListener("lore:trouble", onTrouble);
+    window.addEventListener("lore:ok", onOk);
+    return () => { window.removeEventListener("lore:trouble", onTrouble); window.removeEventListener("lore:ok", onOk); };
+  }, []);
+  const showRemote = remote && remote.id !== dismissedId;
+  if(!showRemote && !auto) return null;
+  const dismiss = () => { try{ sessionStorage.setItem("lore_notice_dismissed", remote.id || "x"); }catch(err){} setDismissedId(remote.id || "x"); };
+  return e("div", { className:"service-notice", role:"status" },
+    e("div", { className:"service-notice-text" },
+      showRemote
+        ? remote.message
+        : "Style-LORE is having trouble connecting right now. We know about it and we're working on it — your saved results and closet are safe, and this will clear on its own once things are back."),
+    showRemote ? e("button", { className:"service-notice-x", "aria-label":"Dismiss", onClick:dismiss }, "×") : null
+  );
+}
+
 function App(){
   const [profile, setProfile] = useState(() => loadLocal("lore_profile", null));
   // "Explore without an account": the style quiz, color palette, checker
@@ -7764,7 +7838,10 @@ function App(){
   }
 
   if(!profile && !guest){
-    return e(AccountGate, { onComplete: completeGate, onExplore: exploreAsGuest, startWithForm: gateWantsForm });
+    return e(React.Fragment, null,
+      e(ServiceNotice, null),
+      e(AccountGate, { onComplete: completeGate, onExplore: exploreAsGuest, startWithForm: gateWantsForm })
+    );
   }
   // Signed-out explorer: screens that only make sense with an account get
   // a friendly sign-in prompt instead of a broken screen.
@@ -7801,6 +7878,7 @@ function App(){
   else if(screen === "inbox") body = e(InboxScreen, { profile, onBack:()=>goTo("home"), onOpenConversation:openConversation });
 
   return e("div", { className:"app" },
+    e(ServiceNotice, null),
     e("header", { className:"topbar" },
       e("span", { className:"wordmark", style:{ display:"inline-flex", alignItems:"center", gap:"0.12em" } },
         e(LogoMark, { size:"0.85em" }), "Style-LORE"),
