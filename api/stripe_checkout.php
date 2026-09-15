@@ -9,6 +9,18 @@
  * Needs in config.php: STRIPE_SECRET_KEY, STRIPE_PRICE_MONTHLY,
  * STRIPE_PRICE_YEARLY. The account id rides along as client_reference_id
  * and as subscription metadata so the webhook can map events back.
+ *
+ * TRIAL: the upgrade screen advertises a 7-day free trial on both plans.
+ * Until 2026-09-15 this endpoint never asked Stripe for one, so the very
+ * first real purchase charged $4.99 on the spot while the button said the
+ * week was free — a dispute waiting to happen. TRIAL_DAYS below is what
+ * makes the checkout match the promise, and the copy in index.html
+ * ("Start 7-day free trial", "7-day free trial") must move with it.
+ *
+ * First-time subscribers only: an account that already has a Stripe
+ * customer on file has subscribed before, and giving it another free week
+ * every time it resubscribes is just a way to never pay. Returning
+ * customers go straight to a paid period.
  */
 require_once __DIR__ . '/../includes/helpers.php';
 require_once __DIR__ . '/../includes/stripe.php';
@@ -23,6 +35,8 @@ require_owner($pdo, $visitorId, $authToken);
 rate_limit($pdo, 'stripe_checkout:' . $visitorId, 10, 3600, 'Too many checkout attempts — try again in an hour.');
 
 if (!stripe_configured()) error_response("Card payments aren't set up yet — check back soon.", 503);
+
+const TRIAL_DAYS = 7;
 
 $plan = ($body['plan'] ?? 'monthly') === 'yearly' ? 'yearly' : 'monthly';
 $price = $plan === 'yearly' ? STRIPE_PRICE_YEARLY : STRIPE_PRICE_MONTHLY;
@@ -46,17 +60,16 @@ $params = [
     'subscription_data[metadata][account_id]' => $visitorId,
     'metadata[account_id]' => $visitorId,
 ];
-if ($existingCustomer) $params['customer'] = $existingCustomer;
-elseif ($email !== '') $params['customer_email'] = $email;
-// 7-day free trial for first-time subscribers (no Stripe customer yet and no
-// subscription row ever). Returning customers pay from day one, so nobody
-// can cycle trials by cancelling and re-subscribing.
-$hadSub = false;
-try { $st = $pdo->prepare('SELECT 1 FROM subscriptions WHERE account_id = ?'); $st->execute([$visitorId]); $hadSub = (bool)$st->fetchColumn(); } catch (Throwable $e) {}
-if (!$existingCustomer && !$hadSub) {
-    $params['subscription_data[trial_period_days]'] = 7;
-    // If they never add a card... they do here: Checkout collects the card up front
-    // and charges when the trial ends, cancellable from the portal any time before.
+if ($existingCustomer) {
+    $params['customer'] = $existingCustomer;
+} else {
+    if ($email !== '') $params['customer_email'] = $email;
+    // Never subscribed before → the advertised free week.
+    $params['subscription_data[trial_period_days]'] = (string)TRIAL_DAYS;
+    // Checkout collects a card up front, so this should never fire; if a
+    // trial ever does reach its end with no usable payment method, cancel
+    // it rather than leaving an unpaid invoice chasing the person.
+    $params['subscription_data[trial_settings][end_behavior][missing_payment_method]'] = 'cancel';
 }
 
 $session = stripe_request('POST', '/v1/checkout/sessions', $params);

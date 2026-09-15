@@ -6323,7 +6323,7 @@ function ClosetFeedRow({ item, onOpenProfile }){
   );
 }
 
-function PaywallSheet({ reason, onClose, onPurchased, profile, webCheckout: webCheckoutProp, onSignIn }){
+function PaywallSheet({ reason, onClose, onPurchased, profile, webCheckout: webCheckoutProp, trialEligible = true, onSignIn }){
   const [webBusy, setWebBusy] = useState(null);
   // The website's checkout flag comes from /api/subscription/status. Re-ask
   // when the sheet opens so a status fetched before Stripe was configured
@@ -6410,9 +6410,16 @@ function PaywallSheet({ reason, onClose, onPurchased, profile, webCheckout: webC
   if (!isNative && webCheckout){
     // Website: Stripe's hosted Checkout. Card details never touch our server.
     plansContent = e("div", { style:{ display:"flex", flexDirection:"column", gap:10, marginBottom:12 } },
-      e("button", { className:"btn btn-accent btn-block", disabled:!!webBusy, onClick:()=>webBuy("yearly") }, webBusy === "yearly" ? "Opening checkout…" : "Start 7-day free trial — then $39.99 / year"),
-      e("button", { className:"btn btn-ghost btn-block", disabled:!!webBusy, onClick:()=>webBuy("monthly") }, webBusy === "monthly" ? "Opening checkout…" : "Monthly — $4.99 / month (7-day free trial)"),
-      e("p", { className:"footnote", style:{ margin:"4px 0 0", textAlign:"center" } }, "Free for 7 days, then billed; cancel anytime before and you pay nothing. Secure checkout by Stripe. ",
+      e("button", { className:"btn btn-accent btn-block", disabled:!!webBusy, onClick:()=>webBuy("yearly") },
+        webBusy === "yearly" ? "Opening checkout…"
+          : trialEligible ? "Start 7-day free trial — then $39.99 / year" : "Yearly — $39.99 / year"),
+      e("button", { className:"btn btn-ghost btn-block", disabled:!!webBusy, onClick:()=>webBuy("monthly") },
+        webBusy === "monthly" ? "Opening checkout…"
+          : trialEligible ? "Monthly — $4.99 / month (7-day free trial)" : "Monthly — $4.99 / month"),
+      e("p", { className:"footnote", style:{ margin:"4px 0 0", textAlign:"center" } },
+        trialEligible
+          ? "Free for 7 days, then billed; cancel anytime before and you pay nothing. Secure checkout by Stripe. "
+          : "Billed at checkout; cancel anytime. Secure checkout by Stripe. ",
         e("a", { href:"https://style-lore.com/terms.html", target:"_blank", rel:"noopener" }, "Terms"), " · ", e("a", { href:"https://style-lore.com/privacy.html", target:"_blank", rel:"noopener" }, "Privacy"))
     );
   } else if (!isNative){
@@ -8314,6 +8321,10 @@ function App(){
   const [freeAiReadsLeft, setFreeAiReadsLeft] = useState(0);
   const [digestOptOut, setDigestOptOut] = useState(false);
   const [webCheckout, setWebCheckout] = useState(false);
+  // Only first-time subscribers get the advertised 7-day trial (see
+  // api/stripe_checkout.php), so the upgrade buttons must not promise one to
+  // someone resubscribing.
+  const [trialEligible, setTrialEligible] = useState(true);
   const [giftNotice, setGiftNotice] = useState(null);
   const [referral, setReferral] = useState({ code:null, count:0 });
   const [billing, setBilling] = useState(null); // "stripe" | "play" | null
@@ -8727,7 +8738,7 @@ function App(){
   useEffect(() => {
     if(!profile || !profile.visitorId){ setIsPremium(false); window.STYLE_LORE_REF_CODE = null; return; }
     let cancelled = false;
-    Api.getSubscriptionStatus(profile.visitorId).then(({ isPremium, closetFreeLimit, freeAiReadsLeft, digestOptOut, morningPushOptOut, billing, webCheckout, giftNotice, referralCode, referralCount }) => {
+    Api.getSubscriptionStatus(profile.visitorId).then(({ isPremium, closetFreeLimit, freeAiReadsLeft, digestOptOut, morningPushOptOut, billing, webCheckout, giftNotice, referralCode, referralCount, trialEligible }) => {
       if(cancelled) return;
       setMorningPushOptOut(!!morningPushOptOut);
       setGiftNotice(giftNotice && giftNotice.active ? giftNotice : null);
@@ -8740,6 +8751,9 @@ function App(){
       setDigestOptOut(!!digestOptOut);
       setBilling(billing || null);
       setWebCheckout(!!webCheckout);
+      // Older servers don't send this; default to eligible so a first-time
+      // visitor is never wrongly told the trial isn't available.
+      setTrialEligible(trialEligible === undefined ? true : !!trialEligible);
     }).catch(()=>{});
     return () => { cancelled = true; };
   }, [profile && profile.visitorId, paywallReason === null, upgradeNotice]);
@@ -8993,7 +9007,7 @@ function App(){
     e("main", { className:"app-main" }, body),
     e(BottomNav, { screen, onNavigate:goTo }),
     paywallReason ? e(PaywallSheet, {
-      reason: paywallReason, profile, webCheckout, onSignIn: leaveGuestForGate,
+      reason: paywallReason, profile, webCheckout, trialEligible, onSignIn: leaveGuestForGate,
       onClose: () => setPaywallReason(null),
       onPurchased: () => { setIsPremium(true); setPaywallReason(null); },
     }) : null,

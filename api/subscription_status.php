@@ -13,6 +13,7 @@
  * then this endpoint is the source of truth on every later screen load.
  */
 require_once __DIR__ . '/../includes/helpers.php';
+require_once __DIR__ . '/../includes/stripe.php';
 require_method('GET');
 
 $accountId = (string)($_GET['accountId'] ?? '');
@@ -28,6 +29,12 @@ json_response([
     // Where the subscription came from, so the web can show "Manage" for
     // Stripe subscribers and point store subscribers at their phone.
     'billing' => subscription_billing_source($pdo, $accountId),
+    // Whether the upgrade buttons may promise the 7-day free trial. Only
+    // first-time subscribers get one (see api/stripe_checkout.php), so an
+    // account that has subscribed before must not be shown trial wording it
+    // won't receive — that mismatch is exactly what caused the 2026-09-15
+    // "charged immediately despite the free-trial button" problem.
+    'trialEligible' => stripe_customer_for_account($pdo, $accountId) === null,
     // Free thank-you period (sandbox-era upgrades): the app shows a notice
     // with the end date and a "keep Premium" button instead of "Manage".
     'giftNotice' => subscription_gift_notice($pdo, $accountId),
