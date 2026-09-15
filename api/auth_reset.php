@@ -26,7 +26,11 @@ try {
     }
 
     $passwordHash = password_hash($password, PASSWORD_BCRYPT, ['cost' => 10]);
+    // Password reset signs every other device out, then signs this one in.
+    revoke_all_auth_tokens($pdo, $account['id']);
     $authToken = new_auth_token();
+    ensure_auth_tokens_table($pdo);
+    try { $pdo->prepare('INSERT IGNORE INTO auth_tokens (token_hash, account_id, created_at, last_used_at, label) VALUES (?,?,?,?,?)')->execute([hash_token($authToken), $account['id'], current_time_ms(), current_time_ms(), 'reset']); } catch (Throwable $e) {}
     $pdo->prepare(
         'UPDATE accounts SET password_hash = ?, auth_token_hash = ?, reset_token_hash = NULL, reset_token_expires = NULL WHERE id = ?'
     )->execute([$passwordHash, hash_token($authToken), $account['id']]);

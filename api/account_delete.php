@@ -118,6 +118,7 @@ try {
 
         $pdo->prepare('DELETE FROM notifications WHERE recipient_id = ? OR actor_id = ?')->execute([$id, $id]);
         $pdo->prepare('DELETE FROM device_tokens WHERE account_id = ?')->execute([$id]);
+        try { $pdo->prepare('DELETE FROM auth_tokens WHERE account_id = ?')->execute([$id]); } catch (Throwable $e) {}
         $pdo->prepare('DELETE FROM subscriptions WHERE account_id = ?')->execute([$id]);
 
         $pdo->prepare('DELETE FROM profiles WHERE id = ?')->execute([$id]);

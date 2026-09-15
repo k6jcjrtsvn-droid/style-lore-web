@@ -175,16 +175,92 @@ function bearer_token(): string {
     return (string)($_GET['authToken'] ?? '');
 }
 
+/* ------------------------------------------------------------------
+ * Multi-device sessions (2026-09-15).
+ * Until now an account had ONE auth token (accounts.auth_token_hash), rotated
+ * on every login — so logging in on the phone silently signed the website
+ * out (every write from the older device came back 401: closet sync failed,
+ * the weekly-email checkbox snapped back, and so on). Now each login adds a
+ * row to auth_tokens and every row stays valid until a password reset,
+ * account deletion, or the cap below evicts the oldest. accounts.auth_token_hash
+ * is kept as the most recent token for backwards compatibility.
+ * ------------------------------------------------------------------ */
+const AUTH_TOKENS_PER_ACCOUNT = 10;
+
+function ensure_auth_tokens_table(PDO $pdo): void {
+    static $done = false; if ($done) return; $done = true;
+    try {
+        $pdo->exec('CREATE TABLE IF NOT EXISTS auth_tokens (
+            token_hash CHAR(64) NOT NULL PRIMARY KEY,
+            account_id CHAR(36) NOT NULL,
+            created_at BIGINT NOT NULL,
+            last_used_at BIGINT NOT NULL,
+            label VARCHAR(40) DEFAULT NULL,
+            INDEX idx_account (account_id)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4');
+    } catch (Throwable $e) { error_log('ensure_auth_tokens_table: ' . $e->getMessage()); }
+}
+
+/** Issues a new session token for $accountId and returns it (plain, to hand to the client).
+ *  Keeps the previous single token alive by copying it into auth_tokens first. */
+function issue_auth_token(PDO $pdo, string $accountId, ?string $label = null): string {
+    ensure_auth_tokens_table($pdo);
+    $now = current_time_ms();
+    try {
+        // Preserve whatever device is currently signed in via the legacy column.
+        $st = $pdo->prepare('SELECT auth_token_hash FROM accounts WHERE id = ?'); $st->execute([$accountId]);
+        $legacy = (string)($st->fetchColumn() ?: '');
+        if ($legacy !== '') {
+            $pdo->prepare('INSERT IGNORE INTO auth_tokens (token_hash, account_id, created_at, last_used_at, label) VALUES (?,?,?,?,?)')
+                ->execute([$legacy, $accountId, $now, $now, 'previous']);
+        }
+    } catch (Throwable $e) { error_log('issue_auth_token preserve: ' . $e->getMessage()); }
+    $token = new_auth_token();
+    $hash = hash_token($token);
+    $pdo->prepare('UPDATE accounts SET auth_token_hash = ? WHERE id = ?')->execute([$hash, $accountId]);
+    try {
+        $pdo->prepare('INSERT INTO auth_tokens (token_hash, account_id, created_at, last_used_at, label) VALUES (?,?,?,?,?)')
+            ->execute([$hash, $accountId, $now, $now, $label ? mb_substr($label, 0, 40) : null]);
+        // Cap sessions per account: evict the least recently used beyond the cap.
+        $st = $pdo->prepare('SELECT token_hash FROM auth_tokens WHERE account_id = ? ORDER BY last_used_at DESC');
+        $st->execute([$accountId]);
+        $all = $st->fetchAll(PDO::FETCH_COLUMN);
+        foreach (array_slice($all, AUTH_TOKENS_PER_ACCOUNT) as $old) {
+            $pdo->prepare('DELETE FROM auth_tokens WHERE token_hash = ?')->execute([$old]);
+        }
+    } catch (Throwable $e) { error_log('issue_auth_token insert: ' . $e->getMessage()); }
+    return $token;
+}
+
+/** Signs every device out (password reset, account deletion). */
+function revoke_all_auth_tokens(PDO $pdo, string $accountId): void {
+    ensure_auth_tokens_table($pdo);
+    try { $pdo->prepare('DELETE FROM auth_tokens WHERE account_id = ?')->execute([$accountId]); } catch (Throwable $e) {}
+}
+
 function require_owner(PDO $pdo, string $accountId, ?string $token): void {
     if ($accountId === '' || !$token) {
         error_response('Missing account id or auth token — try logging in again.', 401);
     }
+    $hash = hash_token($token);
     $stmt = $pdo->prepare('SELECT auth_token_hash FROM accounts WHERE id = ?');
     $stmt->execute([$accountId]);
     $row = $stmt->fetch();
-    if (!$row || !$row['auth_token_hash'] || !hash_equals($row['auth_token_hash'], hash_token($token))) {
-        error_response('Not authorized for this account — try logging in again.', 401);
-    }
+    if (!$row) error_response('Not authorized for this account — try logging in again.', 401);
+    if ($row['auth_token_hash'] && hash_equals($row['auth_token_hash'], $hash)) return;
+    // Any other device this account is signed in on.
+    ensure_auth_tokens_table($pdo);
+    try {
+        $st = $pdo->prepare('SELECT 1 FROM auth_tokens WHERE token_hash = ? AND account_id = ?');
+        $st->execute([$hash, $accountId]);
+        if ($st->fetchColumn()) {
+            // Touch at most once a minute to keep the eviction order meaningful without a write per request.
+            $pdo->prepare('UPDATE auth_tokens SET last_used_at = ? WHERE token_hash = ? AND last_used_at < ?')
+                ->execute([current_time_ms(), $hash, current_time_ms() - 60000]);
+            return;
+        }
+    } catch (Throwable $e) { error_log('require_owner auth_tokens: ' . $e->getMessage()); }
+    error_response('Not authorized for this account — try logging in again.', 401);
 }
 
 /**

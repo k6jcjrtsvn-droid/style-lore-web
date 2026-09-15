@@ -21,11 +21,9 @@ try {
         error_response('Incorrect email or password.', 401);
     }
 
-    // A fresh token on every login (simple rotation — an old device's
-    // token stops working once you log in again elsewhere; there's no
-    // multi-device session list, just the one current token per account).
-    $authToken = new_auth_token();
-    $pdo->prepare('UPDATE accounts SET auth_token_hash = ? WHERE id = ?')->execute([hash_token($authToken), $account['id']]);
+    // A fresh token for THIS device. Other devices stay signed in — see
+    // issue_auth_token() in helpers.php (multi-device sessions).
+    $authToken = issue_auth_token($pdo, $account['id'], (string)($body['device'] ?? ''));
 
     $profileStmt = $pdo->prepare('SELECT name FROM profiles WHERE id = ?');
     $profileStmt->execute([$account['id']]);

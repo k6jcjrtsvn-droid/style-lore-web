@@ -2986,7 +2986,7 @@ const Api = {
   async login({ email, password }){
     const r = await fetch("/api/auth/login", {
       method:"POST", headers:{ "Content-Type":"application/json" },
-      body: JSON.stringify({ email, password }),
+      body: JSON.stringify({ email, password, device: (window.STYLE_LORE_NATIVE && window.Capacitor && window.Capacitor.getPlatform ? window.Capacitor.getPlatform() : "web") }),
     });
     if(!r.ok){
       const body = await r.json().catch(()=>({}));
@@ -7451,7 +7451,7 @@ function App(){
   // (logging in elsewhere rotates it). Without this the app kept using a
   // dead token forever: every write failed and the polls swallowed it.
   useEffect(() => {
-    authErrorHandler = () => setSessionExpired(true);
+    authErrorHandler = () => { setSessionExpired(true); try{ window.scrollTo({ top:0, behavior:"smooth" }); }catch(err){} };
     return () => { authErrorHandler = null; };
   }, []);
   useEffect(() => { if(kibbeResult) saveLocal("lore_kibbe", kibbeResult); }, [kibbeResult]);

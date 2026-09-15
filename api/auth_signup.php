@@ -37,6 +37,9 @@ try {
          VALUES (?, ?, ?, ?, ?, 0, ?, ?)'
     );
     $ins1->execute([$id, $email, $passwordHash, $now, hash_token($authToken), hash_token($verifyToken), $verifyExpires]);
+    // Multi-device sessions: record this first token so later logins on other devices don't sign this one out.
+    ensure_auth_tokens_table($pdo);
+    try { $pdo->prepare('INSERT IGNORE INTO auth_tokens (token_hash, account_id, created_at, last_used_at, label) VALUES (?,?,?,?,?)')->execute([hash_token($authToken), $id, $now, $now, 'signup']); } catch (Throwable $e) { error_log('signup auth_tokens: ' . $e->getMessage()); }
     $ins2 = $pdo->prepare('INSERT INTO profiles (id, name, bio, avatar_url, updated_at) VALUES (?, ?, ?, NULL, ?)');
     $ins2->execute([$id, $name, '', $now]);
     $pdo->commit();
