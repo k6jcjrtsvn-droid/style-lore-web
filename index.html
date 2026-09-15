@@ -3313,7 +3313,12 @@ const LoreVision = (function(){
     wasm: new URL("vendor/mediapipe/wasm", location.href).href,
     model: new URL("vendor/mediapipe/pose_landmarker_lite.task", location.href).href,
   };
-  const SOURCES = window.STYLE_LORE_NATIVE ? [LOCAL, CDN] : [CDN];
+  // Only look for the bundled copy when the page is actually running from
+  // the app bundle (https://localhost / capacitor://localhost). An older
+  // app build that still loads style-lore.com in its WebView has Capacitor
+  // injected but no vendor folder, so it must go straight to the CDN.
+  const runningFromBundle = window.STYLE_LORE_NATIVE && /^(https?|capacitor|ionic):\/\/localhost/.test(location.origin);
+  const SOURCES = runningFromBundle ? [LOCAL, CDN] : [CDN];
   let promise = null;
   let lastSource = "";
   async function loadFrom(src){
@@ -3502,7 +3507,7 @@ const KibbeOnDeviceAnalyzer = (function(){
       URL.revokeObjectURL(img.src);
       const detail = err ? ((err.name ? err.name + ": " : "") + (err.message || String(err))) : "unknown";
       if(window.loreReport) window.loreReport("analyzer_load_failed", detail, { stack: err && err.stack, stage: "kibbe", source: LoreVision.lastSource || "" });
-      throw new Error("Couldn't load the on-device analyzer — check your connection and try again. (" + detail.slice(0, 120) + ")");
+      throw new Error("Couldn't load the on-device analyzer — check your connection and try again. (" + detail.slice(0, 300) + ")");
     }
     let result;
     try{
