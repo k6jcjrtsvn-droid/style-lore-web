@@ -130,13 +130,13 @@
     --kibbe-soft-dramatic:#4B2142;
     --kibbe-flamboyant-natural:#7A4A24;
     --kibbe-natural:#4F6B3A;
-    --kibbe-soft-natural:#8C7A5C;
+    --kibbe-soft-natural:#68593E;
     --kibbe-dramatic-classic:#1F3A5C;
     --kibbe-classic:#35577A;
-    --kibbe-soft-classic:#6C84A0;
+    --kibbe-soft-classic:#475C76;
     --kibbe-flamboyant-gamine:#B3491C;
-    --kibbe-gamine:#B3821F;
-    --kibbe-soft-gamine:#C98BA0;
+    --kibbe-gamine:#7E5B12;
+    --kibbe-soft-gamine:#8E5266;
     --kibbe-theatrical-romantic:#7C2348;
     --kibbe-romantic:#A15A73;
 
@@ -279,6 +279,13 @@
     color:var(--ink);
   }
   .topbar-icon-btn:hover{ background:var(--paper-raised); }
+  /* Every Icon() is line art. Without this an icon used outside one of the
+     scoped rules below inherits the browser default — fill black, no stroke —
+     which is why closet and outfit placeholders rendered as solid black
+     silhouettes. Deliberately paint-only: no width/height, so nothing moves. */
+  .ico{ fill:none; stroke:currentColor; stroke-width:1.5; width:1.25em; height:1.25em; }
+  /* Placeholder tiles: a quiet mark, not a giant pink shirt. */
+  .outfit-piece-blank .ico{ width:30px; height:30px; stroke-width:1.2; opacity:.55; }
   .topbar-icon-btn svg{ width:19px; height:19px; stroke:currentColor; fill:none; stroke-width:1.6; }
   .topbar-icon-badge{
     position:absolute; top:2px; right:2px;
@@ -2514,7 +2521,7 @@ function AutoStyleCard({ closet, profile, viewer, isPremium, onSave, onUpgrade }
         ? "Outfits put together from what you own, ranked by how well they sit with your lines — and today's weather."
         : "Let Style-LORE put outfits together from your closet, ranked against your lines and today's weather. Premium builds them for you; you can still build your own any time."),
 
-    !built ? e("button", { className:"btn btn-accent btn-block btn-sm", onClick: styleMe },
+    !built ? e("button", { className:"btn btn-ghost btn-block btn-sm", onClick: styleMe },
       isPremium ? "Style me" : "See what it picks — Premium") : null,
 
     built && !built.ready
@@ -5218,7 +5225,7 @@ function Icon(name){
     edit: "M4 20l4.5-1L19 8.5l-3.5-3.5L5 15.5 4 20Z M14.2 5.8l3.5 3.5",
     trash: "M5 7h14M9 7V5h6v2M7 7l1 13h8l1-13M10 11v6M14 11v6",
   };
-  return e("svg", { viewBox:"0 0 24 24", "aria-hidden":"true" },
+  return e("svg", { viewBox:"0 0 24 24", "aria-hidden":"true", className:"ico" },
     e("path", { d: paths[name] || "", strokeLinecap:"round", strokeLinejoin:"round" })
   );
 }
@@ -5923,15 +5930,12 @@ function gettingStartedSteps({ blend, season, closetCount, outfitCount }){
   ];
 }
 
-function GettingStartedCard({ blend, season, closetCount, outfitCount, onNavigate }){
-  const [hidden, setHidden] = useState(() => !!loadLocal(GETTING_STARTED_DISMISSED, false));
+function GettingStartedCard({ blend, season, closetCount, outfitCount, onNavigate, onHide }){
   const steps = gettingStartedSteps({ blend, season, closetCount, outfitCount });
   const doneCount = steps.filter(s => s.done).length;
-  // Gone for good once it's finished — a checklist of four ticks is clutter.
-  if(hidden || doneCount === steps.length) return null;
   const next = steps.find(s => !s.done);
 
-  function dismiss(){ saveLocal(GETTING_STARTED_DISMISSED, true); setHidden(true); }
+  function dismiss(){ saveLocal(GETTING_STARTED_DISMISSED, true); if(onHide) onHide(); }
 
   return e("div", { className:"card", style:{ padding:14, marginBottom:14 } },
     e("div", { style:{ display:"flex", justifyContent:"space-between", alignItems:"baseline", marginBottom:8 } },
@@ -5944,7 +5948,10 @@ function GettingStartedCard({ blend, season, closetCount, outfitCount, onNavigat
           width:18, height:18, borderRadius:9, flexShrink:0, marginTop:1,
           border:"1px solid " + (s.done ? "var(--accent)" : "var(--line)"),
           background: s.done ? "var(--accent)" : "transparent",
-          color:"#fff", fontSize:11, lineHeight:"17px", textAlign:"center",
+          // --accent-ink, not #fff: in dark mode the accent is a pale pink and
+          // a white tick on it is nearly invisible.
+          color: s.done ? "var(--accent-ink, #fff)" : "transparent",
+          fontSize:11, lineHeight:"17px", textAlign:"center", fontWeight:700,
         } }, s.done ? "✓" : ""),
         e("div", { style:{ minWidth:0 } },
           e("div", { style:{ fontSize:13.5, fontWeight:500, textDecoration: s.done ? "line-through" : "none" } }, s.title),
@@ -5967,6 +5974,14 @@ function HomeScreen({ profile, blend, styleBlend, kibbeResult, colorResult, clos
     : !homeSeason ? { title:"Find your best colors", desc:"Six questions for a palette you can hold up to a garment.", screen:"color" }
     : (closetCount || 0) < 5 ? { title:"Log 5 pieces you wear most", desc:"That's enough for the closet to tell you what's missing.", screen:"closet" }
     : { title:"Check something before you buy it", desc:"Describe it or snap it — the Checker gives a verdict against your type.", screen:"checker" };
+  // Whether the getting-started checklist is showing, so the "Next step"
+  // card below can stand down while it is.
+  const [gsHidden, setGsHidden] = useState(() => !!loadLocal(GETTING_STARTED_DISMISSED, false));
+  const gsSteps = gettingStartedSteps({
+    blend, season: homeSeason, closetCount: closetCount || 0, outfitCount: outfitCount || 0,
+  });
+  const showGettingStarted = !gsHidden && gsSteps.some(s => !s.done);
+
   const [confirmingSignOut, setConfirmingSignOut] = useState(false);
   const [showDeleteAccount, setShowDeleteAccount] = useState(false);
   const [verifyBannerDismissed, setVerifyBannerDismissed] = useState(false);
@@ -6033,11 +6048,15 @@ function HomeScreen({ profile, blend, styleBlend, kibbeResult, colorResult, clos
 
     // The checklist while there is still a first hour to get through; the
     // single "next step" card takes over once it's finished or hidden.
-    e(GettingStartedCard, {
-      blend, season: homeSeason, closetCount: closetCount || 0, outfitCount: outfitCount || 0, onNavigate,
-    }),
+    showGettingStarted ? e(GettingStartedCard, {
+      blend, season: homeSeason, closetCount: closetCount || 0, outfitCount: outfitCount || 0,
+      onNavigate, onHide: () => setGsHidden(true),
+    }) : null,
 
-    nextStep ? e("button", { className:"card", style:{ marginBottom:16, width:"100%", textAlign:"left", display:"block", borderColor:"var(--accent)" }, onClick:()=>onNavigate(nextStep.screen) },
+    // Only once the checklist is done or hidden — otherwise both cards name
+    // the same action and Home reads as if it is repeating itself.
+    showGettingStarted ? null
+    : nextStep ? e("button", { className:"card", style:{ marginBottom:16, width:"100%", textAlign:"left", display:"block", borderColor:"var(--accent)" }, onClick:()=>onNavigate(nextStep.screen) },
       e("div", { className:"eyebrow" }, "Next step"),
       e("div", { style:{ display:"flex", alignItems:"center", justifyContent:"space-between", gap:10 } },
         e("span", { className:"display", style:{ fontSize:19, fontWeight:700 } }, nextStep.title),
