@@ -7025,6 +7025,10 @@ function ClosetScreen({ closet, setCloset, blend, styleWordBlend, kibbeTypeName,
         onSave: saveOutfit, onUpgrade,
         onDelete: deleteOutfit, onSchedule: scheduleOutfit,
         onBuild: (o) => setBuilding(o && o.id ? o : true),
+        // The Outfits tab lives *inside* the Closet screen, so an empty-state
+        // button that navigated to "closet" was a no-op — the user was already
+        // there. It has to switch the sub-tab back to Items and open the sheet.
+        onAddPiece: () => { setTab("items"); handleAddClick(); },
       }),
       building ? e(OutfitBuilderSheet, {
         closet, outfit: building === true ? null : building,
@@ -7246,7 +7250,7 @@ function OutfitThumbs({ items, size = 40 }){
   );
 }
 
-function OutfitsPanel({ outfits, closet, profile, viewer, isPremium, onSave, onDelete, onSchedule, onBuild, onUpgrade }){
+function OutfitsPanel({ outfits, closet, profile, viewer, isPremium, onSave, onDelete, onSchedule, onBuild, onUpgrade, onAddPiece }){
   const byId = useMemo(() => {
     const m = new Map();
     for(const it of (closet || [])) m.set(it.id, it);
@@ -7259,7 +7263,7 @@ function OutfitsPanel({ outfits, closet, profile, viewer, isPremium, onSave, onD
   const [planningFor, setPlanningFor] = useState(null);   // a day string
 
   if(!closet || closet.length < 2){
-    return e(EmptyState, { icon:"closet", action:"+ Add a piece", onAction: () => (window.__loreGoTo ? window.__loreGoTo("closet") : null) },
+    return e(EmptyState, { icon:"closet", action:"+ Add a piece", onAction: () => (onAddPiece ? onAddPiece() : (window.__loreGoTo ? window.__loreGoTo("closet") : null)) },
       "Add at least two pieces to your closet and you can start putting outfits together here.");
   }
 
