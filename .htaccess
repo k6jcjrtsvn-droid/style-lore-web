@@ -71,6 +71,8 @@ RewriteRule ^api/groups/?$ api/groups.php [L,QSA]
 
 # --- Closet public/hidden visibility (per-item) ---------------------------
 RewriteRule ^api/closet/feed/?$ api/closet_feed.php [L,QSA]
+# Styling tips on a public closet item — must precede the bare closet rule.
+RewriteRule ^api/closet/tips/?$ api/closet_tips.php [L,QSA]
 # The owner's own closet, Hidden items included — must come before the bare
 # ^api/closet/?$ rule below or that one would swallow it.
 RewriteRule ^api/closet/mine/?$ api/closet_mine.php [L,QSA]

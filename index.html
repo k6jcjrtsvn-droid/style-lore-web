@@ -4657,6 +4657,23 @@ const Api = {
     return r.json();
   },
 
+  // Styling tips on someone's public closet item (api/closet_tips.php).
+  async getClosetTips(ownerId, itemId){
+    const r = await fetch("/api/closet/tips?ownerId=" + encodeURIComponent(ownerId) + "&itemId=" + encodeURIComponent(itemId));
+    if(!r.ok) throw await apiError(r, "Couldn't load tips.");
+    const d = await r.json();
+    return Array.isArray(d && d.tips) ? d.tips : [];
+  },
+  async addClosetTip(ownerId, itemId, visitorId, authToken, text){
+    const r = await fetch("/api/closet/tips", {
+      method:"POST", headers:{ "Content-Type":"application/json" },
+      body: JSON.stringify({ ownerId, itemId, visitorId, authToken, text }),
+    });
+    if(!r.ok) throw await apiError(r, "Couldn't leave that tip.");
+    const d = await r.json();
+    return Array.isArray(d && d.tips) ? d.tips : [];
+  },
+
   // Saved outfits (api/outfits.php). Same syncVersion-2 contract as the
   // closet: the payload describes changes, not the whole world.
   async getOutfits(visitorId, authToken){
@@ -7354,18 +7371,84 @@ function ClosetRow({ item, profile, onRemove, onToggleVisibility, wornCount, onS
   );
 }
 
-function ClosetFeedRow({ item, onOpenProfile }){
+/* A public closet item in the Community feed, with its styling tips.
+
+   Tips are public on purpose: a private note helps one person, while a tip
+   under the item is there for everyone who scrolls past afterwards. In a
+   community this size that difference is the whole game — it is how a quiet
+   feed accumulates something worth reading.
+
+   The row is no longer a single button. It used to be one big tap target
+   that opened the author's profile, which cannot contain a text field or its
+   own buttons without nesting them inside a button. */
+function ClosetFeedRow({ item, profile, onOpenProfile }){
   const authorName = item.authorName || "Someone";
-  return e("button", {
-    type:"button", className:"row-list-item", style:{ width:"100%", textAlign:"left" },
-    onClick: () => { if(item.authorId && onOpenProfile) onOpenProfile(item.authorId); }
-  },
-    item.photo ? e("img", { src:item.photo, alt:"", className:"zoomable", style:{ width:64, height:64, borderRadius:10, objectFit:"cover", flexShrink:0 }, onClick: ev => { ev.stopPropagation(); openPhoto(item.photo, item.description + " · " + authorName); } })
-      : e("span", { style:{ width:64, height:64, borderRadius:10, background:"var(--paper-raised)", border:"1px solid var(--line)", display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0, color:"var(--ink-soft)" } }, Icon("shirt")),
-    e("div", { style:{ flex:1, minWidth:0 } },
-      e("div", { style:{ fontSize:14, fontWeight:500, marginBottom:4 } }, item.description),
-      e("div", { style:{ fontSize:12, color:"var(--ink-soft)" } }, authorName)
-    )
+  const [open, setOpen] = useState(false);
+  const [tips, setTips] = useState(null);
+  const [text, setText] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+  const isMine = profile && item.authorId === profile.visitorId;
+
+  function toggle(){
+    const next = !open;
+    setOpen(next);
+    if(next && tips === null && item.authorId){
+      Api.getClosetTips(item.authorId, item.id).then(setTips).catch(() => setTips([]));
+    }
+  }
+  async function submit(){
+    const t = text.trim();
+    if(!t || busy) return;
+    setBusy(true); setError(null);
+    try{
+      const updated = await Api.addClosetTip(item.authorId, item.id, profile.visitorId, profile.token, t);
+      setTips(updated); setText("");
+    }catch(err){
+      setError((err && err.message) || "Couldn't leave that tip.");
+    }finally{ setBusy(false); }
+  }
+
+  return e("div", { className:"row-list-item", style:{ flexDirection:"column", alignItems:"stretch", gap:0 } },
+    e("div", { style:{ display:"flex", gap:12, alignItems:"flex-start" } },
+      item.photo ? e("img", { src:item.photo, alt:"", className:"zoomable", style:{ width:64, height:64, borderRadius:10, objectFit:"cover", flexShrink:0 }, onClick: () => openPhoto(item.photo, item.description + " · " + authorName) })
+        : e("span", { style:{ width:64, height:64, borderRadius:10, background:"var(--paper-raised)", border:"1px solid var(--line)", display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0, color:"var(--ink-soft)" } }, Icon("shirt")),
+      e("div", { style:{ flex:1, minWidth:0 } },
+        e("div", { style:{ fontSize:14, fontWeight:500, marginBottom:4 } }, item.description),
+        e("button", {
+          type:"button", className:"btn-text", style:{ padding:0, fontSize:12, color:"var(--ink-soft)" },
+          onClick: () => { if(item.authorId && onOpenProfile) onOpenProfile(item.authorId); },
+        }, authorName),
+        e("div", { style:{ marginTop:6 } },
+          e("button", { type:"button", className:"btn-text", style:{ padding:0, fontSize:12.5 }, onClick: toggle },
+            open ? "Hide tips" : (isMine ? "See tips on this" : "Style this piece"))
+        )
+      )
+    ),
+    open ? e("div", { style:{ marginTop:10, borderTop:"1px solid var(--line-soft)", paddingTop:10 } },
+      tips === null
+        ? e("div", { className:"footnote", style:{ margin:0 } }, "Loading tips…")
+        : tips.length === 0
+          ? e("p", { className:"footnote", style:{ margin:"0 0 8px" } },
+              isMine ? "No tips on this yet." : "No tips yet — yours would be the first.")
+          : e("div", { style:{ display:"flex", flexDirection:"column", gap:8, marginBottom:10 } },
+              tips.map(tip => e("div", { key:tip.id },
+                e("div", { style:{ fontSize:12, color:"var(--ink-soft)", marginBottom:2 } }, tip.authorName),
+                e("div", { style:{ fontSize:13.5, lineHeight:1.5 } }, tip.text)
+              ))
+            ),
+      !profile
+        ? e("p", { className:"footnote", style:{ margin:0 } }, "Sign in to leave a styling tip.")
+        : isMine
+          ? null
+          : e("div", null,
+              e("textarea", { value:text, maxLength:280, rows:2, placeholder:"How would you style this?",
+                onChange: ev => setText(ev.target.value), style:{ marginBottom:8 } }),
+              e("button", { className:"btn btn-accent btn-sm", disabled: busy || !text.trim(), onClick: submit },
+                busy ? "Sending…" : "Leave a tip")
+            ),
+      error ? e(Banner, { kind:"error" }, error) : null
+    ) : null
   );
 }
 
@@ -7755,6 +7838,26 @@ function postsForSpace(visible, space, ctx){
   return [];
 }
 
+/* A quiet room reads as a dead one. When a type's room has almost nothing
+   in it, show posts from the neighbouring types in the same Kibbe family —
+   clearly labelled, never silently mixed in — so a new member's first visit
+   has something to read and something to reply to.
+
+   Same family only: a Soft Natural and a Flamboyant Natural are dressing the
+   same bone structure at different scales, so the advice carries. Padding a
+   Romantic room with Dramatic posts would just be noise with a label on it. */
+const ROOM_MIN_POSTS = 3;
+function relatedRoomPosts(visible, space, ownPosts){
+  if(!space || space.kind !== "kibbe") return [];
+  if(ownPosts.length >= ROOM_MIN_POSTS) return [];
+  const family = (KIBBE_BY_ID[space.id] || {}).family;
+  if(!family) return [];
+  const siblings = new Set(KIBBE_TYPES.filter(t => t.family === family && t.id !== space.id).map(t => t.id));
+  if(siblings.size === 0) return [];
+  const own = new Set(ownPosts.map(p => p.id));
+  return visible.filter(p => siblings.has(p.kibbeTag) && !own.has(p.id)).slice(0, 6);
+}
+
 function spaceLabel(space){
   if(!space) return "";
   if(space.kind === "quick"){
@@ -8057,13 +8160,15 @@ function CommunityScreen({ profile, blend, onOpenProfile }){
         : closetFeed.length === 0
           ? e(EmptyState, { icon:"closet" }, "No public closet items yet — be the first to mark one Public.")
           : e("div", { className:"row-list" },
-              closetFeed.map(item => e(ClosetFeedRow, { key:item.id, item, onOpenProfile }))
+              closetFeed.map(item => e(ClosetFeedRow, { key:item.id, item, profile, onOpenProfile }))
             )
     );
   }
 
   const isGroupSpace = space.kind === "group";
   const feedPosts = isGroupSpace ? (groupFeed || []) : postsForSpace(visible, space, ctx);
+  // Nearly-empty type room? Offer the rest of its family rather than a wall.
+  const relatedPosts = isGroupSpace ? [] : relatedRoomPosts(visible, space, feedPosts);
   const kibbeInfo = space.kind === "kibbe" ? KIBBE_BY_ID[space.id] : null;
   const activeFeedSetter = isGroupSpace ? setGroupFeed : setPosts;
   const feedLoading = isGroupSpace ? groupFeed === null : posts === null;
@@ -8105,13 +8210,29 @@ function CommunityScreen({ profile, blend, onOpenProfile }){
     loadError ? e(Banner, { kind:"error" }, loadError) : null,
     groupError ? e(Banner, { kind:"error" }, groupError) : null,
     feedLoading ? e("div", { style:{ padding:"20px 0" } }, e(Thinking, { label:"Loading feed…" }))
-      : feedPosts.length === 0
+      : (feedPosts.length === 0 && relatedPosts.length === 0)
         ? e(EmptyState, { icon:"community" }, emptyMsg)
-        : e("div", null, feedPosts.map(p => e(PostCard, {
-            key:p.id, post:p, profile, followingIds, onToggleFollow:toggleFollow, onOpenProfile,
-            onPatch: patch => patchPostLocal(activeFeedSetter, p.id, patch),
-            onRemove: () => activeFeedSetter(prev => prev ? prev.filter(x => x.id !== p.id) : prev),
-          })))
+        : e("div", null,
+            feedPosts.map(p => e(PostCard, {
+              key:p.id, post:p, profile, followingIds, onToggleFollow:toggleFollow, onOpenProfile,
+              onPatch: patch => patchPostLocal(activeFeedSetter, p.id, patch),
+              onRemove: () => activeFeedSetter(prev => prev ? prev.filter(x => x.id !== p.id) : prev),
+            })),
+            // Borrowed posts are always labelled. Quietly padding a room with
+            // other types' posts would make the room look busier than it is
+            // and mislead someone about who they are talking to.
+            relatedPosts.length ? e("div", null,
+              e("div", { className:"eyebrow", style:{ marginTop: feedPosts.length ? 20 : 0, marginBottom:8 } },
+                feedPosts.length ? "Also from similar types" : "Nothing here yet — from similar types"),
+              e("p", { className:"footnote", style:{ marginTop:0, marginBottom:12 } },
+                "These are from the rest of the " + ((KIBBE_BY_ID[space.id] || {}).family || "") + " family, who share your bone structure at a different scale. Post yours and this room becomes its own."),
+              relatedPosts.map(p => e(PostCard, {
+                key:p.id, post:p, profile, followingIds, onToggleFollow:toggleFollow, onOpenProfile,
+                onPatch: patch => patchPostLocal(setPosts, p.id, patch),
+                onRemove: () => setPosts(prev => prev ? prev.filter(x => x.id !== p.id) : prev),
+              }))
+            ) : null
+          )
     ,
 
     e("p", { className:"footnote", style:{ marginTop:16 } }, "Keep it kind — no abusive language, photos or videos. Every post has a Report option."),
@@ -9224,9 +9345,21 @@ function NotificationsScreen({ profile, onBack, onOpenProfile, onOpenConversatio
   function handleTap(n){
     if(n.type === "message" && n.data && n.data.conversationId){
       onOpenConversation({ id:n.data.conversationId, otherId:n.data.otherId, otherName:n.data.otherName });
-    } else if(n.actorId && onOpenProfile){
-      onOpenProfile(n.actorId);
+      return;
     }
+    // A poll notification has no actor (it is sent by Style-LORE once votes
+    // reach a milestone), so tapping it must go to Community, not nowhere.
+    if(n.type === "poll"){
+      if(window.__loreGoTo) window.__loreGoTo("community");
+      return;
+    }
+    // A tip is about one of your own closet items — the Closets tab in
+    // Community is where it lives.
+    if(n.type === "tip"){
+      if(window.__loreGoTo) window.__loreGoTo("community");
+      return;
+    }
+    if(n.actorId && onOpenProfile) onOpenProfile(n.actorId);
   }
 
   const list = data ? data.notifications : null;
@@ -9238,7 +9371,7 @@ function NotificationsScreen({ profile, onBack, onOpenProfile, onOpenConversatio
     loadError ? e(Banner, { kind:"error" }, loadError) : null,
     list === null ? e("div", { style:{ padding:"20px 0" } }, e(Thinking, { label:"Loading…" }))
       : list.length === 0
-        ? e(EmptyState, { icon:"community" }, "Nothing yet — likes, comments, follows, and messages will show up here.")
+        ? e(EmptyState, { icon:"community" }, "Nothing yet — likes, comments, follows, messages, votes on your outfits and styling tips will show up here.")
         : e("div", { className:"row-list" },
             list.map(n => e("button", {
               key:n.id, type:"button", className:"row-list-item", style:{ width:"100%", textAlign:"left", opacity: n.read ? 0.7 : 1 },

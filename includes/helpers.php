@@ -736,6 +736,34 @@ function ensure_closet_columns(PDO $pdo): void {
     catch (Throwable $e) { error_log('ensure_closet_columns (deleted index): ' . $e->getMessage()); }
 }
 
+/** Styling tips left on someone's public closet item (api/closet_tips.php).
+ *
+ *  Keyed on (owner_id, item_id) rather than item_id alone: a closet item's
+ *  public id is its client_id, which is unique only within an account, so
+ *  two people's devices can legitimately mint the same one. Keying on the
+ *  item id by itself would hang one person's advice under another person's
+ *  coat. */
+function ensure_closet_tips_table(PDO $pdo): void {
+    static $done = false; if ($done) return; $done = true;
+    try {
+        $pdo->exec(
+            'CREATE TABLE IF NOT EXISTS closet_item_tips (
+                id CHAR(36) NOT NULL PRIMARY KEY,
+                owner_id VARCHAR(64) NOT NULL,
+                item_id VARCHAR(64) NOT NULL,
+                author_id VARCHAR(64) NOT NULL,
+                author_name VARCHAR(60) NOT NULL DEFAULT "",
+                author_avatar_url VARCHAR(255) DEFAULT NULL,
+                text VARCHAR(280) NOT NULL,
+                created_at BIGINT NOT NULL,
+                hidden TINYINT(1) NOT NULL DEFAULT 0,
+                KEY idx_tip_item (owner_id, item_id, hidden),
+                KEY idx_tip_author (author_id)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4'
+        );
+    } catch (Throwable $e) { error_log('ensure_closet_tips_table: ' . $e->getMessage()); }
+}
+
 /** "Help me choose" polls (api/post_vote.php).
  *
  *  Deliberately an extension of `posts` rather than a new content type: a
