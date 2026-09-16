@@ -2429,6 +2429,85 @@ function buildOutfit(closet, profile, seed, weather){
   return { ready:true, pieces, avg, why };
 }
 
+/* Several distinct outfits in one go, best first — the engine behind the
+   Premium "Style me" button in the Outfits tab.
+
+   buildOutfit() is seeded, so running it across many seeds explores the
+   closet rather than repeating one answer. Combinations are de-duplicated
+   by their exact set of pieces (the same four items in a different order is
+   the same outfit), then ranked by how well the pieces score against this
+   person's type, so the best suggestion is the one they see first. */
+function autoBuildOutfits(closet, profile, count, weather){
+  const seen = new Set();
+  const out = [];
+  // 60 attempts is plenty to surface the good combinations in a closet of
+  // any realistic size, and costs nothing — this all runs on the device.
+  for(let i = 0; i < 60 && out.length < (count || 5) * 3; i++){
+    // Integer seeds, spread apart. seededRandom does `seed >>> 0 || 1`, so a
+    // STRING seed coerces to NaN, then to 0, then to 1 — every iteration
+    // would return the identical outfit and "Style me" would offer one
+    // suggestion no matter how big the closet was. (It did, until this
+    // comment existed.) The multiplier keeps consecutive seeds from
+    // producing correlated xorshift streams.
+    const o = buildOutfit(closet, profile, 1013 + i * 7919, weather);
+    if(!o.ready) return { ready:false, need:o.need };
+    const key = o.pieces.map(p => p.item.id).sort().join("|");
+    if(seen.has(key)) continue;
+    seen.add(key);
+    out.push(o);
+  }
+  out.sort((a, b) => b.avg - a.avg);
+  return { ready:true, outfits: out.slice(0, count || 5) };
+}
+
+function AutoStyleCard({ closet, profile, isPremium, onSave, onUpgrade }){
+  const [built, setBuilt] = useState(null);
+  const [saved, setSaved] = useState(() => new Set());
+  const wx = useWeather(!!closet && closet.length > 0);
+
+  function styleMe(){
+    if(!isPremium){ if(onUpgrade) onUpgrade("autostyle"); return; }
+    setBuilt(autoBuildOutfits(closet, profile, 5, wx.weather));
+  }
+  function saveOne(o, i){
+    onSave({
+      id: null,
+      name: defaultOutfitName(o.pieces.map(p => p.item)),
+      itemIds: o.pieces.map(p => p.item.id),
+    });
+    setSaved(prev => new Set(prev).add(i));
+  }
+
+  const labels = { dress:"Dress", top:"Top", bottom:"Bottom", outerwear:"Layer", shoes:"Shoes", accessory:"Finish" };
+
+  return e("div", { className:"card", style:{ padding:14, marginBottom:14 } },
+    e("div", { className:"eyebrow", style:{ marginBottom:4 } }, isPremium ? "Style me" : "Style me · Premium"),
+    e("div", { style:{ fontSize:13.5, lineHeight:1.5, marginBottom:10 } },
+      isPremium
+        ? "Outfits put together from what you own, ranked by how well they sit with your lines — and today's weather."
+        : "Let Style-LORE put outfits together from your closet, ranked against your lines and today's weather. Premium builds them for you; you can still build your own any time."),
+
+    !built ? e("button", { className:"btn btn-accent btn-block btn-sm", onClick: styleMe },
+      isPremium ? "Style me" : "See what it picks — Premium") : null,
+
+    built && !built.ready
+      ? e("p", { className:"footnote", style:{ marginTop:8, marginBottom:0 } }, "Add " + built.need + " and this can build you something.")
+      : null,
+
+    built && built.ready ? e("div", { style:{ display:"flex", flexDirection:"column", gap:12 } },
+      built.outfits.map((o, i) => e("div", { key:i, style:{ borderTop: i ? "1px solid var(--line-soft)" : "none", paddingTop: i ? 12 : 0 } },
+        e(OutfitThumbs, { items: o.pieces.map(p => p.item), size:44 }),
+        e("div", { style:{ fontSize:12.5, color:"var(--ink-soft)", margin:"6px 0" } },
+          o.pieces.map(p => (labels[p.category] || "Piece") + ": " + p.item.description).join(" · ")),
+        saved.has(i)
+          ? e("span", { style:{ fontSize:12.5, color:"var(--accent)" } }, "Saved to your outfits ✓")
+          : e("button", { className:"btn btn-ghost btn-sm", onClick: () => saveOne(o, i) }, "Save this one")
+      )),
+      e("button", { className:"btn-text", style:{ padding:0, fontSize:12.5, alignSelf:"flex-start" }, onClick: styleMe }, "Try again")
+    ) : null
+  );
+}
+
 function OutfitCard({ closet, profile, compact, onNavigate }){
   const [seed, setSeed] = useState(() => dateSeed());
   const wx = useWeather(!!closet && closet.length > 0);
@@ -5739,7 +5818,61 @@ function UpdateBanner({ update }){
   );
 }
 
-function HomeScreen({ profile, blend, styleBlend, kibbeResult, colorResult, closetCount, closet, digestOptOut, onToggleDigest, morningPushOptOut, onToggleMorningPush, isPremium, billing, giftNotice, referral, onManageBilling, onUpgrade, onNavigate, onSignOut, onOpenProfile, onAccountDeleted, onSignIn }){
+/* ---- Getting started -------------------------------------------------
+
+   Someone finishes the quiz, sees their type, and then the app says nothing
+   about what to do next. That gap is the whole problem: the 2026 subscription
+   benchmarks put 84% of trial cancellations in the first 24 hours, so the
+   value has to land in the first hour, not the first week.
+
+   Four steps, each the smallest action with a real payoff at the end of it.
+   Every one is derived from state that already exists — no new storage, no
+   progress counter to drift out of sync with reality, and it stays correct
+   if someone does the steps out of order or on another device. */
+const GETTING_STARTED_DISMISSED = "lore_gs_done";
+function gettingStartedSteps({ blend, season, closetCount, outfitCount }){
+  return [
+    { id:"type",   done: !!blend,              title:"Get your type",        desc:"Your Kibbe lines and your style words.",                 screen:"quiz",   cta:"Take the quiz" },
+    { id:"colors", done: !!season,             title:"Find your colors",     desc:"Six questions for a palette you can hold up to a garment.", screen:"color",  cta:"Find them" },
+    { id:"closet", done: closetCount >= 3,     title:"Log three pieces",     desc:"Enough for the closet to start telling you what's missing.", screen:"closet", cta:"Add a piece" },
+    { id:"outfit", done: outfitCount >= 1,     title:"Build your first outfit", desc:"Put two pieces together and save the combination.",     screen:"closet", cta:"Build one" },
+  ];
+}
+
+function GettingStartedCard({ blend, season, closetCount, outfitCount, onNavigate }){
+  const [hidden, setHidden] = useState(() => !!loadLocal(GETTING_STARTED_DISMISSED, false));
+  const steps = gettingStartedSteps({ blend, season, closetCount, outfitCount });
+  const doneCount = steps.filter(s => s.done).length;
+  // Gone for good once it's finished — a checklist of four ticks is clutter.
+  if(hidden || doneCount === steps.length) return null;
+  const next = steps.find(s => !s.done);
+
+  function dismiss(){ saveLocal(GETTING_STARTED_DISMISSED, true); setHidden(true); }
+
+  return e("div", { className:"card", style:{ padding:14, marginBottom:14 } },
+    e("div", { style:{ display:"flex", justifyContent:"space-between", alignItems:"baseline", marginBottom:8 } },
+      e("div", { className:"eyebrow", style:{ margin:0 } }, "Getting started · " + doneCount + " of " + steps.length),
+      e("button", { className:"btn-text", style:{ padding:0, fontSize:12, color:"var(--ink-soft)" }, onClick: dismiss }, "Hide")
+    ),
+    e("div", { style:{ display:"flex", flexDirection:"column", gap:8, marginBottom:10 } },
+      steps.map(s => e("div", { key:s.id, style:{ display:"flex", gap:9, alignItems:"flex-start", opacity: s.done ? 0.55 : 1 } },
+        e("span", { "aria-hidden":"true", style:{
+          width:18, height:18, borderRadius:9, flexShrink:0, marginTop:1,
+          border:"1px solid " + (s.done ? "var(--accent)" : "var(--line)"),
+          background: s.done ? "var(--accent)" : "transparent",
+          color:"#fff", fontSize:11, lineHeight:"17px", textAlign:"center",
+        } }, s.done ? "✓" : ""),
+        e("div", { style:{ minWidth:0 } },
+          e("div", { style:{ fontSize:13.5, fontWeight:500, textDecoration: s.done ? "line-through" : "none" } }, s.title),
+          !s.done ? e("div", { style:{ fontSize:12.5, color:"var(--ink-soft)", lineHeight:1.45 } }, s.desc) : null
+        )
+      ))
+    ),
+    next ? e("button", { className:"btn btn-accent btn-block btn-sm", onClick: () => onNavigate && onNavigate(next.screen) }, next.cta) : null
+  );
+}
+
+function HomeScreen({ profile, blend, styleBlend, kibbeResult, colorResult, closetCount, closet, outfitCount, digestOptOut, onToggleDigest, morningPushOptOut, onToggleMorningPush, isPremium, billing, giftNotice, referral, onManageBilling, onUpgrade, onNavigate, onSignOut, onOpenProfile, onAccountDeleted, onSignIn }){
   const updateAvailable = useUpdateAvailable();
   const homeType = (kibbeResult && kibbeResult.kibbeTypeId && KIBBE_BY_ID[kibbeResult.kibbeTypeId]) || null;
   const homeWords = styleBlend ? topWords(styleBlend, STYLE_WORDS, 4) : [];
@@ -5813,6 +5946,12 @@ function HomeScreen({ profile, blend, styleBlend, kibbeResult, colorResult, clos
         e("span", { className:"footnote", style:{ margin:0 } }, "$4.99 / month or $39.99 / year · cancel anytime")
       )
     ) : null,
+
+    // The checklist while there is still a first hour to get through; the
+    // single "next step" card takes over once it's finished or hidden.
+    e(GettingStartedCard, {
+      blend, season: homeSeason, closetCount: closetCount || 0, outfitCount: outfitCount || 0, onNavigate,
+    }),
 
     nextStep ? e("button", { className:"card", style:{ marginBottom:16, width:"100%", textAlign:"left", display:"block", borderColor:"var(--accent)" }, onClick:()=>onNavigate(nextStep.screen) },
       e("div", { className:"eyebrow" }, "Next step"),
@@ -6708,7 +6847,8 @@ function ClosetScreen({ closet, setCloset, blend, styleWordBlend, kibbeTypeName,
 
     tab === "outfits" ? e("div", null,
       e(OutfitsPanel, {
-        outfits: outfits || [], closet,
+        outfits: outfits || [], closet, profile, isPremium,
+        onSave: saveOutfit, onUpgrade,
         onDelete: deleteOutfit, onSchedule: scheduleOutfit,
         onBuild: (o) => setBuilding(o && o.id ? o : true),
       }),
@@ -6931,7 +7071,7 @@ function OutfitThumbs({ items, size = 40 }){
   );
 }
 
-function OutfitsPanel({ outfits, closet, onSave, onDelete, onSchedule, onBuild }){
+function OutfitsPanel({ outfits, closet, profile, isPremium, onSave, onDelete, onSchedule, onBuild, onUpgrade }){
   const byId = useMemo(() => {
     const m = new Map();
     for(const it of (closet || [])) m.set(it.id, it);
@@ -6988,6 +7128,8 @@ function OutfitsPanel({ outfits, closet, onSave, onDelete, onSchedule, onBuild }
             )
       ) : null
     ),
+
+    e(AutoStyleCard, { closet, profile, isPremium, onSave, onUpgrade }),
 
     e("button", { className:"btn btn-accent btn-block", style:{ marginBottom:14 }, onClick:onBuild }, "+ Build an outfit"),
 
@@ -7238,6 +7380,8 @@ function PaywallSheet({ reason, onClose, onPurchased, profile, webCheckout: webC
     ? "Premium keeps every check and every stylist read — a shopping notebook you can scroll back through."
     : reason === "capsule"
     ? "Your capsule is ready: the pieces you own that make the most outfits together. Premium shows you which ones, and the combinations."
+    : reason === "autostyle"
+    ? "Premium puts outfits together for you — built from your own closet, ranked against your lines and today's weather. Building your own stays free."
     : reason === "checker"
       ? "A stylist's read on your photo is a Premium feature. Here's what comes with it."
       : reason === "home"
@@ -9864,7 +10008,7 @@ function App(){
       viewerKibbeBlend: blend, viewerStyleWordBlend: styleBlend, viewerKibbeTypeName: kibbeTypeName, viewerTopStyleWords: topStyleWords
     });
   }
-  else if(screen === "home") body = e(HomeScreen, { profile, blend, styleBlend, kibbeResult, colorResult, closetCount: closet.length, closet, digestOptOut, onToggleDigest: toggleDigest, morningPushOptOut, onToggleMorningPush: toggleMorningPush, isPremium, billing, giftNotice, referral, onManageBilling: openBillingPortal, onUpgrade:openPaywall, onNavigate:goTo, onSignOut:signOut, onOpenProfile:openProfile, onAccountDeleted:handleAccountDeleted, onSignIn:leaveGuestForGate });
+  else if(screen === "home") body = e(HomeScreen, { profile, blend, styleBlend, kibbeResult, colorResult, closetCount: closet.length, closet, outfitCount: (outfits || []).length, digestOptOut, onToggleDigest: toggleDigest, morningPushOptOut, onToggleMorningPush: toggleMorningPush, isPremium, billing, giftNotice, referral, onManageBilling: openBillingPortal, onUpgrade:openPaywall, onNavigate:goTo, onSignOut:signOut, onOpenProfile:openProfile, onAccountDeleted:handleAccountDeleted, onSignIn:leaveGuestForGate });
   else if(screen === "quiz") body = e(StyleQuizScreen, { kibbeResult, styleLanguageResult:styleBlend, onSaveKibbe:setKibbeResult, onSaveStyle:setStyleBlend, onSignIn: profile ? null : leaveGuestForGate, colorResult });
   else if(screen === "color") body = e(ColorScreen, { colorResult, onSaveColor:setColorResult });
   else if(screen === "closet") body = e(ClosetScreen, { closet, setCloset, blend, styleWordBlend:styleBlend, kibbeTypeName, topStyleWords, profile, isPremium, closetFreeLimit, onUpgrade:openPaywall, syncStatus:closetSyncStatus, onRetrySync:retryClosetSync, storageFull:closetStorageFull, outfits, setOutfits });
