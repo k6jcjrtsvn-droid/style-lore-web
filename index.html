@@ -1691,8 +1691,220 @@ function shopSearchUrl(query){
   const dept = w === "men" ? "fashion-mens" : w === "both" ? "fashion" : "fashion-womens";
   return "https://www.amazon.com/s?k=" + encodeURIComponent(query + suffix) + "&i=" + dept + "&tag=" + AMAZON_ASSOCIATE_TAG + "&ref_=style_lore";
 }
+/* ---- What the Shop links actually search for ------------------------
+
+   Until 2026-09-16 a chip labelled "Shop angular & sharp" searched Amazon
+   for literally `angular sharp clothing women`. Amazon matches product
+   titles, and no garment on earth is titled "angular sharp clothing", so
+   the results were close to random — the chips looked like styling advice
+   and behaved like a broken search box. Every style axis had the same
+   problem ("crisp structured clothing", "curved flowing clothing"…).
+
+   So the label and the query are now separate things. The chip still says
+   what it means to a person; the query underneath is a garment someone
+   could actually buy, phrased the way shoppers and product titles phrase
+   it. That is both better advice and — since specific product searches
+   convert and adjective soup doesn't — the difference between the
+   affiliate integration earning something and earning nothing. */
+const AXIS_SHOP_QUERY = {
+  "crisp & structured": "tailored blazer",
+  "soft & relaxed":     "relaxed drape cardigan",
+  "plain & minimal":    "minimalist solid knit top",
+  "ornate & detailed":  "embroidered detail blouse",
+  "curved & flowing":   "bias cut midi skirt",
+  "angular & sharp":    "structured shoulder blazer",
+  "delicate & petite":  "fine knit fitted top",
+  "bold & oversized":   "oversized knit sweater",
+};
+
+/* Per-type garment picks, womenswear. Each one is written to match that
+   type's own description in KIBBE_TYPES above — so the shop row can never
+   contradict the guide the person just read. Six per type: a dress, a top,
+   a bottom, a layer, a knit and shoes, which is enough to be useful without
+   turning into a catalogue. */
+const KIBBE_SHOP_W = {
+  "dramatic": [
+    ["Long column dress", "long column maxi dress"],
+    ["Sharp-shouldered blazer", "structured shoulder blazer"],
+    ["Straight tailored trousers", "high waisted straight leg trousers"],
+    ["Longline coat", "longline wool coat"],
+    ["Fine-gauge turtleneck", "fine gauge turtleneck sweater"],
+    ["Pointed-toe boots", "pointed toe knee high boots"],
+  ],
+  "soft-dramatic": [
+    ["Draped maxi dress", "draped satin maxi dress"],
+    ["Statement-shoulder blazer", "padded shoulder blazer"],
+    ["Wide-leg satin trousers", "satin wide leg trousers"],
+    ["Longline duster", "longline duster coat"],
+    ["Soft drape knit", "slouchy drape knit top"],
+    ["Strappy heels", "strappy heeled sandals"],
+  ],
+  "flamboyant-natural": [
+    ["Maxi shirt dress", "maxi shirt dress"],
+    ["Oversized denim jacket", "oversized denim jacket"],
+    ["Wide-leg linen trousers", "wide leg linen trousers"],
+    ["Long open cardigan", "long open front cardigan"],
+    ["Chunky knit sweater", "chunky oversized knit sweater"],
+    ["Block-heel ankle boots", "block heel ankle boots"],
+  ],
+  "natural": [
+    ["Bias-cut midi skirt", "bias cut midi skirt"],
+    ["Relaxed linen shirt", "relaxed fit linen shirt"],
+    ["Straight-leg jeans", "straight leg jeans"],
+    ["Cotton utility jacket", "cotton utility jacket"],
+    ["Easy cotton sweater", "relaxed fit cotton sweater"],
+    ["Leather sneakers", "white leather sneakers"],
+  ],
+  "soft-natural": [
+    ["Jersey wrap dress", "jersey wrap dress"],
+    ["Draped blouse", "draped v neck blouse"],
+    ["Flowy wide-leg trousers", "flowy wide leg trousers"],
+    ["Waterfall cardigan", "waterfall drape cardigan"],
+    ["Soft trench", "lightweight drape trench coat"],
+    ["Almond-toe flats", "almond toe ballet flats"],
+  ],
+  "dramatic-classic": [
+    ["Sheath dress", "sheath midi dress"],
+    ["Crisp poplin shirt", "crisp poplin button down shirt"],
+    ["Tailored straight trousers", "tailored straight leg trousers"],
+    ["Single-breasted blazer", "single breasted tailored blazer"],
+    ["Clean wool coat", "tailored wool coat"],
+    ["Pointed pumps", "pointed toe pumps"],
+  ],
+  "classic": [
+    ["Shift dress", "shift midi dress"],
+    ["Silk blouse", "silk button blouse"],
+    ["Straight trousers", "straight leg trousers"],
+    ["Tailored blazer", "classic tailored blazer"],
+    ["Trench coat", "classic trench coat"],
+    ["Leather loafers", "leather loafers"],
+  ],
+  "soft-classic": [
+    ["Belted wrap dress", "belted wrap midi dress"],
+    ["Round-neck knit", "round neck fine knit sweater"],
+    ["Soft tailored trousers", "soft tailored wide trousers"],
+    ["Unstructured blazer", "unstructured soft blazer"],
+    ["Belted wrap coat", "belted wool wrap coat"],
+    ["Round-toe pumps", "round toe low heel pumps"],
+  ],
+  "flamboyant-gamine": [
+    ["Graphic mini dress", "graphic print mini dress"],
+    ["Cropped boxy jacket", "cropped boxy jacket"],
+    ["Slim cropped trousers", "slim cropped ankle trousers"],
+    ["Colour-block knit", "color block sweater"],
+    ["Small-print shirt", "small print button up shirt"],
+    ["Pointed flats", "pointed toe flats"],
+  ],
+  "gamine": [
+    ["Pleated mini skirt", "pleated mini skirt"],
+    ["Breton striped tee", "striped breton tee"],
+    ["High-waisted slim jeans", "high waisted slim jeans"],
+    ["Cropped structured jacket", "cropped structured jacket"],
+    ["Cropped cardigan", "cropped cardigan"],
+    ["Low-heel ankle boots", "ankle boots low heel"],
+  ],
+  "soft-gamine": [
+    ["Fit-and-flare dress", "fit and flare mini dress"],
+    ["Scoop-neck knit", "scoop neck fitted sweater"],
+    ["High-waisted skinny jeans", "high waisted skinny jeans"],
+    ["Cropped soft cardigan", "cropped soft cardigan"],
+    ["Ruffle-detail blouse", "ruffle detail blouse"],
+    ["Ballet flats", "ballet flats"],
+  ],
+  "theatrical-romantic": [
+    ["Fitted-waist midi dress", "fitted waist midi dress"],
+    ["Wrap blouse", "v neck wrap blouse"],
+    ["High-waist pencil skirt", "high waist pencil skirt"],
+    ["Belted fit-and-flare coat", "belted fit and flare coat"],
+    ["Lace-trim top", "lace trim blouse"],
+    ["Stiletto pumps", "stiletto pumps"],
+  ],
+  "romantic": [
+    ["Soft wrap dress", "soft wrap midi dress"],
+    ["Sweetheart neckline top", "sweetheart neckline top"],
+    ["Flowy A-line skirt", "flowy a line midi skirt"],
+    ["Soft belted coat", "soft belted wrap coat"],
+    ["Draped blouse", "soft draped blouse"],
+    ["Round-toe heels", "round toe heels"],
+  ],
+};
+
+/* Menswear is keyed to the five FAMILIES rather than all thirteen types.
+   The yin/yang variants mostly change fabric weight and fit within the same
+   menswear wardrobe, so thirteen near-identical lists would be false
+   precision — this is an honest level of detail rather than a shortcut. */
+const KIBBE_SHOP_M = {
+  dramatic: [
+    ["Longline overcoat", "longline overcoat"],
+    ["Sharp-shouldered suit jacket", "structured shoulder suit jacket"],
+    ["Slim straight trousers", "slim straight leg trousers"],
+    ["Fine-gauge turtleneck", "fine gauge turtleneck"],
+    ["Knit polo", "merino knit polo"],
+    ["Chelsea boots", "leather chelsea boots"],
+  ],
+  natural: [
+    ["Relaxed linen shirt", "relaxed fit linen shirt"],
+    ["Unstructured blazer", "unstructured cotton blazer"],
+    ["Straight-leg jeans", "straight leg jeans"],
+    ["Chunky knit sweater", "chunky knit sweater"],
+    ["Field jacket", "cotton field jacket"],
+    ["Suede desert boots", "suede desert boots"],
+  ],
+  classic: [
+    ["Tailored wool blazer", "tailored wool blazer"],
+    ["Oxford shirt", "oxford button down shirt"],
+    ["Straight chinos", "straight leg chinos"],
+    ["Merino crew neck", "crew neck merino sweater"],
+    ["Trench coat", "classic trench coat"],
+    ["Leather derbies", "leather derby shoes"],
+  ],
+  gamine: [
+    ["Cropped bomber", "cropped bomber jacket"],
+    ["Slim chinos", "slim fit chinos"],
+    ["Striped crew tee", "striped crew neck tee"],
+    ["Textured knit polo", "textured knit polo"],
+    ["Patterned short-sleeve shirt", "patterned short sleeve shirt"],
+    ["Low-profile sneakers", "low profile leather sneakers"],
+  ],
+  romantic: [
+    ["Soft drape shirt", "soft drape shirt"],
+    ["Relaxed knit cardigan", "relaxed knit cardigan"],
+    ["Pleated tapered trousers", "pleated tapered trousers"],
+    ["Soft crew-neck sweater", "soft blend crew neck sweater"],
+    ["Unstructured soft blazer", "unstructured soft blazer"],
+    ["Suede loafers", "suede loafers"],
+  ],
+};
+
 function shopQueryFromAxisLabel(label){
-  return label.replace(/\s*&\s*/g, " ") + " clothing";
+  // A garment, not the adjective. Falls back to the old shape only if an
+  // axis label ever appears that isn't in the table.
+  return AXIS_SHOP_QUERY[label] || (label.replace(/\s*&\s*/g, " ") + " clothing");
+}
+
+/* The garment picks for this person: their Kibbe type's list, or their
+   family's menswear list, in the order the type description implies.
+   Returns [{label, query}] — the caller decides how many to show. */
+function shopPicksForProfile(profile, max){
+  const typeId = profile && profile.kibbeTypeId
+    || (profile && profile.kibbeBlend ? topKibbeTypeId(profile.kibbeBlend) : null);
+  const wardrobe = getWardrobe();
+  let rows = null;
+  if(typeId){
+    if(wardrobe === "men"){
+      const family = (KIBBE_BY_ID[typeId] || {}).family;
+      rows = KIBBE_SHOP_M[family] || null;
+    } else {
+      rows = KIBBE_SHOP_W[typeId] || null;
+    }
+  }
+  // No type yet (style words only, or an unrecognised id): fall back to the
+  // axis picks, which at least come from this person's own results.
+  if(!rows){
+    return shopLabelsForProfile(profile, max || 3)
+      .map(label => ({ label, query: shopQueryFromAxisLabel(label) }));
+  }
+  return rows.slice(0, max || 3).map(([label, query]) => ({ label, query }));
 }
 
 /* The style-axis labels that suit this person, straight from their quiz
@@ -2509,13 +2721,18 @@ function CapsuleCard({ closet, profile, isPremium, onUpgrade }){
   );
 }
 
-function ShopTheGap({ labels }){
-  const unique = Array.from(new Set((labels || []).filter(Boolean))).slice(0, 3);
-  if (unique.length === 0) return null;
+function ShopTheGap({ labels, picks }){
+  // `picks` are {label, query} garment picks; `labels` are style-axis labels
+  // that get mapped to a garment query. Both end up as the same chip.
+  const rows = picks && picks.length
+    ? picks.slice(0, 3)
+    : Array.from(new Set((labels || []).filter(Boolean))).slice(0, 3)
+        .map(label => ({ label, query: shopQueryFromAxisLabel(label) }));
+  if (rows.length === 0) return null;
   return e("div", { style:{ marginTop:10, marginBottom:16 } },
     e("div", { style:{ display:"flex", flexWrap:"wrap", gap:8 } },
-      unique.map(label => e("a", {
-        key:label, href: shopSearchUrl(shopQueryFromAxisLabel(label)),
+      rows.map(({ label, query }) => e("a", {
+        key:label, href: shopSearchUrl(query),
         target:"_blank", rel:"noopener noreferrer sponsored",
         style:{ padding:"6px 12px", border:"1px solid var(--line)", borderRadius:20, fontSize:12.5, color:"var(--ink)", textDecoration:"none" },
       }, "Shop " + label))
@@ -2532,16 +2749,16 @@ function ShopTheGap({ labels }){
    gap-driven ShopTheGap row above stays exactly as it was and takes
    priority when there IS something specific to say. */
 function ShopForYourType({ profile, heading }){
-  const labels = shopLabelsForProfile(profile, 3);
-  if (labels.length === 0) return null;
+  const picks = shopPicksForProfile(profile, 3);
+  if (picks.length === 0) return null;
   const typeName = profile && profile.kibbeTypeName;
   return e("div", { className:"card", style:{ padding:14, marginBottom:14 } },
     e("div", { className:"eyebrow", style:{ marginBottom:4 } }, heading || "Shop your lines"),
     e("div", { style:{ fontSize:13.5, lineHeight:1.5, marginBottom:2 } },
       typeName
-        ? "Searches set up for " + typeName + " lines — a starting point, not a shopping list."
-        : "Searches set up for your lines — a starting point, not a shopping list."),
-    e(ShopTheGap, { labels })
+        ? "Pieces that follow " + typeName + " lines — a starting point, not a shopping list."
+        : "Pieces that follow your lines — a starting point, not a shopping list."),
+    e(ShopTheGap, { picks })
   );
 }
 
