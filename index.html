@@ -1140,7 +1140,7 @@
 <li><strong>Your colors</strong> — a seasonal palette with swatches big enough to hold up to a garment in a store.</li>
 <li><strong>The Checker</strong> — describe a piece or snap a photo and get a verdict against your type before you buy it.</li>
 <li><strong>Your closet</strong> — log what you own, see today's outfit, and find the gaps.</li>
-<li><strong>Premium</strong> — an AI stylist's read on any photo, an unlimited closet with a capsule builder, and every check saved. $4.99 a month or $39.99 a year.</li>
+<li><strong>Premium</strong> — outfits built for you from your own closet with a stylist's note on why each works, an AI stylist's read on any photo, an unlimited closet with a gap list and capsule builder, and every check saved. $4.99 a month or $39.99 a year, with a 7-day free trial the first time.</li>
 </ul>
 </main>
 </div>
@@ -5438,10 +5438,13 @@ function LandingBelowFold({ onQuiz }){
     e("button", { type:"button", className:"btn btn-accent btn-block landing-cta", onClick:onQuiz }, "Find my type — free"),
     e("h2", null, "Good to know"),
     e("div", { className:"landing-faq" },
-      e("details", null, e("summary", null, "Is the quiz really free?"), e("p", null, "Yes. Your body type, style words and colors are free, and you can keep them without an account. An account is only for saving across devices, the closet sync and the community.")),
-      e("details", null, e("summary", null, "Is my photo uploaded anywhere?"), e("p", null, "No. The photo step of the quiz runs on your own phone or computer — the picture never leaves your device. The optional AI Stylist read (Premium) does send that one photo to be analysed, and only when you ask for it.")),
+      e("details", null, e("summary", null, "Is the quiz really free?"), e("p", null, "Yes. Your body type, style words and colors are free, and you can keep them without an account. So is logging your closet, building outfits, planning your week, and checking a garment before you buy it. An account is only for saving across devices, the closet sync and the community.")),
+      e("details", null, e("summary", null, "Is my photo uploaded anywhere?"), e("p", null, "Almost never, and never without you asking. The photo step of the quiz, the instant fit check, and cleaning up a closet photo's background all run on your own phone or computer — those pictures never leave your device. Two features do send one photo when you tap them and say so at the time: “Describe it for me” on a closet item, and the Premium AI Stylist read. Neither stores the photo.")),
+      e("details", null, e("summary", null, "Who can see what I post?"), e("p", null, "Community posts are visible to other Style-LORE members. Closet items stay private unless you mark one Public. When you write a post you can choose to make that one post shareable by link, which lets anyone open it — that is off unless you turn it on, it applies only to the post you are writing, and search engines are told not to list it.")),
+      e("details", null, e("summary", null, "Can I plan what to wear?"), e("p", null, "Yes. Put pieces from your closet together, save the combination, and drop it onto a day in the week ahead. Today's outfit also reads the weather, so a rainy Tuesday gets a layer.")),
       e("details", null, e("summary", null, "Does it work for menswear?"), e("p", null, "Yes. Choose menswear, womenswear or both, and the questions, outfit ideas and shopping links follow suit.")),
-      e("details", null, e("summary", null, "What does Premium add?"), e("p", null, "A stylist's read on any photo, a closet with no limit plus a gap list and capsule, and every check saved. $4.99 a month or $39.99 a year, with a free trial. Everything else stays free.")),
+      e("details", null, e("summary", null, "Can I see what my clothes actually cost me?"), e("p", null, "If you want to. Adding what a piece cost is optional, and the closet then works out your cost per wear — the £15-a-wear boots you keep reaching for versus the coat that has cost you its full price once. The price is private to you and never appears anywhere other people can see.")),
+      e("details", null, e("summary", null, "What does Premium add?"), e("p", null, "Outfits built for you from your own closet and ranked against your lines, with a stylist's note on why each one works; a stylist's read on any photo; a closet with no limit plus a gap list and capsule; and every check saved. $4.99 a month or $39.99 a year, with a 7-day free trial the first time. Everything else — the quiz, your colors, the closet, the outfit builder, the checker and the community — stays free.")),
       e("details", null, e("summary", null, "Is there an app?"), e("p", null, "Yes — Style-LORE is on Google Play (beta) with iPhone coming. The website is the same app, so you can start here and pick up on your phone."))
     ),
     e("p", { className:"landing-foot" },
@@ -7601,7 +7604,7 @@ function PaywallSheet({ reason, onClose, onPurchased, profile, webCheckout: webC
       e("p", { style:{ fontSize:14, color:"var(--ink-soft)", marginBottom:16 } }, reasonCopy),
       e("ul", { style:{ margin:"0 0 20px", paddingLeft:20, fontSize:13.5, color:"var(--ink-soft)", display:"flex", flexDirection:"column", gap:6 } },
         e("li", null, e("strong", null, "AI Stylist"), " — send any photo and get specific feedback on the cut, the color and the fit, plus what to change."),
-        e("li", null, e("strong", null, "Your whole wardrobe"), " — an unlimited closet, the gap read that tells you what to buy next, and a capsule builder that finds the pieces that make the most outfits."),
+        e("li", null, e("strong", null, "Your whole wardrobe"), " — an unlimited closet, the gap read that tells you what to buy next, a capsule builder that finds the pieces making the most outfits, and outfits put together for you with a note on why each one works."),
         e("li", null, e("strong", null, "A shopping notebook"), " — every check and stylist read saved, so you never wonder what the verdict was."),
         e("li", null, e("strong", null, "Still private"), " — your closet and quiz never leave your phone; only the photos you send to the AI Stylist do."),
         e("li", null, isNative ? "Cancel anytime from your phone's subscription settings." : "Cancel anytime — one click from your account, no calls, no emails.")
