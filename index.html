@@ -2460,14 +2460,41 @@ function autoBuildOutfits(closet, profile, count, weather){
   return { ready:true, outfits: out.slice(0, count || 5) };
 }
 
-function AutoStyleCard({ closet, profile, isPremium, onSave, onUpgrade }){
+function AutoStyleCard({ closet, profile, viewer, isPremium, onSave, onUpgrade }){
   const [built, setBuilt] = useState(null);
   const [saved, setSaved] = useState(() => new Set());
+  const [notes, setNotes] = useState(null);        // [string] aligned with built.outfits
+  const [notesState, setNotesState] = useState("idle");  // idle | busy | done | unavailable
+  const [notesMessage, setNotesMessage] = useState(null);
   const wx = useWeather(!!closet && closet.length > 0);
 
   function styleMe(){
     if(!isPremium){ if(onUpgrade) onUpgrade("autostyle"); return; }
     setBuilt(autoBuildOutfits(closet, profile, 5, wx.weather));
+    setNotes(null); setNotesState("idle"); setNotesMessage(null);
+  }
+
+  /* Written notes are a second, optional step rather than part of building.
+     The outfits appear instantly and for free; this spends a model call only
+     when someone asks why these pieces. If it fails or the monthly allowance
+     is gone, the outfits are untouched and we just say so quietly. */
+  async function explain(){
+    if(!built || !built.ready || !viewer || notesState === "busy") return;
+    setNotesState("busy"); setNotesMessage(null);
+    const payload = built.outfits.map(o => ({
+      pieces: o.pieces.map(p => ({ category: p.category, description: p.item.description })),
+    }));
+    const res = await Api.stylistNotes(viewer.visitorId, viewer.token, payload, {
+      kibbeTypeName: profile && profile.kibbeTypeName,
+      styleWords: (profile && profile.topStyleWords) || [],
+    }, wx && wx.weather ? weatherHeadline(wx.weather) : "");
+    if(res && res.ok && Array.isArray(res.notes)){
+      setNotes(res.notes);
+      setNotesState("done");
+    } else {
+      setNotesState("unavailable");
+      setNotesMessage((res && res.message) || null);
+    }
   }
   function saveOne(o, i){
     onSave({
@@ -2499,11 +2526,22 @@ function AutoStyleCard({ closet, profile, isPremium, onSave, onUpgrade }){
         e(OutfitThumbs, { items: o.pieces.map(p => p.item), size:44 }),
         e("div", { style:{ fontSize:12.5, color:"var(--ink-soft)", margin:"6px 0" } },
           o.pieces.map(p => (labels[p.category] || "Piece") + ": " + p.item.description).join(" · ")),
+        notes && notes[i] ? e("p", { style:{ fontSize:13, lineHeight:1.5, margin:"0 0 8px", fontStyle:"italic" } }, notes[i]) : null,
         saved.has(i)
           ? e("span", { style:{ fontSize:12.5, color:"var(--accent)" } }, "Saved to your outfits ✓")
           : e("button", { className:"btn btn-ghost btn-sm", onClick: () => saveOne(o, i) }, "Save this one")
       )),
-      e("button", { className:"btn-text", style:{ padding:0, fontSize:12.5, alignSelf:"flex-start" }, onClick: styleMe }, "Try again")
+      e("div", { style:{ display:"flex", gap:14, alignItems:"center", flexWrap:"wrap" } },
+        e("button", { className:"btn-text", style:{ padding:0, fontSize:12.5 }, onClick: styleMe }, "Try again"),
+        (viewer && notesState !== "done")
+          ? e("button", { className:"btn-text", style:{ padding:0, fontSize:12.5 }, disabled: notesState === "busy", onClick: explain },
+              notesState === "busy" ? "Asking the stylist…" : "Why these?")
+          : null
+      ),
+      notesState === "unavailable"
+        ? e("p", { className:"footnote", style:{ margin:0 } },
+            notesMessage || "The stylist's notes aren't available right now — your outfits are unaffected.")
+        : null
     ) : null
   );
 }
@@ -4195,6 +4233,23 @@ const Api = {
     });
     if(!r.ok) throw await apiError(r, "Couldn't record your vote.");
     return r.json();
+  },
+  /* The Premium stylist's written note on each outfit. The picks are already
+     on screen and came from the device; this only adds words. Every failure
+     mode resolves to {ok:false}, never a thrown error, because losing the
+     commentary must never look like losing the outfits. */
+  async stylistNotes(visitorId, authToken, outfits, profile, weather){
+    try{
+      const r = await fetch("/api/stylist/outfits", {
+        method:"POST", headers:{ "Content-Type":"application/json" },
+        body: JSON.stringify({ visitorId, authToken, outfits, profile, weather: weather || "" }),
+      });
+      const data = await r.json().catch(() => null);
+      if(!r.ok || !data) return { ok:false, code: (data && data.code) || "fallback", message: data && data.message };
+      return data;
+    }catch(err){
+      return { ok:false, code:"fallback" };
+    }
   },
   async createPost(formData){
     const r = await fetch("/api/posts", { method:"POST", body:formData });
@@ -6858,7 +6913,7 @@ function ClosetScreen({ closet, setCloset, blend, styleWordBlend, kibbeTypeName,
 
     tab === "outfits" ? e("div", null,
       e(OutfitsPanel, {
-        outfits: outfits || [], closet, profile, isPremium,
+        outfits: outfits || [], closet, profile, viewer, isPremium,
         onSave: saveOutfit, onUpgrade,
         onDelete: deleteOutfit, onSchedule: scheduleOutfit,
         onBuild: (o) => setBuilding(o && o.id ? o : true),
@@ -7082,7 +7137,7 @@ function OutfitThumbs({ items, size = 40 }){
   );
 }
 
-function OutfitsPanel({ outfits, closet, profile, isPremium, onSave, onDelete, onSchedule, onBuild, onUpgrade }){
+function OutfitsPanel({ outfits, closet, profile, viewer, isPremium, onSave, onDelete, onSchedule, onBuild, onUpgrade }){
   const byId = useMemo(() => {
     const m = new Map();
     for(const it of (closet || [])) m.set(it.id, it);
@@ -7140,7 +7195,7 @@ function OutfitsPanel({ outfits, closet, profile, isPremium, onSave, onDelete, o
       ) : null
     ),
 
-    e(AutoStyleCard, { closet, profile, isPremium, onSave, onUpgrade }),
+    e(AutoStyleCard, { closet, profile, viewer, isPremium, onSave, onUpgrade }),
 
     e("button", { className:"btn btn-accent btn-block", style:{ marginBottom:14 }, onClick:onBuild }, "+ Build an outfit"),
 

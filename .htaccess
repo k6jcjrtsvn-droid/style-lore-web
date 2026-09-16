@@ -49,6 +49,8 @@ RewriteRule ^api/admin/broadcast/?$ api/admin_broadcast.php [L,QSA]
 RewriteRule ^api/checker/photo/?$ api/checker_photo.php [L,QSA]
 
 RewriteRule ^api/subscription/status/?$ api/subscription_status.php [L,QSA]
+# The Premium stylist's written notes on a set of outfits (api/stylist_outfits.php).
+RewriteRule ^api/stylist/outfits/?$ api/stylist_outfits.php [L,QSA]
 RewriteRule ^api/revenuecat/webhook/?$ api/revenuecat_webhook.php [L,QSA]
 
 # --- Community/social features phase: Notifications, DMs, Stories, Groups
