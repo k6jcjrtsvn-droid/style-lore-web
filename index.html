@@ -3980,13 +3980,20 @@ async function renderResultCard({ typeName, typeId, tag, color, words, seasonNam
   try{ if(document.fonts && document.fonts.load){ await Promise.all([document.fonts.load("700 96px 'Bodoni Moda'"), document.fonts.load("600 34px 'Work Sans'")]); } }catch(err){}
   const W = 1080, H = 1350;
   const c = document.createElement("canvas"); c.width = W; c.height = H;
-  const ctx = c.getContext("2d");
+  const base = c.getContext("2d");
   const bg = resolveColor(color);
-  ctx.fillStyle = bg; ctx.fillRect(0, 0, W, H);
+  base.fillStyle = bg; base.fillRect(0, 0, W, H);
   // soft glow
-  const g = ctx.createRadialGradient(W * .8, H * .15, 40, W * .8, H * .15, 700);
+  const g = base.createRadialGradient(W * .8, H * .15, 40, W * .8, H * .15, 700);
   g.addColorStop(0, "rgba(255,255,255,.18)"); g.addColorStop(1, "rgba(255,255,255,0)");
-  ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+  base.fillStyle = g; base.fillRect(0, 0, W, H);
+  // The body is drawn on its own transparent layer so it can be centred in
+  // the space between the wordmark and the footer. Someone who has just
+  // taken the type quiz has a name, a tagline and one chip -- laying that
+  // out from a fixed offset left the bottom third of the card empty, which
+  // is exactly the card most people share.
+  const layer = document.createElement("canvas"); layer.width = W; layer.height = H;
+  const ctx = layer.getContext("2d");
   const serif = "'Bodoni Moda', Georgia, 'Times New Roman', serif";
   const sans = "'Work Sans', -apple-system, 'Segoe UI', Roboto, sans-serif";
   // Outfit illustration (the same drawing the result screen shows), top
@@ -4003,7 +4010,9 @@ async function renderResultCard({ typeName, typeId, tag, color, words, seasonNam
   }
   const textW = art ? (W - 160 - artW - 40) : (W - 160);
   ctx.fillStyle = "#fff";
-  ctx.font = "700 44px " + serif; ctx.fillText("Style-LORE", 80, 120);
+  // The wordmark is a fixed anchor, so it goes straight on the base.
+  base.fillStyle = "#fff";
+  base.font = "700 44px " + serif; base.fillText("Style-LORE", 80, 120);
   ctx.globalAlpha = .8; ctx.font = "600 26px " + sans; ctx.fillText((typeName ? "MY KIBBE TYPE" : "MY STYLE WORDS"), 80, 320); ctx.globalAlpha = 1;
   // headline, wrapped
   const headline = typeName || (words || []).slice(0, 3).join(" · ");
@@ -4036,15 +4045,23 @@ async function renderResultCard({ typeName, typeId, tag, color, words, seasonNam
     swatches.slice(0, 6).forEach((hex, i) => { ctx.fillStyle = hex; roundRect(ctx, 80 + i * (sw + 12), y, sw, sw, 22); ctx.fill(); });
     y += sw;
   }
-  ctx.fillStyle = "#fff"; ctx.globalAlpha = .85; ctx.font = "500 30px " + sans;
+  // Centre the drawn body between the wordmark and the footer instead of
+  // letting it hang from the top.
+  const FOOTER_TOP = H - 190;
+  const contentTop = art ? 200 : 286;
+  const contentBottom = Math.max(y + 10, art ? 200 + artH : 0);
+  const slack = (FOOTER_TOP - contentTop) - (contentBottom - contentTop);
+  base.drawImage(layer, 0, Math.max(0, Math.round(slack / 2)));
+
+  base.fillStyle = "#fff"; base.globalAlpha = .85; base.font = "500 30px " + sans;
   if (window.STYLE_LORE_REF_CODE){
-    ctx.fillText("Which type are you? Take the free quiz —", 80, H - 120);
-    ctx.font = "700 30px " + sans; ctx.fillText(shareLink().replace("https://", ""), 80, H - 76);
-    ctx.font = "400 24px " + sans; ctx.globalAlpha = .7; ctx.fillText("Join with this link and we both get a month of Premium free", 80, H - 38);
+    base.fillText("Which type are you? Take the free quiz —", 80, H - 120);
+    base.font = "700 30px " + sans; base.fillText(shareLink().replace("https://", ""), 80, H - 76);
+    base.font = "400 24px " + sans; base.globalAlpha = .7; base.fillText("Join with this link and we both get a month of Premium free", 80, H - 38);
   } else {
-    ctx.fillText("Find yours at style-lore.com", 80, H - 80);
+    base.fillText("Find yours at style-lore.com", 80, H - 80);
   }
-  ctx.globalAlpha = 1;
+  base.globalAlpha = 1;
   return c.toDataURL("image/png");
 }
 async function shareResultCard(opts, fallbackText){
