@@ -1694,8 +1694,13 @@ function optionLabel(opt, wardrobe){
 }
 function shopSearchUrl(query){
   const w = getWardrobe();
-  const suffix = w === "men" ? " men" : w === "both" ? "" : " women";
-  const dept = w === "men" ? "fashion-mens" : w === "both" ? "fashion" : "fashion-womens";
+  // An unanswered preference means NEUTRAL, not womenswear. It used to fall
+  // through to women's, so anyone who skipped the question was sent to
+  // womenswear results — the exact "why is it showing me mini dresses"
+  // problem. Everyone is now asked up front (see WardrobeSheet), and this
+  // stays neutral for anyone who somehow isn't.
+  const suffix = w === "men" ? " men" : w === "women" ? " women" : "";
+  const dept = w === "men" ? "fashion-mens" : w === "women" ? "fashion-womens" : "fashion";
   return "https://www.amazon.com/s?k=" + encodeURIComponent(query + suffix) + "&i=" + dept + "&tag=" + AMAZON_ASSOCIATE_TAG + "&ref_=style_lore";
 }
 /* ---- What the Shop links actually search for ------------------------
@@ -1898,11 +1903,22 @@ function shopPicksForProfile(profile, max){
   const wardrobe = getWardrobe();
   let rows = null;
   if(typeId){
+    const family = (KIBBE_BY_ID[typeId] || {}).family;
     if(wardrobe === "men"){
-      const family = (KIBBE_BY_ID[typeId] || {}).family;
       rows = KIBBE_SHOP_M[family] || null;
-    } else {
+    } else if(wardrobe === "women"){
       rows = KIBBE_SHOP_W[typeId] || null;
+    } else {
+      // "Both", or not answered: draw from each wardrobe rather than
+      // defaulting to one. Someone who shops both racks should see both.
+      const w = KIBBE_SHOP_W[typeId] || [];
+      const m = KIBBE_SHOP_M[family] || [];
+      rows = [];
+      for(let i = 0; i < Math.max(w.length, m.length); i++){
+        if(w[i]) rows.push(w[i]);
+        if(m[i]) rows.push(m[i]);
+      }
+      if(rows.length === 0) rows = null;
     }
   }
   // No type yet (style words only, or an unrecognised id): fall back to the
@@ -5966,6 +5982,51 @@ function GettingStartedCard({ blend, season, closetCount, outfitCount, onNavigat
   );
 }
 
+/* Which racks you shop — asked once, before anything recommends anything.
+
+   It used to live only on the style-quiz intro, marked optional, and
+   skipping it silently meant womenswear. So a man who never scrolled to
+   that control got womenswear shop links, menswear-inappropriate outfit
+   suggestions and quiz wording written for a wardrobe he does not buy —
+   the "why is it recommending me a mini dress" problem.
+
+   This asks the question plainly, of guests and account holders alike, and
+   there is no wrong default to fall through to. The question is about
+   clothes rather than identity on purpose: a body type is a set of lines
+   and proportions, and what actually changes the recommendations is which
+   racks someone shops. "Both" is a real answer, not a fallback — it draws
+   from both wardrobes rather than quietly picking one. */
+function WardrobeSheet({ onDone }){
+  const dialogRef = useDialog(null);
+  function pick(v){ setWardrobe(v); if(onDone) onDone(v); }
+  return e("div", { className:"sheet-backdrop" },
+    e("div", { className:"sheet", ref:dialogRef, role:"dialog", "aria-modal":"true" },
+      e("div", { className:"sheet-handle" }),
+      e("div", { className:"sheet-head" },
+        e("h2", { className:"display", style:{ fontSize:20, fontWeight:700 } }, "Which clothes are we styling?")
+      ),
+      e("p", { className:"screen-lede", style:{ marginBottom:16 } },
+        "So nothing suggests a piece you'd never wear. You can change this any time."),
+      e("div", { style:{ display:"flex", flexDirection:"column", gap:10 } },
+        [
+          ["women", "Womenswear", "Dresses, skirts, women's cuts and sizing."],
+          ["men",   "Menswear",   "Shirting, tailoring, men's cuts and sizing."],
+          ["both",  "Both",       "Draw from either rack — nothing is off the table."],
+        ].map(([val, label, desc]) => e("button", {
+          key: val, type:"button", className:"card",
+          style:{ width:"100%", textAlign:"left", display:"block", padding:14, cursor:"pointer" },
+          onClick: () => pick(val),
+        },
+          e("div", { style:{ fontSize:15, fontWeight:600, marginBottom:2 } }, label),
+          e("div", { style:{ fontSize:13, color:"var(--ink-soft)", lineHeight:1.45 } }, desc)
+        ))
+      ),
+      e("p", { className:"footnote", style:{ marginTop:14 } },
+        "We ask about clothes, not about you. Your body type is a read on lines and proportions — it doesn't depend on your gender, and we never ask for it.")
+    )
+  );
+}
+
 function HomeScreen({ profile, blend, styleBlend, kibbeResult, colorResult, closetCount, closet, outfitCount, digestOptOut, onToggleDigest, morningPushOptOut, onToggleMorningPush, isPremium, billing, giftNotice, referral, onManageBilling, onUpgrade, onNavigate, onSignOut, onOpenProfile, onAccountDeleted, onSignIn }){
   const updateAvailable = useUpdateAvailable();
   const homeType = (kibbeResult && kibbeResult.kibbeTypeId && KIBBE_BY_ID[kibbeResult.kibbeTypeId]) || null;
@@ -6377,7 +6438,7 @@ function StyleQuizScreen({ kibbeResult, styleLanguageResult, onSaveKibbe, onSave
       e("p", { className:"screen-lede", style:{ marginBottom:18 } },
         "Twelve quick ones on silhouette, color, fabric and mood. You'll get the handful of words that actually fit you — not a box."),
       e("div", { className:"field", style:{ marginBottom:20 } },
-        e("label", null, "Shopping for — optional"),
+        e("label", null, "Shopping for"),
         e("div", { style:{ display:"flex", gap:8, flexWrap:"wrap", marginTop:8 } },
           [ ["women","Womenswear"], ["men","Menswear"], ["both","Both / no preference"] ].map(([val,label]) => e("button", {
             key:val,
@@ -6387,7 +6448,7 @@ function StyleQuizScreen({ kibbeResult, styleLanguageResult, onSaveKibbe, onSave
             onClick: () => setGenderLean(prev => prev === val ? null : val)
           }, label))
         ),
-        e("div", { className:"field-hint" }, "Words the questions, your shop links and the AI Stylist for what you actually buy — menswear, womenswear or both. Remembered on this device; skip it and nothing changes."),
+        e("div", { className:"field-hint" }, "Words the questions, your shop links and the AI Stylist for what you actually buy — menswear, womenswear or both. Remembered on this device; change it here any time."),
         e("div", { className:"field-hint", style:{ marginTop:6 } }, "Why we don't ask your gender: body type is about lines and proportions, not who you are. We only need to know which racks you shop.")
       ),
       e("button", { className:"btn btn-accent btn-block", onClick:()=>setStage("style-quiz") }, "Start this part"),
@@ -9657,6 +9718,8 @@ function App(){
   // synced back up.
   const [closet, setCloset] = useState(() => dedupeCloset(loadLocal("lore_closet", []) || []));
   const [outfits, setOutfits] = useState(() => (loadLocal(OUTFITS_KEY, []) || []).map(normaliseOutfit).filter(Boolean));
+  // Asked once, before anything recommends anything. See WardrobeSheet.
+  const [wardrobeAsked, setWardrobeAsked] = useState(() => !!getWardrobe());
   const [screen, setScreen] = useState(loadLastScreen);
   const [viewingProfileId, setViewingProfileId] = useState(null);
   const [viewingConversation, setViewingConversation] = useState(null); // {id, otherId, otherName} | null
@@ -10401,6 +10464,10 @@ function App(){
   return e("div", { className:"app" },
     e(LightboxHost, null),
     e(ServiceNotice, null),
+    // Before the first recommendation, not buried in the quiz intro where it
+    // used to sit as an optional control that silently defaulted to
+    // womenswear when skipped.
+    !wardrobeAsked ? e(WardrobeSheet, { onDone: () => setWardrobeAsked(true) }) : null,
     e("header", { className:"topbar" },
       e("span", { className:"wordmark", style:{ display:"inline-flex", alignItems:"center", gap:"0.12em" } },
         e(LogoMark, { size:"0.85em" }), "Style-LORE"),
