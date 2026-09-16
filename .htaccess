@@ -125,6 +125,22 @@ RewriteRule ^api/outfits/?$ api/outfits.php [L,QSA]
 # Never let anything under includes/ be requested directly.
 RewriteRule ^includes/ - [F,L]
 
+# The background-removal runtime (vendor/bg/). .wasm must be served as
+# application/wasm or the browser refuses to stream-compile it and ONNX
+# Runtime falls back to a slower path; .onnx has no registered type, so
+# without this Apache guesses and some proxies mangle it.
+<IfModule mod_mime.c>
+    AddType application/wasm .wasm
+    AddType application/octet-stream .onnx
+</IfModule>
+# Both are version-pinned content that never changes in place -- a year is
+# safe, and it means the ~16 MB is fetched exactly once per device.
+<IfModule mod_headers.c>
+    <FilesMatch "\.(wasm|onnx)$">
+        Header set Cache-Control "public, max-age=31536000, immutable"
+    </FilesMatch>
+</IfModule>
+
 # Sensible caching for static assets.
 <IfModule mod_expires.c>
     ExpiresActive On
