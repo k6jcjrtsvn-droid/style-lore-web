@@ -6,6 +6,12 @@
 
 RewriteEngine On
 
+# --- Shared post pages -------------------------------------------------
+# /p/<id> renders ONE post for someone who is not signed in, and only when
+# its author opted in. noindex is set by p.php itself and in robots.txt.
+RewriteRule ^p/([A-Za-z0-9-]+)/?$ p.php?id=$1 [L,QSA]
+RewriteRule ^pi/([A-Za-z0-9-]+)/?$ pi.php?id=$1 [L,QSA]
+
 # --- API routing -------------------------------------------------------
 # CORS preflights from the native apps (see includes/helpers.php
 # cors_headers and api/_cors.php). Must come before the method-conditional

@@ -3,6 +3,7 @@ require_once __DIR__ . '/../includes/helpers.php';
 
 $pdo = db();
 ensure_poll_schema($pdo);
+ensure_post_share_column($pdo);
 
 if ($_SERVER['REQUEST_METHOD'] === 'GET') {
     // Who is asking, so a poll can come back with their own vote on it. Not
@@ -73,6 +74,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 
     $isPoll = !empty($_POST['isPoll']);
+    // Opt-in, per post, default off. See ensure_post_share_column().
+    $shareable = !empty($_POST['shareable']);
 
     try {
         $photoUrl = save_upload('photo', 'posts', 'image/', 'Photo');
@@ -111,12 +114,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $now = current_time_ms();
 
     $ins = $pdo->prepare(
-        'INSERT INTO posts (id, author_id, author_name, author_avatar_url, kibbe_tag, style_tags, caption, photo_url, photo_b_url, is_poll, video_file_url, video_url, created_at, hidden, report_count, group_id)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?)'
+        'INSERT INTO posts (id, author_id, author_name, author_avatar_url, kibbe_tag, style_tags, caption, photo_url, photo_b_url, is_poll, shareable, video_file_url, video_url, created_at, hidden, report_count, group_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?)'
     );
     $ins->execute([
         $id, $authorId, $authorName, $authorAvatarUrl, $kibbeTag,
-        json_encode($styleTags), $caption, $photoUrl, $photoBUrl, $isPoll ? 1 : 0,
+        json_encode($styleTags), $caption, $photoUrl, $photoBUrl, $isPoll ? 1 : 0, $shareable ? 1 : 0,
         $videoFileUrl, $videoUrl, $now, $groupId,
     ]);
 

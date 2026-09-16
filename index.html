@@ -3337,7 +3337,7 @@ const TERMS_TEXT = `Style-LORE is a styling web app. By creating an account you 
 
 3. No professional advice. Style-LORE does not provide medical, psychological, or professional styling advice.
 
-4. Community space. Posts and comments in Community are visible to other members. If AI-assisted features are turned on, a photo you submit to one of those features is sent to Anthropic (Claude) for that one-time analysis only.
+4. Community space. Posts and comments in Community are visible to other members. When you write a post you can choose to make that one post shareable by link, which lets anyone open it — including people without an account — showing that post and your display name, but not your profile and not the comments. It is off unless you turn it on, and only for the post you are writing. If AI-assisted features are turned on, a photo you submit to one of those features is sent to Anthropic (Claude) for that one-time analysis only.
 
 5. Changes. Because this app is actively developed, features and this agreement may change over time.
 
@@ -5198,6 +5198,7 @@ function Icon(name){
     community: "M8 11a3 3 0 1 0 0-6 3 3 0 0 0 0 6Zm8 0a3 3 0 1 0 0-6 3 3 0 0 0 0 6ZM3 20c.5-3.5 3-5.5 5-5.5s4.5 2 5 5.5M13 20c.4-2.8 2.2-4.5 3.7-5",
     camera: "M4 8h3l1.5-2h7L17 8h3v11H4V8Zm8 3.2a3.3 3.3 0 1 0 0 6.6 3.3 3.3 0 0 0 0-6.6Z",
     x: "M5 5l14 14M19 5 5 19",
+    link: "M10.5 13.5a4 4 0 0 0 5.7 0l2.8-2.8a4 4 0 0 0-5.7-5.7l-1.4 1.4M13.5 10.5a4 4 0 0 0-5.7 0l-2.8 2.8a4 4 0 0 0 5.7 5.7l1.4-1.4",
     lock: "M7 11V8a5 5 0 0 1 10 0v3M5 11h14v9H5v-9Z",
     heart: "M12 20s-7-4.4-9.3-8.8C1 8 2.4 5 5.6 5c1.9 0 3.3 1 4 2.3.7-1.3 2.1-2.3 4-2.3 3.2 0 4.6 3 3.9 6.2C19.2 15.6 12 20 12 20Z",
     comment: "M4 5h16v11H8l-4 4V5Z",
@@ -8250,6 +8251,11 @@ function ComposeSheet({ profile, defaults, onPosted, onClose }){
   // "Help me choose": a second photo and a question. Same post underneath,
   // so it keeps likes, comments, reporting and its place in the type rooms.
   const [isPoll, setIsPoll] = useState(false);
+  /* Off by default, and only ever offered here at posting time. The privacy
+     policy and the sign-up consent screen both promise Community posts are
+     shown to "other members" — this is the one way a post steps outside that,
+     and it has to be the author's deliberate choice, made before posting. */
+  const [shareable, setShareable] = useState(false);
   const [photoBFile, setPhotoBFile] = useState(null);
   const [photoBPreview, setPhotoBPreview] = useState(null);
   const [videoFile, setVideoFile] = useState(null);
@@ -8340,6 +8346,7 @@ function ComposeSheet({ profile, defaults, onPosted, onClose }){
       fd.append("styleTags", JSON.stringify(styleTags));
       fd.append("caption", trimmedCaption);
       if(photoFile) fd.append("photo", photoFile, "photo.jpg");
+      if(shareable) fd.append("shareable", "1");
       if(isPoll){
         fd.append("isPoll", "1");
         if(photoBFile) fd.append("photoB", photoBFile, "photo-b.jpg");
@@ -8426,6 +8433,17 @@ function ComposeSheet({ profile, defaults, onPosted, onClose }){
             onClick: () => toggleStyleTag(x.id)
           }, x.name))
         )
+      ),
+      e("div", { className:"field" },
+        e("label", null, "Outside the app"),
+        e("div", { className:"tabs", style:{ marginBottom:0 } },
+          e("button", { type:"button", className:"tab-chip", "aria-pressed": !shareable, onClick:()=>setShareable(false) }, "Members only"),
+          e("button", { type:"button", className:"tab-chip tab-chip-accent", "aria-pressed": shareable, onClick:()=>setShareable(true) }, "Shareable by link")
+        ),
+        e("div", { className:"field-hint" },
+          shareable
+            ? "You'll get a link that works for anyone, even without an account. It shows this post and your display name — not your profile, and not the comments. Search engines are told not to list it."
+            : "Only Style-LORE members can see this. That's the default for everything you post.")
       ),
       error ? e(Banner, { kind:"error" }, error) : null,
       e("button", {
@@ -8514,8 +8532,21 @@ function PollCard({ post, profile, onPatch }){
   );
 }
 
+/** Puts a post's public link on the clipboard, with a spoken fallback for
+ *  browsers (and WebViews) where the clipboard API isn't available. */
+function copyShareLink(postId, setStatus){
+  const url = location.origin + "/p/" + encodeURIComponent(postId);
+  const done = () => { setStatus("copied"); setTimeout(() => setStatus(null), 4000); };
+  if(navigator.clipboard && navigator.clipboard.writeText){
+    navigator.clipboard.writeText(url).then(done).catch(() => setStatus(url));
+  } else {
+    setStatus(url);
+  }
+}
+
 function PostCard({ post, profile, followingIds, onToggleFollow, onOpenProfile, onPatch, onRemove }){
   const [showComments, setShowComments] = useState(false);
+  const [shareCopied, setShareCopied] = useState(null);
   const [commentText, setCommentText] = useState("");
   const [confirmReport, setConfirmReport] = useState(false);
   const [editing, setEditing] = useState(false);
@@ -8665,11 +8696,22 @@ function PostCard({ post, profile, followingIds, onToggleFollow, onOpenProfile, 
       e("button", { className:"post-action", onClick:()=>setShowComments(!showComments) }, Icon("comment"), (post.comments||[]).length || ""),
       isOwnPost
         ? e("div", { style:{ marginLeft:"auto", display:"flex", gap:16 } },
+            // Only on your own post, and only if you ticked "shareable by
+            // link" when you posted it. There is no way to turn a members-only
+            // post into a shareable one after the fact — that decision was
+            // made with the post in front of you, and quietly changing it
+            // later is how people end up surprised by where their photo went.
+            post.shareable ? e("button", {
+              className:"post-action", "aria-label":"Copy share link",
+              onClick: () => copyShareLink(post.id, setShareCopied),
+            }, Icon("link")) : null,
             e("button", { className:"post-action", "aria-label":"Edit post", onClick:startEditing }, Icon("edit")),
             e("button", { className:"post-action", "aria-label":"Delete post", onClick:()=>{ setConfirmDeletePost(true); setEditing(false); setActionError(null); } }, Icon("trash"))
           )
         : e("button", { className:"post-action", style:{ marginLeft:"auto" }, onClick:()=>setConfirmReport(true) }, Icon("flag"))
     ),
+    shareCopied ? e("div", { className:"footnote", style:{ marginTop:8 } },
+      shareCopied === "copied" ? "Link copied — it works for anyone, with or without an account." : shareCopied) : null,
     confirmReport ? e("div", { style:{ marginTop:10, display:"flex", alignItems:"center", gap:12 } },
       e("span", { style:{ fontSize:12.5, color:"var(--ink-soft)" } }, "Report and hide this post for everyone?"),
       e("button", { className:"btn-text", style:{ padding:0, fontSize:12.5, color:"var(--danger)" }, disabled:reportBusy, onClick:report }, reportBusy ? "Reporting…" : "Report"),

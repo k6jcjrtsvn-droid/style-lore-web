@@ -736,6 +736,20 @@ function ensure_closet_columns(PDO $pdo): void {
     catch (Throwable $e) { error_log('ensure_closet_columns (deleted index): ' . $e->getMessage()); }
 }
 
+/** Per-post opt-in to being viewable outside the app (p.php).
+ *
+ *  Defaults to 0 and is only ever offered at posting time, so no post made
+ *  before this existed can be reached by a non-member. That matters: the
+ *  privacy policy and the sign-up consent screen both promise Community
+ *  posts are shown to "other members", and this feature must not change
+ *  that promise retroactively for anyone who already posted under it. */
+function ensure_post_share_column(PDO $pdo): void {
+    static $done = false; if ($done) return; $done = true;
+    try {
+        $pdo->exec('ALTER TABLE posts ADD COLUMN IF NOT EXISTS shareable TINYINT(1) NOT NULL DEFAULT 0');
+    } catch (Throwable $e) { error_log('ensure_post_share_column: ' . $e->getMessage()); }
+}
+
 /** Styling tips left on someone's public closet item (api/closet_tips.php).
  *
  *  Keyed on (owner_id, item_id) rather than item_id alone: a closet item's
@@ -1009,6 +1023,7 @@ function post_to_public(PDO $pdo, array $row, ?string $viewerId = null): array {
         'likes' => $likes,
         'comments' => $comments,
         'groupId' => $row['group_id'] ?? null,
+        'shareable' => !empty($row['shareable']),
     ];
 
     // Polls. Only the tallies go out, never who voted for what — unlike

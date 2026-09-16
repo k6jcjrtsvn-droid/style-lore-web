@@ -5,6 +5,8 @@ deployment:
     - /bin/cp -f index.html $DEPLOYPATH
     - /bin/cp -f privacy.html $DEPLOYPATH
     - /bin/cp -f terms.html $DEPLOYPATH
+    - /bin/cp -f p.php $DEPLOYPATH
+    - /bin/cp -f pi.php $DEPLOYPATH
     - /bin/cp -f beta.html $DEPLOYPATH
     - /bin/cp -f beta-admin.html $DEPLOYPATH
     - /bin/cp -f MIGRATE-2026-09-16.sql $DEPLOYPATH

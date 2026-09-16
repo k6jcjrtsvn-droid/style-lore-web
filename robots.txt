@@ -4,4 +4,11 @@ Disallow: /api/
 Disallow: /includes/
 Disallow: /uploads/
 Disallow: /beta-admin.html
+# Shared Community posts are reachable by link but never listed — members
+# opted into sharing a link, not into being findable by name. (p.php also
+# sends noindex, which is what actually keeps them out of results.)
+Disallow: /p/
+# /pi/ IS crawlable on purpose: a link preview only renders if the crawler
+# can fetch the image. It serves opted-in posts only and sends noindex.
+Allow: /pi/
 Sitemap: https://style-lore.com/sitemap.xml
