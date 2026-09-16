@@ -20,6 +20,7 @@ RewriteRule ^api/account/delete/?$ api/account_delete.php [L,QSA]
 RewriteRule ^api/posts/([^/]+)/like/?$ api/post_like.php?id=$1 [L,QSA]
 RewriteRule ^api/posts/([^/]+)/comments/?$ api/post_comments.php?id=$1 [L,QSA]
 RewriteRule ^api/posts/([^/]+)/report/?$ api/post_report.php?id=$1 [L,QSA]
+RewriteRule ^api/posts/([^/]+)/vote/?$ api/post_vote.php?id=$1 [L,QSA]
 
 # A single post by id — DELETE removes it, PUT edits it (see
 # api/post_delete.php / api/post_edit.php). Method-conditional since both

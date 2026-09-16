@@ -4181,8 +4181,19 @@ const Api = {
     const params = new URLSearchParams({ limit:"100" });
     if(opts && opts.authorId) params.set("authorId", opts.authorId);
     if(opts && opts.groupId) params.set("groupId", opts.groupId);
+    // So a poll comes back with this person's own vote already marked.
+    if(opts && opts.viewerId) params.set("viewerId", opts.viewerId);
     const r = await fetch("/api/posts?" + params.toString());
     if(!r.ok) throw await apiError(r, "Couldn't load the feed.");
+    return r.json();
+  },
+  // One vote per account on a "Help me choose" poll; the server enforces it.
+  async votePoll(postId, visitorId, authToken, choice){
+    const r = await fetch("/api/posts/" + postId + "/vote", {
+      method:"POST", headers:{ "Content-Type":"application/json" },
+      body: JSON.stringify({ visitorId, authToken, choice }),
+    });
+    if(!r.ok) throw await apiError(r, "Couldn't record your vote.");
     return r.json();
   },
   async createPost(formData){
@@ -7754,9 +7765,12 @@ function CommunityScreen({ profile, blend, onOpenProfile }){
   const [closetFeedError, setClosetFeedError] = useState(null);
 
   const refreshPosts = useCallback(() => {
-    Api.getPosts().then(rows => { setPosts(rows); setLoadError(null); })
+    Api.getPosts({ viewerId: profile ? profile.visitorId : null }).then(rows => { setPosts(rows); setLoadError(null); })
       .catch(() => setLoadError("Couldn't load the feed. It may come back on its own."));
-  }, []);
+    // profile is a real dependency now that the feed says who is asking —
+    // with an empty dep list this would keep sending the signed-out viewerId
+    // after sign-in, and every poll would come back showing no vote.
+  }, [profile && profile.visitorId]);
   const refreshFollows = useCallback(() => {
     if(!profile) return;
     Api.getFollows(profile.visitorId).then(ids => setFollowingIds(new Set(ids))).catch(()=>{});
@@ -7798,7 +7812,7 @@ function CommunityScreen({ profile, blend, onOpenProfile }){
   // same way the main feed is.
   useEffect(() => {
     if(!space || space.kind !== "group") { setGroupFeed(null); return; }
-    const load = () => Api.getPosts({ groupId: space.id }).then(setGroupFeed).catch(()=>{});
+    const load = () => Api.getPosts({ groupId: space.id, viewerId: profile ? profile.visitorId : null }).then(setGroupFeed).catch(()=>{});
     load();
     return startPolling(load, 8000);
   }, [space && space.kind, space && space.id]);
@@ -8057,6 +8071,11 @@ function ComposeSheet({ profile, defaults, onPosted, onClose }){
   const [caption, setCaption] = useState("");
   const [photoFile, setPhotoFile] = useState(null);
   const [photoPreview, setPhotoPreview] = useState(null);
+  // "Help me choose": a second photo and a question. Same post underneath,
+  // so it keeps likes, comments, reporting and its place in the type rooms.
+  const [isPoll, setIsPoll] = useState(false);
+  const [photoBFile, setPhotoBFile] = useState(null);
+  const [photoBPreview, setPhotoBPreview] = useState(null);
   const [videoFile, setVideoFile] = useState(null);
   const [videoPreviewUrl, setVideoPreviewUrl] = useState(null);
   const [videoUrl, setVideoUrl] = useState("");
@@ -8118,6 +8137,15 @@ function ComposeSheet({ profile, defaults, onPosted, onClose }){
     });
   }
 
+  function pickPhotoB(ev){
+    const file = ev.target.files && ev.target.files[0];
+    if(!file) return;
+    downscaleImage(file, 1080, 0.78).then(dataUrl => {
+      setPhotoBPreview(dataUrl);
+      setPhotoBFile(dataUrlToBlob(dataUrl));
+    }).catch(()=>setError("Couldn't read that photo — try another."));
+  }
+
   async function submit(){
     const trimmedCaption = caption.trim();
     const trimmedLink = videoUrl.trim();
@@ -8136,6 +8164,10 @@ function ComposeSheet({ profile, defaults, onPosted, onClose }){
       fd.append("styleTags", JSON.stringify(styleTags));
       fd.append("caption", trimmedCaption);
       if(photoFile) fd.append("photo", photoFile, "photo.jpg");
+      if(isPoll){
+        fd.append("isPoll", "1");
+        if(photoBFile) fd.append("photoB", photoBFile, "photo-b.jpg");
+      }
       if(videoFile) fd.append("video", videoFile, videoFile.name || "clip.mp4");
       if(trimmedLink && !videoFile) fd.append("videoUrl", trimmedLink);
       if(defaults && defaults.groupId) fd.append("groupId", defaults.groupId);
@@ -8156,19 +8188,35 @@ function ComposeSheet({ profile, defaults, onPosted, onClose }){
         e("h2", { className:"display", style:{ fontSize:20, fontWeight:700 } }, "New post"),
         e("button", { className:"close-btn", onClick:onClose, "aria-label":"Close" }, Icon("x"))
       ),
+      e("div", { className:"tabs", style:{ marginBottom:14 } },
+        e("button", { type:"button", className:"tab-chip", "aria-pressed": !isPoll, onClick:()=>setIsPoll(false) }, "Post"),
+        e("button", { type:"button", className:"tab-chip tab-chip-accent", "aria-pressed": isPoll, onClick:()=>setIsPoll(true) }, "Help me choose")
+      ),
       e("div", { className:"field" },
-        e("label", { htmlFor:"post-caption" }, "Caption"),
+        e("label", { htmlFor:"post-caption" }, isPoll ? "Your question" : "Caption"),
         e("textarea", { id:"post-caption", value:caption, maxLength:280,
-          placeholder:"What are you wearing, styling, or thinking about?",
+          placeholder: isPoll ? "e.g. Which one for a work dinner?" : "What are you wearing, styling, or thinking about?",
           onChange: ev=>setCaption(ev.target.value) })
       ),
+      isPoll ? e("div", { className:"field-hint", style:{ marginTop:-8, marginBottom:10 } },
+        "Two photos, one tap to vote. You'll see how the votes split.") : null,
       e("div", { className:"photo-frame", style:{ aspectRatio:"16/10" } },
         photoPreview ? e("img", { src:photoPreview, alt:"Preview of the photo you selected" })
-          : e("label", { className:"photo-frame-label", htmlFor:"post-photo-input", onClick: ev => pickWithNativeCamera(ev, pickPhoto) }, Icon("camera"), e("span", null, "Add a photo (optional)"))
+          : e("label", { className:"photo-frame-label", htmlFor:"post-photo-input", onClick: ev => pickWithNativeCamera(ev, pickPhoto) }, Icon("camera"),
+              e("span", null, isPoll ? "Add the first option" : "Add a photo (optional)"))
       ),
       e("input", { id:"post-photo-input", type:"file", accept:"image/*", className:"visually-hidden", onChange:pickPhoto }),
 
-      e("div", { className:"field" },
+      isPoll ? e("div", null,
+        e("div", { className:"photo-frame", style:{ aspectRatio:"16/10", marginTop:10 } },
+          photoBPreview ? e("img", { src:photoBPreview, alt:"Preview of the second option" })
+            : e("label", { className:"photo-frame-label", htmlFor:"post-photo-b-input", onClick: ev => pickWithNativeCamera(ev, pickPhotoB) }, Icon("camera"),
+                e("span", null, "Add the second option"))
+        ),
+        e("input", { id:"post-photo-b-input", type:"file", accept:"image/*", className:"visually-hidden", onChange:pickPhotoB })
+      ) : null,
+
+      isPoll ? null : e("div", { className:"field" },
         e("label", null, "Video (optional — a short clip, ~10–30s)"),
         videoPreviewUrl
           ? e("div", null,
@@ -8204,9 +8252,89 @@ function ComposeSheet({ profile, defaults, onPosted, onClose }){
         )
       ),
       error ? e(Banner, { kind:"error" }, error) : null,
-      e("button", { className:"btn btn-accent btn-block", disabled:posting || (!caption.trim() && !photoFile && !videoFile && !videoUrl.trim()), onClick:submit },
-        posting ? "Posting…" : "Post to Community")
+      e("button", {
+        className:"btn btn-accent btn-block",
+        disabled: posting || (isPoll
+          ? (!caption.trim() || !photoFile || !photoBFile)
+          : (!caption.trim() && !photoFile && !videoFile && !videoUrl.trim())),
+        onClick: submit,
+      }, posting ? "Posting…" : isPoll ? "Ask the community" : "Post to Community"),
+      isPoll && (!photoFile || !photoBFile || !caption.trim())
+        ? e("div", { className:"field-hint", style:{ textAlign:"center", marginTop:6 } }, "A poll needs a question and both photos.")
+        : null
     )
+  );
+}
+
+/* The two-photo vote. Tapping an option is one request and one tap — the
+   lowest-effort thing anyone can do in a community, which is exactly why it
+   works when rooms are quiet: someone who would never write a comment will
+   happily answer a question.
+
+   Results are hidden until you have voted. Seeing the split first anchors
+   the answer, and a poll that just confirms the leader is worth nothing to
+   the person who asked. Guests see the photos and a prompt to sign in,
+   because one vote per account is only true if there is an account. */
+function PollCard({ post, profile, onPatch }){
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+  const poll = post.poll || { a:0, b:0, total:0, myVote:null };
+  const mine = poll.myVote;
+  const total = poll.total || 0;
+  const pct = n => total > 0 ? Math.round((n / total) * 100) : 0;
+
+  async function vote(choice){
+    if(!profile){ setError("Sign in to vote — one vote per account keeps the results honest."); return; }
+    if(busy) return;
+    setBusy(true); setError(null);
+    try{
+      const updated = await Api.votePoll(post.id, profile.visitorId, profile.token, choice);
+      // onPatch merges a partial patch into the cached post; the tallies are
+      // the only thing a vote changes.
+      if(onPatch && updated && updated.poll) onPatch({ poll: updated.poll });
+    }catch(err){
+      setError((err && err.message) || "Couldn't record your vote.");
+    }finally{ setBusy(false); }
+  }
+
+  const option = (key, url, label) => {
+    const chosen = mine === key;
+    const count = key === "a" ? poll.a : poll.b;
+    return e("div", { style:{ flex:1, minWidth:0 } },
+      e("button", {
+        type:"button", onClick: () => vote(key), disabled: busy,
+        "aria-pressed": chosen, "aria-label": (chosen ? "Your pick: " : "Vote for ") + label,
+        style:{
+          display:"block", width:"100%", padding:0, overflow:"hidden", cursor:"pointer",
+          borderRadius:10, border:"2px solid " + (chosen ? "var(--accent)" : "var(--line)"),
+          background:"none",
+        },
+      },
+        e("img", { src: mediaUrl(url), alt: label, loading:"lazy", decoding:"async",
+          style:{ display:"block", width:"100%", aspectRatio:"3/4", objectFit:"cover" } })
+      ),
+      e("div", { style:{ display:"flex", alignItems:"center", justifyContent:"space-between", marginTop:6, gap:6 } },
+        e("span", { style:{ fontSize:12, fontWeight: chosen ? 600 : 500, color: chosen ? "var(--accent)" : "var(--ink-soft)" } },
+          label + (chosen ? " · your pick" : "")),
+        mine ? e("span", { style:{ fontSize:12, fontWeight:600 } }, pct(count) + "%") : null
+      ),
+      mine ? e("div", { "aria-hidden":"true", style:{ height:4, borderRadius:2, background:"var(--line-soft)", marginTop:4 } },
+        e("div", { style:{ width: pct(count) + "%", height:"100%", borderRadius:2, background:"var(--accent)" } })
+      ) : null
+    );
+  };
+
+  return e("div", { style:{ marginBottom:10 } },
+    e("div", { className:"eyebrow", style:{ marginBottom:6 } }, "Help me choose"),
+    e("div", { style:{ display:"flex", gap:10 } },
+      option("a", post.photoUrl, "Option A"),
+      option("b", post.photoBUrl, "Option B")
+    ),
+    e("div", { className:"footnote", style:{ marginTop:8 } },
+      !profile ? "Sign in to vote."
+        : mine ? (total === 1 ? "1 vote so far." : total + " votes so far.")
+        : "Tap one to vote — results show once you have."),
+    error ? e(Banner, { kind:"error" }, error) : null
   );
 }
 
@@ -8352,7 +8480,8 @@ function PostCard({ post, profile, followingIds, onToggleFollow, onOpenProfile, 
     post.videoFileUrl ? e("video", { className:"post-video", src:mediaUrl(post.videoFileUrl), controls:true, playsInline:true, preload:"metadata" })
       : post.videoUrl ? e(VideoEmbed, { url:post.videoUrl })
       : null,
-    post.photoUrl ? e("img", { className:"post-photo", src:mediaUrl(post.photoUrl), alt: post.caption ? ("Photo shared with the caption: " + post.caption) : ("Photo shared by " + (post.authorName || "a member")), loading:"lazy", decoding:"async", role:"button", tabIndex:0, "aria-label":"View photo full screen",
+    post.poll ? e(PollCard, { post, profile, onPatch }) : null,
+    (post.photoUrl && !post.poll) ? e("img", { className:"post-photo", src:mediaUrl(post.photoUrl), alt: post.caption ? ("Photo shared with the caption: " + post.caption) : ("Photo shared by " + (post.authorName || "a member")), loading:"lazy", decoding:"async", role:"button", tabIndex:0, "aria-label":"View photo full screen",
         onClick: () => openPhoto(mediaUrl(post.photoUrl), post.caption ? post.caption : (post.authorName ? "Posted by " + post.authorName : "")),
         onKeyDown: ev => { if(ev.key === "Enter" || ev.key === " "){ ev.preventDefault(); openPhoto(mediaUrl(post.photoUrl), post.caption || ""); } } }) : null,
     e("div", { className:"post-actions" },

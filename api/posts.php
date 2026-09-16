@@ -2,8 +2,13 @@
 require_once __DIR__ . '/../includes/helpers.php';
 
 $pdo = db();
+ensure_poll_schema($pdo);
 
 if ($_SERVER['REQUEST_METHOD'] === 'GET') {
+    // Who is asking, so a poll can come back with their own vote on it. Not
+    // authenticated: this only decides which of the two bars is ticked, and
+    // the tallies are public either way.
+    $viewerId = isset($_GET['viewerId']) ? (string)$_GET['viewerId'] : null;
     $limit = min((int)($_GET['limit'] ?? 100), 200);
     if ($limit <= 0) $limit = 100;
     $authorId = isset($_GET['authorId']) ? (string)$_GET['authorId'] : null;
@@ -25,7 +30,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
         $stmt->execute();
     }
     $rows = $stmt->fetchAll();
-    json_response(array_map(fn($r) => post_to_public($pdo, $r), $rows));
+    json_response(array_map(fn($r) => post_to_public($pdo, $r, $viewerId), $rows));
 }
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
@@ -67,11 +72,27 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         error_response('Verify your email before posting in Community — check your inbox, or resend the link from Home.', 403);
     }
 
+    $isPoll = !empty($_POST['isPoll']);
+
     try {
         $photoUrl = save_upload('photo', 'posts', 'image/', 'Photo');
         $videoFileUrl = save_upload('video', 'posts', 'video/', 'Video');
+        // The second option of a "Help me choose" poll.
+        $photoBUrl = $isPoll ? save_upload('photoB', 'posts', 'image/', 'Second photo') : null;
     } catch (RuntimeException $e) {
         error_response($e->getMessage(), 400);
+    }
+
+    // A poll is two photos and a question. Anything less isn't a choice, and
+    // a half-built poll in the feed is worse than no poll.
+    if ($isPoll && (!$photoUrl || !$photoBUrl)) {
+        error_response('A poll needs both photos.', 400);
+    }
+    if ($isPoll && !$caption) {
+        error_response('Add a question so people know what they are choosing between.', 400);
+    }
+    if ($isPoll && $videoFileUrl) {
+        error_response('A poll is two photos — leave the video out.', 400);
     }
 
     if (!$caption && !$photoUrl && !$videoFileUrl && !$videoUrl) {
@@ -90,17 +111,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $now = current_time_ms();
 
     $ins = $pdo->prepare(
-        'INSERT INTO posts (id, author_id, author_name, author_avatar_url, kibbe_tag, style_tags, caption, photo_url, video_file_url, video_url, created_at, hidden, report_count, group_id)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?)'
+        'INSERT INTO posts (id, author_id, author_name, author_avatar_url, kibbe_tag, style_tags, caption, photo_url, photo_b_url, is_poll, video_file_url, video_url, created_at, hidden, report_count, group_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?)'
     );
     $ins->execute([
         $id, $authorId, $authorName, $authorAvatarUrl, $kibbeTag,
-        json_encode($styleTags), $caption, $photoUrl, $videoFileUrl, $videoUrl, $now, $groupId,
+        json_encode($styleTags), $caption, $photoUrl, $photoBUrl, $isPoll ? 1 : 0,
+        $videoFileUrl, $videoUrl, $now, $groupId,
     ]);
 
     $rowStmt = $pdo->prepare('SELECT * FROM posts WHERE id = ?');
     $rowStmt->execute([$id]);
-    json_response(post_to_public($pdo, $rowStmt->fetch()), 201);
+    json_response(post_to_public($pdo, $rowStmt->fetch(), $authorId), 201);
 }
 
 error_response('Method not allowed.', 405);

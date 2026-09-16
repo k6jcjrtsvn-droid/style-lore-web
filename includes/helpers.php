@@ -736,6 +736,37 @@ function ensure_closet_columns(PDO $pdo): void {
     catch (Throwable $e) { error_log('ensure_closet_columns (deleted index): ' . $e->getMessage()); }
 }
 
+/** "Help me choose" polls (api/post_vote.php).
+ *
+ *  Deliberately an extension of `posts` rather than a new content type: a
+ *  poll then inherits likes, comments, reporting, moderation, room
+ *  placement and the whole feed UI instead of needing its own copy of all
+ *  of it. Two columns and one small table is the entire footprint.
+ *
+ *  One row per (post, voter) with the primary key doing the enforcement, so
+ *  one account is one vote no matter how many times the button is tapped or
+ *  how many devices it is tapped from. */
+function ensure_poll_schema(PDO $pdo): void {
+    static $done = false; if ($done) return; $done = true;
+    try {
+        $pdo->exec('ALTER TABLE posts
+            ADD COLUMN IF NOT EXISTS photo_b_url VARCHAR(255) DEFAULT NULL,
+            ADD COLUMN IF NOT EXISTS is_poll TINYINT(1) NOT NULL DEFAULT 0');
+    } catch (Throwable $e) { error_log('ensure_poll_schema (posts): ' . $e->getMessage()); }
+    try {
+        $pdo->exec(
+            'CREATE TABLE IF NOT EXISTS poll_votes (
+                post_id CHAR(36) NOT NULL,
+                voter_id CHAR(36) NOT NULL,
+                choice CHAR(1) NOT NULL,
+                created_at BIGINT NOT NULL,
+                PRIMARY KEY (post_id, voter_id),
+                KEY idx_poll_post (post_id)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4'
+        );
+    } catch (Throwable $e) { error_log('ensure_poll_schema (votes): ' . $e->getMessage()); }
+}
+
 /** Saved outfits (api/outfits.php). Created on first use rather than in a
  *  migration, the same way ensure_closet_columns works, so deploying the
  *  feature needs nothing run by hand on the server. */
@@ -914,7 +945,7 @@ function save_upload(string $field, string $subdir, string $requiredMimePrefix, 
  * moderation-only fields (hidden/reportCount) stripped, matching
  * publicPost() in the local server.
  */
-function post_to_public(PDO $pdo, array $row): array {
+function post_to_public(PDO $pdo, array $row, ?string $viewerId = null): array {
     $likesStmt = $pdo->prepare('SELECT visitor_id, liked FROM likes WHERE post_id = ?');
     $likesStmt->execute([$row['id']]);
     $likes = [];
@@ -935,7 +966,7 @@ function post_to_public(PDO $pdo, array $row): array {
     $styleTags = json_decode($row['style_tags'] ?: '[]', true);
     if (!is_array($styleTags)) $styleTags = [];
 
-    return [
+    $out = [
         'id' => $row['id'],
         'authorName' => $row['author_name'],
         'authorId' => $row['author_id'],
@@ -951,6 +982,38 @@ function post_to_public(PDO $pdo, array $row): array {
         'comments' => $comments,
         'groupId' => $row['group_id'] ?? null,
     ];
+
+    // Polls. Only the tallies go out, never who voted for what — unlike
+    // likes, a vote on someone's outfit is the kind of thing people would
+    // rather keep to themselves. The viewer's own choice comes back so the
+    // UI can show it, and only ever for the caller that proved who they are.
+    if (!empty($row['is_poll'])) {
+        $out['photoBUrl'] = $row['photo_b_url'] ?? null;
+        $counts = ['a' => 0, 'b' => 0];
+        try {
+            $vs = $pdo->prepare('SELECT choice, COUNT(*) AS n FROM poll_votes WHERE post_id = ? GROUP BY choice');
+            $vs->execute([$row['id']]);
+            foreach ($vs->fetchAll(PDO::FETCH_ASSOC) as $v) {
+                if (isset($counts[$v['choice']])) $counts[$v['choice']] = (int)$v['n'];
+            }
+        } catch (Throwable $e) { /* table not created yet — an empty poll is fine */ }
+        $mine = null;
+        if ($viewerId) {
+            try {
+                $ms = $pdo->prepare('SELECT choice FROM poll_votes WHERE post_id = ? AND voter_id = ?');
+                $ms->execute([$row['id'], $viewerId]);
+                $mine = $ms->fetchColumn() ?: null;
+            } catch (Throwable $e) { /* as above */ }
+        }
+        $out['poll'] = [
+            'a' => $counts['a'],
+            'b' => $counts['b'],
+            'total' => $counts['a'] + $counts['b'],
+            'myVote' => $mine,
+        ];
+    }
+
+    return $out;
 }
 
 /* =========================================================================
