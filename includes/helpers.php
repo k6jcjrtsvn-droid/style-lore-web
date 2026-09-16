@@ -722,7 +722,8 @@ function ensure_closet_columns(PDO $pdo): void {
         $pdo->exec('ALTER TABLE closet_items
             ADD COLUMN IF NOT EXISTS client_id VARCHAR(64) DEFAULT NULL,
             ADD COLUMN IF NOT EXISTS updated_at BIGINT DEFAULT NULL,
-            ADD COLUMN IF NOT EXISTS deleted_at BIGINT DEFAULT NULL');
+            ADD COLUMN IF NOT EXISTS deleted_at BIGINT DEFAULT NULL,
+            ADD COLUMN IF NOT EXISTS price_cents INT DEFAULT NULL');
     } catch (Throwable $e) { error_log('ensure_closet_columns (add): ' . $e->getMessage()); }
     // Backfill so every existing row has a usable identity and timestamp.
     try { $pdo->exec('UPDATE closet_items SET client_id = id WHERE client_id IS NULL'); }
@@ -733,6 +734,44 @@ function ensure_closet_columns(PDO $pdo): void {
     catch (Throwable $e) { error_log('ensure_closet_columns (index): ' . $e->getMessage()); }
     try { $pdo->exec('ALTER TABLE closet_items ADD INDEX IF NOT EXISTS idx_account_deleted (account_id, deleted_at)'); }
     catch (Throwable $e) { error_log('ensure_closet_columns (deleted index): ' . $e->getMessage()); }
+}
+
+/** Saved outfits (api/outfits.php). Created on first use rather than in a
+ *  migration, the same way ensure_closet_columns works, so deploying the
+ *  feature needs nothing run by hand on the server. */
+function ensure_outfits_table(PDO $pdo): void {
+    static $done = false; if ($done) return; $done = true;
+    try {
+        $pdo->exec(
+            'CREATE TABLE IF NOT EXISTS outfits (
+                id CHAR(36) NOT NULL PRIMARY KEY,
+                account_id VARCHAR(64) NOT NULL,
+                client_id VARCHAR(64) NOT NULL,
+                name VARCHAR(80) NOT NULL DEFAULT "",
+                item_ids TEXT,
+                wear_date CHAR(10) DEFAULT NULL,
+                created_at BIGINT NOT NULL,
+                updated_at BIGINT DEFAULT NULL,
+                deleted_at BIGINT DEFAULT NULL,
+                UNIQUE KEY uniq_outfit_account_client (account_id, client_id),
+                KEY idx_outfit_account_deleted (account_id, deleted_at),
+                KEY idx_outfit_account_date (account_id, wear_date)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4'
+        );
+    } catch (Throwable $e) { error_log('ensure_outfits_table: ' . $e->getMessage()); }
+}
+
+/** One row → the shape the client holds. */
+function outfit_to_public(array $row): array {
+    $ids = json_decode((string)($row['item_ids'] ?? '[]'), true);
+    return [
+        'id'        => (string)$row['client_id'],
+        'name'      => (string)$row['name'],
+        'itemIds'   => is_array($ids) ? array_values(array_filter($ids, 'is_string')) : [],
+        'wearDate'  => $row['wear_date'] !== null && $row['wear_date'] !== '' ? (string)$row['wear_date'] : null,
+        'createdAt' => (int)$row['created_at'],
+        'updatedAt' => (int)($row['updated_at'] ?? $row['created_at']),
+    ];
 }
 
 /** The content identity of a closet item — mirrors closetItemKey() in the
@@ -1154,6 +1193,20 @@ function closet_item_to_public(array $row): array {
         'authorName' => $row['author_name'] ?? '',
         'authorId' => $row['account_id'] ?? null,
     ];
+}
+
+/** The owner's own view of a closet item. Same as closet_item_to_public plus
+ *  what nobody else may see.
+ *
+ *  `price` is deliberately NOT in closet_item_to_public: that shape is served
+ *  to strangers through api/closet.php's GET and the Community closets feed,
+ *  and what someone paid for a coat is nobody else's business. Only
+ *  api/closet_mine.php — which requires the owner's auth token — uses this. */
+function closet_item_to_owner(array $row): array {
+    $out = closet_item_to_public($row);
+    $cents = $row['price_cents'] ?? null;
+    $out['price'] = $cents === null ? null : round((int)$cents / 100, 2);
+    return $out;
 }
 
 function group_to_public(array $row, ?bool $isMember = null): array {

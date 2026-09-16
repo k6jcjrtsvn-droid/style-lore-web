@@ -78,10 +78,19 @@ $normalise = function ($item) use ($now) {
     $photo = isset($item['photo']) && is_string($item['photo']) ? $item['photo'] : null;
     $createdAt = isset($item['createdAt']) ? (int)$item['createdAt'] : $now;
     $updatedAt = isset($item['updatedAt']) ? (int)$item['updatedAt'] : $createdAt;
+    // What it cost, for cost-per-wear. Optional and private to the owner.
+    // Stored in cents so the arithmetic is integer; clamped at $1,000,000 so
+    // a typo can't overflow the column.
+    $priceCents = null;
+    if (isset($item['price']) && $item['price'] !== null && $item['price'] !== '') {
+        $p = (float)$item['price'];
+        if (is_finite($p) && $p >= 0) $priceCents = (int)min(round($p * 100), 100000000);
+    }
     return [
         'client_id'   => $clientId,
         'description' => $description,
         'photo'       => $photo,
+        'price_cents' => $priceCents,
         'created_at'  => $createdAt,
         'updated_at'  => $updatedAt,
         'visibility'  => ($item['visibility'] ?? '') === 'public' ? 'public' : 'hidden',
@@ -126,13 +135,13 @@ try {
 
     $insert = $pdo->prepare(
         'INSERT INTO closet_items
-           (id, account_id, client_id, description, photo_data, created_at, updated_at, visibility, author_name, deleted_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)'
+           (id, account_id, client_id, description, photo_data, created_at, updated_at, visibility, author_name, price_cents, deleted_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)'
     );
     $update = $pdo->prepare(
         'UPDATE closet_items
             SET description = ?, photo_data = ?, created_at = ?, updated_at = ?, visibility = ?,
-                author_name = ?, deleted_at = NULL
+                author_name = ?, price_cents = ?, deleted_at = NULL
           WHERE id = ?'
     );
     // Adoption: an old row whose client_id was backfilled from the server id
@@ -141,7 +150,7 @@ try {
     $adopt = $pdo->prepare(
         'UPDATE closet_items
             SET client_id = ?, description = ?, photo_data = ?, created_at = ?, updated_at = ?,
-                visibility = ?, author_name = ?, deleted_at = NULL
+                visibility = ?, author_name = ?, price_cents = ?, deleted_at = NULL
           WHERE id = ?'
     );
 
@@ -155,7 +164,7 @@ try {
             if (!isset($incoming[(string)$candidate['client_id']])) {
                 $adopt->execute([
                     $clientId, $n['description'], $n['photo'], $n['created_at'], $n['updated_at'],
-                    $n['visibility'], $visitorName, $candidate['id'],
+                    $n['visibility'], $visitorName, $n['price_cents'], $candidate['id'],
                 ]);
                 unset($byFingerprint[$n['fingerprint']]);
                 $byClientId[$clientId] = $candidate;
@@ -167,7 +176,7 @@ try {
         if ($existing === null) {
             $insert->execute([
                 uuidv4(), $visitorId, $clientId, $n['description'], $n['photo'],
-                $n['created_at'], $n['updated_at'], $n['visibility'], $visitorName,
+                $n['created_at'], $n['updated_at'], $n['visibility'], $visitorName, $n['price_cents'],
             ]);
             $stats['inserted']++;
             continue;
@@ -181,7 +190,7 @@ try {
 
         $update->execute([
             $n['description'], $n['photo'], $n['created_at'], $n['updated_at'],
-            $n['visibility'], $visitorName, $existing['id'],
+            $n['visibility'], $visitorName, $n['price_cents'], $existing['id'],
         ]);
         $stats['updated']++;
     }

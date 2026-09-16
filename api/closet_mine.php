@@ -41,7 +41,7 @@ $since = isset($_GET['since']) ? (int)$_GET['since'] : 0;
 if ($since < 0) $since = 0;
 
 $itemSql =
-    'SELECT id, account_id, client_id, description, photo_data, created_at, updated_at, visibility, author_name
+    'SELECT id, account_id, client_id, description, photo_data, created_at, updated_at, visibility, author_name, price_cents
        FROM closet_items
       WHERE account_id = ? AND deleted_at IS NULL';
 $params = [$visitorId];
@@ -50,7 +50,9 @@ $itemSql .= ' ORDER BY created_at DESC';
 
 $stmt = $pdo->prepare($itemSql);
 $stmt->execute($params);
-$items = array_map('closet_item_to_public', $stmt->fetchAll());
+// closet_item_to_owner, not _to_public: this endpoint is the only one that
+// may return the item's price (see the note on that function).
+$items = array_map('closet_item_to_owner', $stmt->fetchAll());
 
 $delSql = 'SELECT client_id, id, deleted_at FROM closet_items WHERE account_id = ? AND deleted_at IS NOT NULL';
 $delParams = [$visitorId];

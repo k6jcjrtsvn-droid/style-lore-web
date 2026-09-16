@@ -1834,6 +1834,54 @@ function wearCounts(){
   return counts;
 }
 
+/* ---- Cost per wear ----------------------------------------------------
+
+   What a piece has actually cost you each time you've worn it: price ÷
+   wears. It is the number that turns a closet from a list into an
+   argument — the £15-a-wear boots you keep reaching for versus the coat
+   that has cost you its full price because it has been worn once.
+
+   Price is optional everywhere and private to the owner: it rides on the
+   item and syncs like any other field, but api/closet.php's public GET and
+   the Community closets feed never return it (see closet_item_to_owner in
+   includes/helpers.php).
+
+   Caveat worth knowing: the wear log lives in localStorage on THIS device
+   (WEARS_KEY above), so cost-per-wear is per-device until the wear log
+   itself syncs. An item worn on a phone shows no wears on the website. */
+function parsePrice(v){
+  if(v === null || v === undefined || v === "") return null;
+  const n = typeof v === "number" ? v : parseFloat(String(v).replace(/[^0-9.]/g, ""));
+  if(!isFinite(n) || n < 0) return null;
+  return Math.round(n * 100) / 100;
+}
+function formatMoney(n){
+  if(n === null || n === undefined) return "";
+  // Whole amounts read better without the trailing zeros on a dense row.
+  return "$" + (Math.abs(n - Math.round(n)) < 0.005
+    ? String(Math.round(n))
+    : n.toFixed(2));
+}
+function costPerWear(price, wears){
+  const p = parsePrice(price);
+  if(p === null) return null;
+  // Never worn: the honest answer is that it has cost you the whole price
+  // so far, not "n/a" and not a divide-by-zero.
+  return wears > 0 ? p / wears : p;
+}
+/** Totals for the closet header: what's logged, and how much of it is priced. */
+function closetValue(closet, worn){
+  let total = 0, priced = 0, wornSpend = 0, wornCount = 0;
+  for (const it of (closet || [])){
+    const p = parsePrice(it.price);
+    if(p === null) continue;
+    priced++; total += p;
+    const w = (worn && worn[it.id]) || 0;
+    if(w > 0){ wornSpend += p; wornCount += w; }
+  }
+  return { total, priced, avgPerWear: wornCount > 0 ? wornSpend / wornCount : null };
+}
+
 /* ---- Closet identity, de-duplication and tombstones -------------------
 
    A closet item has no stable server-side identity: api/closet.php replaces
@@ -1933,6 +1981,91 @@ function adoptRemoteTombstones(remoteDeleted){
   const list = [...additions, ...have].slice(0, TOMBSTONE_MAX);
   saveLocal(CLOSET_TOMBSTONE_KEY, list);
   return list;
+}
+
+/* ---- Saved outfits: storage, tombstones, reconcile -------------------
+
+   An outfit is { id, name, itemIds:[closet item id…], wearDate:"YYYY-MM-DD"
+   |null, createdAt, updatedAt }. It syncs through api/outfits.php with the
+   same syncVersion-2 semantics the closet uses — upsert by id, last-write-
+   wins on updatedAt, explicit tombstones — for the same reason: a payload
+   describes CHANGES, so a device holding half the outfits can never delete
+   the other half.
+
+   Simpler than the closet in two ways. There is no content key, because an
+   outfit has a stable client id from the moment it is created (nothing ever
+   minted new ids for these), so matching is by id alone. And outfits are
+   private, so there is no visibility flag.
+
+   itemIds are closet item ids, deliberately not validated against the
+   closet: an outfit that references a piece you've since removed renders as
+   an outfit with a missing piece, not a broken outfit. */
+const OUTFITS_KEY = "lore_outfits", OUTFIT_TOMBSTONE_KEY = "lore_outfits_removed", OUTFITS_MAX = 200;
+function loadOutfitTombstones(){
+  const now = Date.now();
+  const raw = loadLocal(OUTFIT_TOMBSTONE_KEY, []) || [];
+  // seenAt, not at, for expiry — same reasoning as loadTombstones above.
+  return raw.filter(t => t && t.id && (now - (t.seenAt || t.at || 0)) < TOMBSTONE_TTL_MS);
+}
+function addOutfitTombstone(id){
+  const now = Date.now();
+  const list = [{ id, at: now, seenAt: now }, ...loadOutfitTombstones().filter(t => t.id !== id)].slice(0, TOMBSTONE_MAX);
+  saveLocal(OUTFIT_TOMBSTONE_KEY, list);
+  return list;
+}
+function pendingOutfitDeletions(){
+  return loadOutfitTombstones().map(t => ({ id: t.id, deletedAt: t.at }));
+}
+function adoptRemoteOutfitTombstones(remoteDeleted){
+  if(!Array.isArray(remoteDeleted) || remoteDeleted.length === 0) return loadOutfitTombstones();
+  const have = loadOutfitTombstones();
+  const byId = new Set(have.map(t => t.id));
+  const now = Date.now();
+  const additions = remoteDeleted.filter(d => d && d.id && !byId.has(d.id))
+    .map(d => ({ id: d.id, at: d.deletedAt || now, seenAt: now }));
+  if(additions.length === 0) return have;
+  const list = [...additions, ...have].slice(0, TOMBSTONE_MAX);
+  saveLocal(OUTFIT_TOMBSTONE_KEY, list);
+  return list;
+}
+function normaliseOutfit(o){
+  if(!o || !o.id) return null;
+  const createdAt = o.createdAt || Date.now();
+  return {
+    id: String(o.id),
+    name: String(o.name || "").slice(0, 80),
+    itemIds: Array.isArray(o.itemIds) ? o.itemIds.map(String).slice(0, 24) : [],
+    wearDate: /^\d{4}-\d{2}-\d{2}$/.test(String(o.wearDate || "")) ? String(o.wearDate) : null,
+    createdAt,
+    updatedAt: o.updatedAt || createdAt,
+  };
+}
+function reconcileOutfits(local, remoteOutfits, remoteDeleted){
+  const localList = (Array.isArray(local) ? local : []).map(normaliseOutfit).filter(Boolean);
+  const remoteList = (Array.isArray(remoteOutfits) ? remoteOutfits : []).map(normaliseOutfit).filter(Boolean);
+
+  const dead = new Map();
+  for(const t of loadOutfitTombstones()) dead.set(t.id, Math.max(dead.get(t.id) || 0, t.at || 0));
+  for(const d of (Array.isArray(remoteDeleted) ? remoteDeleted : [])){
+    if(d && d.id) dead.set(d.id, Math.max(dead.get(d.id) || 0, d.deletedAt || 0));
+  }
+  // Re-created after the deletion? Then it lives — same rule as the closet.
+  const isDead = o => dead.has(o.id) && (o.updatedAt || o.createdAt || 0) <= dead.get(o.id);
+
+  const merged = new Map();
+  for(const o of localList) if(!isDead(o)) merged.set(o.id, o);
+  for(const o of remoteList){
+    if(isDead(o)) continue;
+    const mine = merged.get(o.id);
+    if(!mine || (o.updatedAt || 0) > (mine.updatedAt || 0)) merged.set(o.id, o);
+  }
+  return Array.from(merged.values())
+    .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))
+    .slice(0, OUTFITS_MAX);
+}
+/** The outfit planned for a given day, if any. */
+function outfitForDay(outfits, day){
+  return (outfits || []).find(o => o.wearDate === day) || null;
 }
 
 /* Reconcile the server's copy of a closet with this device's.
@@ -4029,6 +4162,27 @@ const Api = {
     if(!r.ok) throw await apiError(r, "Couldn't sync your closet.");
     return r.json();
   },
+
+  // Saved outfits (api/outfits.php). Same syncVersion-2 contract as the
+  // closet: the payload describes changes, not the whole world.
+  async getOutfits(visitorId, authToken){
+    const r = await fetch("/api/outfits?visitorId=" + encodeURIComponent(visitorId) + "&authToken=" + encodeURIComponent(authToken));
+    if(!r.ok) throw await apiError(r, "Couldn't load your outfits.");
+    const data = await r.json();
+    return {
+      outfits: Array.isArray(data && data.outfits) ? data.outfits : [],
+      deleted: Array.isArray(data && data.deleted) ? data.deleted : [],
+      serverTime: (data && data.serverTime) || Date.now(),
+    };
+  },
+  async syncOutfits(visitorId, authToken, outfits, deleted){
+    const r = await fetch("/api/outfits", {
+      method:"POST", headers:{ "Content-Type":"application/json" },
+      body: JSON.stringify({ visitorId, authToken, outfits, deleted: deleted || [], syncVersion: 2 }),
+    });
+    if(!r.ok) throw await apiError(r, "Couldn't save your outfits.");
+    return r.json();
+  },
 };
 
 /* =====================================================================
@@ -6028,8 +6182,36 @@ function ColorScreen({ colorResult, onSaveColor }){
    already lived only in this browser's localStorage, no size cap)
 ===================================================================== */
 
-function ClosetScreen({ closet, setCloset, blend, styleWordBlend, kibbeTypeName, topStyleWords, profile:viewer, isPremium, closetFreeLimit, onUpgrade, syncStatus, onRetrySync, storageFull }){
+function ClosetScreen({ closet, setCloset, blend, styleWordBlend, kibbeTypeName, topStyleWords, profile:viewer, isPremium, closetFreeLimit, onUpgrade, syncStatus, onRetrySync, storageFull, outfits, setOutfits }){
   const [showAdd, setShowAdd] = useState(false);
+  const [tab, setTab] = useState("items");          // "items" | "outfits"
+  const [building, setBuilding] = useState(null);   // null | true (new) | outfit (edit)
+
+  function saveOutfit({ id, name, itemIds }){
+    const now = Date.now();
+    setOutfits(prev => {
+      const list = prev || [];
+      if(id){
+        return list.map(o => o.id === id ? Object.assign({}, o, { name, itemIds, updatedAt: now }) : o);
+      }
+      return [{ id: uid(), name, itemIds, wearDate: null, createdAt: now, updatedAt: now }, ...list].slice(0, OUTFITS_MAX);
+    });
+    setBuilding(null);
+  }
+  function deleteOutfit(id){
+    addOutfitTombstone(id);
+    setOutfits(prev => (prev || []).filter(o => o.id !== id));
+  }
+  function scheduleOutfit(id, day){
+    const now = Date.now();
+    setOutfits(prev => (prev || []).map(o => {
+      // One outfit per day: assigning a day clears it from whatever else
+      // held it, otherwise the planner would show two things for one date.
+      if(o.id === id) return Object.assign({}, o, { wearDate: day, updatedAt: now });
+      if(day && o.wearDate === day) return Object.assign({}, o, { wearDate: null, updatedAt: now });
+      return o;
+    }));
+  }
   const profile = { kibbeBlend: blend, styleWordBlend, kibbeTypeName, topStyleWords };
   const atCap = !isPremium && closet.length >= closetFreeLimit;
   const worn = useMemo(() => wearCounts(), [closet]);
@@ -6060,6 +6242,14 @@ function ClosetScreen({ closet, setCloset, blend, styleWordBlend, kibbeTypeName,
       addTombstone(target);
       return prev.filter(x => closetItemKey(x) !== key);
     });
+  }
+  function setItemPrice(id, price){
+    // Same updatedAt discipline as toggleItemVisibility below — an edit that
+    // doesn't stamp it loses the next reconcile against a stale device.
+    const value = parsePrice(price);
+    setCloset(prev => (prev || []).map(x => x.id === id
+      ? Object.assign({}, x, { price: value, updatedAt: Date.now() })
+      : x));
   }
   function toggleItemVisibility(id){
     // updatedAt is what last-write-wins compares, so every edit must stamp it
@@ -6129,6 +6319,14 @@ function ClosetScreen({ closet, setCloset, blend, styleWordBlend, kibbeTypeName,
     }
   }
 
+  // Cost-per-wear summary. Silent until at least one item has a price, so
+  // nobody who doesn't care about the money sees a row of zeroes.
+  const value = useMemo(() => closetValue(closet, worn), [closet, worn]);
+  const valueBanner = value.priced > 0 ? e("p", { className:"footnote", style:{ marginBottom:12 } },
+    formatMoney(value.total) + " logged across " + value.priced + (value.priced === 1 ? " piece" : " pieces"),
+    value.avgPerWear !== null ? " · " + formatMoney(value.avgPerWear) + " average per wear" : null
+  ) : null;
+
   // Surfaces a failed server sync instead of leaving it silently
   // swallowed -- see the closetSyncStatus effect in App() for why this
   // matters (it's exactly the failure mode behind the "public closet
@@ -6147,46 +6345,70 @@ function ClosetScreen({ closet, setCloset, blend, styleWordBlend, kibbeTypeName,
         e("div", { className:"eyebrow" }, "Your closet"),
         e("h1", { className:"screen-title" }, "Closet")
       ),
-      e("button", { className:"btn btn-accent btn-sm", onClick:handleAddClick }, "+ Add")
+      tab === "items" ? e("button", { className:"btn btn-accent btn-sm", onClick:handleAddClick }, "+ Add") : null
     ),
-    e("p", { className:"screen-lede", style:{ marginBottom:14 } }, "Log what you own and see, piece by piece, what works for your type and what's missing. Items stay private unless you mark them Public."),
+    e("p", { className:"screen-lede", style:{ marginBottom:14 } }, tab === "items"
+      ? "Log what you own and see, piece by piece, what works for your type and what's missing. Items stay private unless you mark them Public."
+      : "Put your pieces together, save the combinations that work, and plan what you're wearing this week."),
 
-    !blend ? e("div", { className:"card", style:{ marginBottom:14, padding:14, display:"flex", alignItems:"center", justifyContent:"space-between", gap:12 } },
-      e("span", { style:{ fontSize:13.5 } }, "Take the style quiz and every item here gets a verdict against your type."),
-      e("button", { className:"btn btn-accent btn-sm", onClick: () => (window.__loreGoTo ? window.__loreGoTo("quiz") : null) }, "Take it")
+    e("div", { className:"tabs", style:{ marginBottom:14 } },
+      e("button", { type:"button", className:"tab-chip", "aria-pressed": tab==="items", onClick:()=>setTab("items") }, "Items"),
+      e("button", { type:"button", className:"tab-chip", "aria-pressed": tab==="outfits", onClick:()=>setTab("outfits") },
+        "Outfits" + ((outfits && outfits.length) ? " (" + outfits.length + ")" : ""))
+    ),
+
+    tab === "outfits" ? e("div", null,
+      e(OutfitsPanel, {
+        outfits: outfits || [], closet,
+        onDelete: deleteOutfit, onSchedule: scheduleOutfit,
+        onBuild: (o) => setBuilding(o && o.id ? o : true),
+      }),
+      building ? e(OutfitBuilderSheet, {
+        closet, outfit: building === true ? null : building,
+        onSave: saveOutfit, onClose: () => setBuilding(null),
+      }) : null
     ) : null,
-    capBanner,
-    (blend || styleWordBlend) ? e(OutfitCard, { closet, profile }) : null,
-    (blend || styleWordBlend) ? e(CapsuleCard, { closet, profile, isPremium, onUpgrade }) : null,
-    storageFull ? e(Banner, { kind:"error" },
-      "This device is out of storage for closet photos, so the newest changes aren't being saved here. They're still synced to your account — but remove a few items with photos to save changes on this device again."
+
+    tab === "items" ? e("div", null,
+      !blend ? e("div", { className:"card", style:{ marginBottom:14, padding:14, display:"flex", alignItems:"center", justifyContent:"space-between", gap:12 } },
+        e("span", { style:{ fontSize:13.5 } }, "Take the style quiz and every item here gets a verdict against your type."),
+        e("button", { className:"btn btn-accent btn-sm", onClick: () => (window.__loreGoTo ? window.__loreGoTo("quiz") : null) }, "Take it")
+      ) : null,
+      capBanner,
+      valueBanner,
+      (blend || styleWordBlend) ? e(OutfitCard, { closet, profile }) : null,
+      (blend || styleWordBlend) ? e(CapsuleCard, { closet, profile, isPremium, onUpgrade }) : null,
+      storageFull ? e(Banner, { kind:"error" },
+        "This device is out of storage for closet photos, so the newest changes aren't being saved here. They're still synced to your account — but remove a few items with photos to save changes on this device again."
+      ) : null,
+      syncBanner,
+
+      closet.length === 0
+        ? e(EmptyState, { icon:"closet" }, "Nothing logged yet. Add your first piece to get started.")
+        : e("div", { className:"row-list" },
+            closet.map(item => e(ClosetRow, {
+              key:item.id, item, profile, onRemove:()=>removeItem(item.id), wornCount: worn[item.id] || 0,
+              onSetPrice: (v)=>setItemPrice(item.id, v),
+              onToggleVisibility: viewer ? ()=>toggleItemVisibility(item.id) : null,
+            }))
+          ),
+
+      gapBanner,
+      // When the closet has actually told us something specific ("you lean
+      // away from crisp & structured"), shop that. Otherwise — empty closet,
+      // descriptions too thin to score, or a closet that's already balanced —
+      // fall back to the person's own quiz results so there is always a way
+      // to shop from here. Before 2026-09-15 this line was the only one, so
+      // anyone without a scored gap saw nothing at all.
+      // The gap-driven Shop row lives inside gapBanner when there is a scored
+      // gap to shop. Everything else — empty closet, descriptions too thin to
+      // score, a closet that's already balanced, or a locked free-tier gap
+      // list — falls back to the person's own quiz results, so there is
+      // always a way to shop from this screen.
+      shopRowInBanner ? null : e(ShopForYourType, { profile }),
+
+      e("p", { className:"footnote", style:{ marginTop:12 } }, "Verdicts are a quick read from each item's description, worked out on your phone. Photos stay on your device unless you make an item Public or tap “Describe it for me” (sent once, never stored).")
     ) : null,
-    syncBanner,
-
-    closet.length === 0
-      ? e(EmptyState, { icon:"closet" }, "Nothing logged yet. Add your first piece to get started.")
-      : e("div", { className:"row-list" },
-          closet.map(item => e(ClosetRow, {
-            key:item.id, item, profile, onRemove:()=>removeItem(item.id), wornCount: worn[item.id] || 0,
-            onToggleVisibility: viewer ? ()=>toggleItemVisibility(item.id) : null,
-          }))
-        ),
-
-    gapBanner,
-    // When the closet has actually told us something specific ("you lean
-    // away from crisp & structured"), shop that. Otherwise — empty closet,
-    // descriptions too thin to score, or a closet that's already balanced —
-    // fall back to the person's own quiz results so there is always a way
-    // to shop from here. Before 2026-09-15 this line was the only one, so
-    // anyone without a scored gap saw nothing at all.
-    // The gap-driven Shop row lives inside gapBanner when there is a scored
-    // gap to shop. Everything else — empty closet, descriptions too thin to
-    // score, a closet that's already balanced, or a locked free-tier gap
-    // list — falls back to the person's own quiz results, so there is
-    // always a way to shop from this screen.
-    shopRowInBanner ? null : e(ShopForYourType, { profile }),
-
-    e("p", { className:"footnote", style:{ marginTop:12 } }, "Verdicts are a quick read from each item's description, worked out on your phone. Photos stay on your device unless you make an item Public or tap “Describe it for me” (sent once, never stored)."),
 
     showAdd ? e(AddItemSheet, { onAdd:addItem, onClose:()=>setShowAdd(false), viewer }) : null
   );
@@ -6199,6 +6421,7 @@ function AddItemSheet({ onAdd, onClose, viewer }){
   const [photoPreview, setPhotoPreview] = useState(null);
   const [photoError, setPhotoError] = useState(null);
   const [visibility, setVisibility] = useState("hidden");
+  const [price, setPrice] = useState("");
   // "Describe it for me": idle | busy | done | off (feature not set up)
   const [describe, setDescribe] = useState("idle");
   const describedRef = useRef(false);
@@ -6230,7 +6453,7 @@ function AddItemSheet({ onAdd, onClose, viewer }){
 
   function submit(){
     if(!description.trim()) return;
-    onAdd({ description: description.trim(), photo: photoPreview || null, visibility });
+    onAdd({ description: description.trim(), photo: photoPreview || null, visibility, price: parsePrice(price) });
   }
 
   return e("div", { className:"sheet-backdrop", onClick:onClose },
@@ -6259,6 +6482,13 @@ function AddItemSheet({ onAdd, onClose, viewer }){
           onChange: ev=>setDescription(ev.target.value) })
       ),
       e("div", { className:"field" },
+        e("label", { htmlFor:"closet-price" }, "What it cost ", e("span", { style:{ fontWeight:400, color:"var(--ink-soft)" } }, "(optional)")),
+        e("input", { id:"closet-price", type:"text", inputMode:"decimal", value:price,
+          placeholder:"e.g. 89",
+          onChange: ev=>setPrice(ev.target.value) }),
+        e("div", { className:"field-hint" }, "Only you ever see this. Add it and the closet works out your cost per wear.")
+      ),
+      e("div", { className:"field" },
         e("label", null, "Visibility"),
         e("div", { className:"tabs", style:{ marginBottom:0 } },
           e("button", { type:"button", className:"tab-chip", "aria-pressed": visibility==="hidden", onClick:()=>setVisibility("hidden") }, "Hidden"),
@@ -6272,8 +6502,207 @@ function AddItemSheet({ onAdd, onClose, viewer }){
   );
 }
 
-function ClosetRow({ item, profile, onRemove, onToggleVisibility, wornCount }){
+/* ---- Outfits: builder, saved list, planner ---------------------------
+
+   The closet says what you own; this says what you'll actually wear. It is
+   the one thing every competitor has had for years and Style-LORE did not:
+   until now the app could only auto-suggest (Today's outfit, the capsule),
+   never let someone put pieces together themselves and keep the result.
+
+   Kept inside the Closet screen behind an Items/Outfits switch rather than
+   given a seventh nav tab — the bottom bar is full, and an outfit is made
+   of closet pieces, so this is where people already are. */
+
+/** The next `n` days, starting today, as {day, label, weekday}. */
+function plannerDays(n){
+  const out = [];
+  const base = new Date();
+  for(let i = 0; i < n; i++){
+    const d = new Date(base.getFullYear(), base.getMonth(), base.getDate() + i);
+    out.push({
+      day: localDay(d),
+      weekday: i === 0 ? "Today" : i === 1 ? "Tomorrow" : d.toLocaleDateString(undefined, { weekday:"short" }),
+      dayNum: d.getDate(),
+    });
+  }
+  return out;
+}
+
+function OutfitThumbs({ items, size = 40 }){
+  if(!items.length) return null;
+  return e("div", { style:{ display:"flex", gap:4, flexShrink:0 } },
+    items.slice(0, 4).map((it, i) => it && it.photo
+      ? e("img", { key:i, src:it.photo, alt:"", style:{ width:size, height:size, borderRadius:6, objectFit:"cover" } })
+      : e("span", { key:i, style:{ width:size, height:size, borderRadius:6, background:"var(--paper-raised)", border:"1px solid var(--line)", display:"flex", alignItems:"center", justifyContent:"center", color:"var(--ink-soft)" } }, Icon("shirt"))
+    )
+  );
+}
+
+function OutfitsPanel({ outfits, closet, onSave, onDelete, onSchedule, onBuild }){
+  const byId = useMemo(() => {
+    const m = new Map();
+    for(const it of (closet || [])) m.set(it.id, it);
+    return m;
+  }, [closet]);
+  // An outfit keeps its ids even when a piece is removed from the closet, so
+  // a missing piece is rendered as missing rather than silently dropped.
+  const piecesOf = o => (o.itemIds || []).map(id => byId.get(id) || null);
+  const days = useMemo(() => plannerDays(7), []);
+  const [planningFor, setPlanningFor] = useState(null);   // a day string
+
+  if(!closet || closet.length < 2){
+    return e(EmptyState, { icon:"closet" },
+      "Add at least two pieces to your closet and you can start putting outfits together here.");
+  }
+
+  return e("div", null,
+    e("div", { className:"card", style:{ marginBottom:14, padding:14 } },
+      e("div", { className:"eyebrow", style:{ marginBottom:8 } }, "The week ahead"),
+      e("div", { style:{ display:"flex", gap:6, overflowX:"auto", paddingBottom:2 } },
+        days.map(d => {
+          const planned = outfitForDay(outfits, d.day);
+          return e("button", {
+            key:d.day, type:"button",
+            onClick: () => setPlanningFor(planningFor === d.day ? null : d.day),
+            "aria-pressed": planningFor === d.day,
+            style:{
+              flex:"0 0 auto", width:72, padding:"8px 4px", borderRadius:10, textAlign:"center",
+              border:"1px solid " + (planned ? "var(--accent)" : "var(--line)"),
+              background: planningFor === d.day ? "var(--paper-raised)" : "transparent", cursor:"pointer",
+            },
+          },
+            e("div", { style:{ fontSize:11, color:"var(--ink-soft)" } }, d.weekday),
+            e("div", { style:{ fontSize:16, fontWeight:600, marginBottom:4 } }, d.dayNum),
+            planned
+              ? e("div", { style:{ fontSize:10.5, lineHeight:1.3, color:"var(--accent)", overflow:"hidden" } }, planned.name || "Planned")
+              : e("div", { style:{ fontSize:10.5, color:"var(--ink-soft)" } }, "—")
+          );
+        })
+      ),
+      planningFor ? e("div", { style:{ marginTop:10, borderTop:"1px solid var(--line-soft)", paddingTop:10 } },
+        e("div", { className:"field-hint", style:{ marginBottom:6 } }, "What are you wearing on this day?"),
+        outfits.length === 0
+          ? e("p", { className:"footnote", style:{ margin:0 } }, "Build an outfit first and you can plan it here.")
+          : e("div", { style:{ display:"flex", flexDirection:"column", gap:6 } },
+              outfits.map(o => e("button", {
+                key:o.id, type:"button", className:"btn btn-ghost btn-sm", style:{ justifyContent:"flex-start" },
+                onClick: () => { onSchedule(o.id, o.wearDate === planningFor ? null : planningFor); setPlanningFor(null); },
+              }, (o.wearDate === planningFor ? "✓ " : "") + (o.name || "Untitled outfit"))),
+              outfitForDay(outfits, planningFor)
+                ? e("button", { type:"button", className:"btn-text", style:{ padding:0, fontSize:12.5, color:"var(--ink-soft)", textAlign:"left" },
+                    onClick: () => { const p = outfitForDay(outfits, planningFor); if(p) onSchedule(p.id, null); setPlanningFor(null); } }, "Clear this day")
+                : null
+            )
+      ) : null
+    ),
+
+    e("button", { className:"btn btn-accent btn-block", style:{ marginBottom:14 }, onClick:onBuild }, "+ Build an outfit"),
+
+    outfits.length === 0
+      ? e(EmptyState, { icon:"closet" }, "No outfits yet. Put a few pieces together and save the combination.")
+      : e("div", { className:"row-list" },
+          outfits.map(o => {
+            const pieces = piecesOf(o);
+            const missing = pieces.filter(p => !p).length;
+            return e("div", { key:o.id, className:"row-list-item" },
+              e(OutfitThumbs, { items: pieces.filter(Boolean) }),
+              e("div", { style:{ flex:1, minWidth:0 } },
+                e("div", { style:{ fontSize:14, fontWeight:500, marginBottom:4 } }, o.name || "Untitled outfit"),
+                e("div", { style:{ fontSize:12, color:"var(--ink-soft)", marginBottom:6 } },
+                  pieces.length + (pieces.length === 1 ? " piece" : " pieces"),
+                  o.wearDate ? " · planned for " + o.wearDate : "",
+                  missing ? " · " + missing + " no longer in your closet" : ""),
+                e("div", { style:{ display:"flex", gap:12, flexWrap:"wrap" } },
+                  e("button", { className:"btn-text", style:{ padding:0, fontSize:12 }, onClick:()=>onBuild(o) }, "Edit"),
+                  e("button", { className:"btn-text", style:{ padding:0, fontSize:12.5, color:"var(--ink-soft)" }, onClick:()=>onDelete(o.id) }, "Remove")
+                )
+              )
+            );
+          })
+        )
+  );
+}
+
+function OutfitBuilderSheet({ closet, outfit, onSave, onClose }){
+  const dialogRef = useDialog(onClose);
+  useBackClose(onClose);
+  const [name, setName] = useState(outfit ? (outfit.name || "") : "");
+  const [picked, setPicked] = useState(() => new Set(outfit ? (outfit.itemIds || []) : []));
+  function toggle(id){
+    setPicked(prev => {
+      const next = new Set(prev);
+      if(next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }
+  const chosen = (closet || []).filter(it => picked.has(it.id));
+  function submit(){
+    if(picked.size === 0) return;
+    onSave({
+      id: outfit ? outfit.id : null,
+      name: name.trim() || defaultOutfitName(chosen),
+      itemIds: Array.from(picked),
+    });
+  }
+  return e("div", { className:"sheet-backdrop", onClick:onClose },
+    e("div", { className:"sheet", ref:dialogRef, role:"dialog", "aria-modal":"true", onClick: ev=>ev.stopPropagation() },
+      e("div", { className:"sheet-handle" }),
+      e("div", { className:"sheet-head" },
+        e("h2", { className:"display", style:{ fontSize:20, fontWeight:700 } }, outfit ? "Edit outfit" : "Build an outfit"),
+        e("button", { className:"close-btn", onClick:onClose, "aria-label":"Close" }, Icon("x"))
+      ),
+      chosen.length ? e("div", { style:{ marginBottom:12 } }, e(OutfitThumbs, { items: chosen, size: 56 })) : null,
+      e("div", { className:"field" },
+        e("label", { htmlFor:"outfit-name" }, "Name it ", e("span", { style:{ fontWeight:400, color:"var(--ink-soft)" } }, "(optional)")),
+        e("input", { id:"outfit-name", type:"text", value:name, maxLength:80,
+          placeholder:"e.g. Friday dinner", onChange: ev=>setName(ev.target.value) })
+      ),
+      e("div", { className:"field-hint", style:{ marginBottom:8 } },
+        picked.size === 0 ? "Tap the pieces that go together." : picked.size + " selected"),
+      e("div", { style:{ maxHeight:280, overflowY:"auto", display:"flex", flexDirection:"column", gap:6 } },
+        (closet || []).map(it => {
+          const on = picked.has(it.id);
+          return e("button", {
+            key:it.id, type:"button", onClick:()=>toggle(it.id), "aria-pressed":on,
+            style:{ display:"flex", alignItems:"center", gap:10, padding:8, borderRadius:10, textAlign:"left",
+              border:"1px solid " + (on ? "var(--accent)" : "var(--line)"),
+              background: on ? "var(--paper-raised)" : "transparent", cursor:"pointer" },
+          },
+            it.photo ? e("img", { src:it.photo, alt:"", style:{ width:40, height:40, borderRadius:6, objectFit:"cover", flexShrink:0 } })
+              : e("span", { style:{ width:40, height:40, borderRadius:6, background:"var(--paper-raised)", border:"1px solid var(--line)", display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0, color:"var(--ink-soft)" } }, Icon("shirt")),
+            e("span", { style:{ flex:1, minWidth:0, fontSize:13.5 } }, it.description),
+            on ? e("span", { style:{ color:"var(--accent)", fontWeight:700 } }, "✓") : null
+          );
+        })
+      ),
+      e("button", { className:"btn btn-accent btn-block", style:{ marginTop:14 }, disabled: picked.size === 0, onClick: submit },
+        outfit ? "Save changes" : "Save outfit")
+    )
+  );
+}
+
+/** A readable name when someone doesn't type one — the first two pieces. */
+function defaultOutfitName(items){
+  const names = (items || []).map(it => (it.description || "").trim()).filter(Boolean);
+  if(names.length === 0) return "Untitled outfit";
+  const short = names.slice(0, 2).map(n => n.length > 28 ? n.slice(0, 28).trim() + "…" : n);
+  return short.join(" + ") + (names.length > 2 ? " +" + (names.length - 2) : "");
+}
+
+function ClosetRow({ item, profile, onRemove, onToggleVisibility, wornCount, onSetPrice }){
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [editingPrice, setEditingPrice] = useState(false);
+  const [priceDraft, setPriceDraft] = useState("");
+  const price = parsePrice(item.price);
+  const cpw = costPerWear(item.price, wornCount);
+  function openPriceEditor(){
+    setPriceDraft(price === null ? "" : String(price));
+    setEditingPrice(true);
+  }
+  function savePrice(){
+    if(onSetPrice) onSetPrice(priceDraft);
+    setEditingPrice(false);
+  }
   const verdict = useMemo(
     () => profile && (profile.kibbeBlend || profile.styleWordBlend) ? styleCheckVerdict(item.description, profile) : null,
     [item.description, profile]
@@ -6298,12 +6727,28 @@ function ClosetRow({ item, profile, onRemove, onToggleVisibility, wornCount }){
           className:"btn-text", style:{ padding:0, fontSize:12, color: isPublic ? "var(--accent)" : "var(--ink-soft)" },
           onClick: onToggleVisibility,
         }, isPublic ? "🌐 Public" : "🔒 Hidden — tap to make public") : null,
+        onSetPrice && !editingPrice ? e("button", {
+          className:"btn-text", style:{ padding:0, fontSize:12, color:"var(--ink-soft)" }, onClick: openPriceEditor,
+          "aria-label": price === null ? "Add what this cost" : "Edit what this cost",
+        }, price === null ? "+ Add price"
+          : formatMoney(price) + (cpw !== null ? " · " + formatMoney(cpw) + "/wear" : "")) : null,
         !confirmDelete ? e("button", { className:"btn-text", style:{ padding:0, fontSize:12.5, color:"var(--ink-soft)" }, onClick:()=>setConfirmDelete(true) }, "Remove")
           : e("div", { style:{ display:"flex", gap:10 } },
               e("button", { className:"btn-text", style:{ padding:0, fontSize:12, color:"var(--danger)" }, onClick:onRemove }, "Confirm remove"),
               e("button", { className:"btn-text", style:{ padding:0, fontSize:12 }, onClick:()=>setConfirmDelete(false) }, "Cancel")
             )
-      )
+      ),
+      editingPrice ? e("div", { style:{ display:"flex", alignItems:"center", gap:8, marginTop:8 } },
+        e("input", {
+          type:"text", inputMode:"decimal", value:priceDraft, autoFocus:true, placeholder:"What it cost",
+          style:{ width:120, padding:"6px 8px", fontSize:13 },
+          onChange: ev=>setPriceDraft(ev.target.value),
+          onKeyDown: ev=>{ if(ev.key === "Enter") savePrice(); if(ev.key === "Escape") setEditingPrice(false); },
+        }),
+        e("button", { className:"btn btn-sm btn-accent", onClick: savePrice }, "Save"),
+        e("button", { className:"btn-text", style:{ padding:0, fontSize:12 }, onClick:()=>setEditingPrice(false) }, "Cancel"),
+        price !== null ? e("button", { className:"btn-text", style:{ padding:0, fontSize:12, color:"var(--ink-soft)" }, onClick: ()=>{ if(onSetPrice) onSetPrice(""); setEditingPrice(false); } }, "Clear") : null
+      ) : null
     )
   );
 }
@@ -8293,6 +8738,7 @@ function App(){
   // sync bug heals itself on the next load, before anything is rendered or
   // synced back up.
   const [closet, setCloset] = useState(() => dedupeCloset(loadLocal("lore_closet", []) || []));
+  const [outfits, setOutfits] = useState(() => (loadLocal(OUTFITS_KEY, []) || []).map(normaliseOutfit).filter(Boolean));
   const [screen, setScreen] = useState(loadLastScreen);
   const [viewingProfileId, setViewingProfileId] = useState(null);
   const [viewingConversation, setViewingConversation] = useState(null); // {id, otherId, otherName} | null
@@ -8494,6 +8940,62 @@ function App(){
   // failed and the closet would revert on reload — say so instead.
   const [closetStorageFull, setClosetStorageFull] = useState(false);
   useEffect(() => { setClosetStorageFull(!saveLocal("lore_closet", closet)); }, [closet]);
+  useEffect(() => { saveLocal(OUTFITS_KEY, outfits); }, [outfits]);
+
+  /* ---- Saved outfits sync ------------------------------------------
+     Deliberately the same shape as the closet sync below it, including the
+     hydrate-before-upload guard: api/outfits.php will not delete what a
+     payload omits, but a device that uploaded before reading would still
+     resurrect outfits another device had deleted. Simpler in that outfit
+     rows are tiny (ids, not photos), so there is no payload-size debounce
+     worry and no storage-full case. */
+  const outfitsRef = useRef(outfits);
+  useEffect(() => { outfitsRef.current = outfits; }, [outfits]);
+  const outfitSyncChainRef = useRef(Promise.resolve());
+  const outfitSyncedSnapshotRef = useRef(null);
+  const outfitSyncDebounceRef = useRef(null);
+  const outfitsHydratedRef = useRef(null);
+  const [outfitsHydratedFor, setOutfitsHydratedFor] = useState(null);
+
+  const hydrateOutfitsFromServer = useCallback(async () => {
+    if(!profile || !profile.visitorId || !profile.token) return;
+    if(outfitsHydratedRef.current === profile.visitorId) return;
+    try {
+      const remote = await Api.getOutfits(profile.visitorId, profile.token);
+      adoptRemoteOutfitTombstones(remote.deleted);
+      setOutfits(local => {
+        const merged = reconcileOutfits(local, remote.outfits, remote.deleted);
+        const same = merged.length === (local || []).length
+          && merged.every((o, i) => local[i] && o.id === local[i].id && (o.updatedAt || 0) === (local[i].updatedAt || 0));
+        return same ? local : merged;
+      });
+      outfitsHydratedRef.current = profile.visitorId;
+      setOutfitsHydratedFor(profile.visitorId);
+    } catch (err) {
+      // A failed read must never become permission to upload — except on a
+      // 401, where retrying forever would just fail forever.
+      if(err && err.status === 401){ outfitsHydratedRef.current = profile.visitorId; setOutfitsHydratedFor(profile.visitorId); }
+    }
+  }, [profile && profile.visitorId, profile && profile.token]);
+
+  useEffect(() => { hydrateOutfitsFromServer(); }, [hydrateOutfitsFromServer]);
+
+  useEffect(() => {
+    if(!profile || !profile.visitorId) return;
+    if(outfitsHydratedRef.current !== profile.visitorId) return;
+    if(outfitSyncDebounceRef.current) clearTimeout(outfitSyncDebounceRef.current);
+    outfitSyncDebounceRef.current = setTimeout(() => {
+      const payload = JSON.stringify([outfitsRef.current, pendingOutfitDeletions()]);
+      if(payload === outfitSyncedSnapshotRef.current) return;
+      outfitSyncChainRef.current = outfitSyncChainRef.current.then(() =>
+        Api.syncOutfits(profile.visitorId, profile.token, outfitsRef.current, pendingOutfitDeletions())
+          .then(() => { outfitSyncedSnapshotRef.current = payload; })
+          .catch(() => {})
+      );
+    }, 1000);
+  }, [profile && profile.visitorId, profile && profile.token, outfits, outfitsHydratedFor]);
+
+  useEffect(() => () => { if(outfitSyncDebounceRef.current) clearTimeout(outfitSyncDebounceRef.current); }, []);
 
   // Mirrors the local closet up to the server (see api/closet.php) so
   // whichever items are marked Public can be shown on the profile and in
@@ -8972,7 +9474,7 @@ function App(){
   else if(screen === "home") body = e(HomeScreen, { profile, blend, styleBlend, kibbeResult, colorResult, closetCount: closet.length, closet, digestOptOut, onToggleDigest: toggleDigest, morningPushOptOut, onToggleMorningPush: toggleMorningPush, isPremium, billing, giftNotice, referral, onManageBilling: openBillingPortal, onUpgrade:openPaywall, onNavigate:goTo, onSignOut:signOut, onOpenProfile:openProfile, onAccountDeleted:handleAccountDeleted, onSignIn:leaveGuestForGate });
   else if(screen === "quiz") body = e(StyleQuizScreen, { kibbeResult, styleLanguageResult:styleBlend, onSaveKibbe:setKibbeResult, onSaveStyle:setStyleBlend, onSignIn: profile ? null : leaveGuestForGate, colorResult });
   else if(screen === "color") body = e(ColorScreen, { colorResult, onSaveColor:setColorResult });
-  else if(screen === "closet") body = e(ClosetScreen, { closet, setCloset, blend, styleWordBlend:styleBlend, kibbeTypeName, topStyleWords, profile, isPremium, closetFreeLimit, onUpgrade:openPaywall, syncStatus:closetSyncStatus, onRetrySync:retryClosetSync, storageFull:closetStorageFull });
+  else if(screen === "closet") body = e(ClosetScreen, { closet, setCloset, blend, styleWordBlend:styleBlend, kibbeTypeName, topStyleWords, profile, isPremium, closetFreeLimit, onUpgrade:openPaywall, syncStatus:closetSyncStatus, onRetrySync:retryClosetSync, storageFull:closetStorageFull, outfits, setOutfits });
   else if(screen === "checker") body = e(CheckerScreen, { blend, styleWordBlend:styleBlend, kibbeTypeName, topStyleWords, visitorId: profile ? profile.visitorId : null, authToken: profile ? profile.token : null, isPremium, freeAiReadsLeft, onFreeAiReadUsed: () => setFreeAiReadsLeft(n => Math.max(0, n - 1)), onSignIn: profile ? null : leaveGuestForGate, onUpgrade:openPaywall });
   else if(screen === "community") body = e(CommunityScreen, { profile, blend, onOpenProfile:openProfile });
   else if(screen === "notifications") body = e(NotificationsScreen, { profile, onBack:()=>goTo("home"), onOpenProfile:openProfile, onOpenConversation:openConversation });
