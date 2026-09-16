@@ -5314,8 +5314,15 @@ function Banner({ kind, children }){
   return e("div", { className:"banner banner-"+(kind||"info") }, children);
 }
 
-function EmptyState({ icon, children }){
-  return e("div", { className:"empty-state" }, Icon(icon||"sparkle"), e("p", null, children));
+function EmptyState({ icon, children, action, onAction }){
+  return e("div", { className:"empty-state" },
+    Icon(icon||"sparkle"),
+    e("p", null, children),
+    // An empty screen whose only way forward is a small button in a corner
+    // reads as a dead end. Where there is an obvious next move, put it here
+    // where the person is already looking.
+    action ? e("button", { className:"btn btn-accent btn-sm", style:{ marginTop:12 }, onClick:onAction }, action) : null
+  );
 }
 
 function VideoEmbed({ url }){
@@ -7040,7 +7047,8 @@ function ClosetScreen({ closet, setCloset, blend, styleWordBlend, kibbeTypeName,
       syncBanner,
 
       closet.length === 0
-        ? e(EmptyState, { icon:"closet" }, "Nothing logged yet. Add your first piece to get started.")
+        ? e(EmptyState, { icon:"closet", action:"+ Add your first piece", onAction:handleAddClick },
+            "Nothing logged yet. Add a few things you actually wear and the closet starts telling you what suits your lines — and what's missing.")
         : e("div", { className:"row-list" },
             closet.map(item => e(ClosetRow, {
               key:item.id, item, profile, onRemove:()=>removeItem(item.id), wornCount: worn[item.id] || 0,
@@ -7251,7 +7259,7 @@ function OutfitsPanel({ outfits, closet, profile, viewer, isPremium, onSave, onD
   const [planningFor, setPlanningFor] = useState(null);   // a day string
 
   if(!closet || closet.length < 2){
-    return e(EmptyState, { icon:"closet" },
+    return e(EmptyState, { icon:"closet", action:"+ Add a piece", onAction: () => (window.__loreGoTo ? window.__loreGoTo("closet") : null) },
       "Add at least two pieces to your closet and you can start putting outfits together here.");
   }
 
@@ -7301,7 +7309,8 @@ function OutfitsPanel({ outfits, closet, profile, viewer, isPremium, onSave, onD
     e("button", { className:"btn btn-accent btn-block", style:{ marginBottom:14 }, onClick:onBuild }, "+ Build an outfit"),
 
     outfits.length === 0
-      ? e(EmptyState, { icon:"closet" }, "No outfits yet. Put a few pieces together and save the combination.")
+      ? e(EmptyState, { icon:"closet", action:"+ Build your first outfit", onAction:onBuild },
+          "No outfits yet. Put a few pieces together and save the combination.")
       : e("div", { className:"row-list" },
           outfits.map(o => {
             const pieces = piecesOf(o);
