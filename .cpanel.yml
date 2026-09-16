@@ -30,6 +30,11 @@ deployment:
     - /bin/cp -rf api/. $DEPLOYPATH/api/
     - /bin/mkdir -p $DEPLOYPATH/includes
     - /bin/cp -rf includes/. $DEPLOYPATH/includes/
+    # Background-removal runtime + model (see vendor/bg/README.md). This is
+    # an explicit copy list, not a repo sync -- a new folder that isn't named
+    # here is committed but never reaches the live site.
+    - /bin/mkdir -p $DEPLOYPATH/vendor/bg
+    - /bin/cp -rf vendor/. $DEPLOYPATH/vendor/
     - /bin/mkdir -p $DEPLOYPATH/email-assets
     - /bin/cp -rf email-assets/. $DEPLOYPATH/email-assets/
     - /bin/mkdir -p $DEPLOYPATH/uploads/avatars
