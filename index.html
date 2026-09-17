@@ -440,6 +440,9 @@
     align-items:center;
     justify-content:center;
     gap:8px;
+    /* Apple and Google both specify a 44px minimum touch target. The
+       padding alone landed these at 43px. */
+    min-height:44px;
     padding:13px 22px;
     border-radius:999px;
     font-size:14.5px;
@@ -640,6 +643,14 @@
   }
   .service-notice-text{ flex:1; }
   .service-notice-x{ background:none; border:0; font-size:20px; line-height:1; color:var(--ink-soft); cursor:pointer; padding:0 2px; }
+  /* Same 44px minimum. These two glyphs are drawn small on purpose, so the
+     hit area is grown with a pseudo-element rather than the box, which would
+     shift the layout around them. */
+  .service-notice-x, .history-remove{ position:relative; }
+  .service-notice-x::after, .history-remove::after{
+    content:""; position:absolute; left:50%; top:50%; transform:translate(-50%,-50%);
+    width:44px; height:44px; min-width:100%; min-height:100%;
+  }
   .app > .topbar{ order:-1; } /* keeps the top bar above the service notice, which is first in the DOM */
   .banner{
     border-radius:var(--radius-m);
