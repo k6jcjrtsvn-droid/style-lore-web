@@ -34,6 +34,20 @@ function hc_request(string $method, string $url, ?string $json = null, array $he
     $code = (int)curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
     $err = curl_error($ch);
     curl_close($ch);
+    // Code 0 means we never got a response at all. On shared hosting the
+    // box intermittently fails to connect to its own public hostname for a
+    // second or two, which is not an outage — 2026-09-18 17:10 UTC alerted
+    // on exactly that while the site answered every outside request fine.
+    // One retry tells a blip apart from a real failure.
+    if ($code === 0) {
+        sleep(3);
+        $ch = curl_init($url);
+        curl_setopt_array($ch, $opts);
+        $body = curl_exec($ch);
+        $code = (int)curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
+        $err = curl_error($ch);
+        curl_close($ch);
+    }
     return ['code' => $code, 'body' => (string)$body, 'err' => $err];
 }
 
@@ -94,7 +108,7 @@ if (count($failed)) {
     $state['down'] = true;
 } else {
     if ($wasDown) {
-        send_mail_tracked(SUPPORT_EMAIL, 'Style-LORE: all checks passing again', "Everything is back to normal as of " . date('Y-m-d H:i T') . ".\n\n" . implode("\n", $summary) . "\n");
+        send_mail_tracked(SUPPORT_EMAIL, 'Style-LORE: all checks passing again', null, "Everything is back to normal as of " . date('Y-m-d H:i T') . ".\n\n" . implode("\n", $summary) . "\n");
     }
     $state['down'] = false;
 }
