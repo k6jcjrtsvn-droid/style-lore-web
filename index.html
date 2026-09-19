@@ -4171,7 +4171,7 @@ const REVENUECAT_PUBLIC_SDK_KEY_ANDROID = "goog_SffETjRYZnPArhWaaEXEgSYzyca";
 // iOS has its own public SDK key (starts with "appl_"): RevenueCat > Apps >
 // Style-LORE (App Store) > Public API Key. Same publishable-key rules as
 // the Android one above; leave blank and iOS purchases stay disabled.
-const REVENUECAT_PUBLIC_SDK_KEY_IOS = "";
+const REVENUECAT_PUBLIC_SDK_KEY_IOS = "appl_iPMlBSaValBbRsxaChDlQGrCFrV";
 // One bundle serves both stores, so pick the key for the platform we are
 // actually running on. RevenueCat rejects a goog_ key on iOS and vice versa.
 const REVENUECAT_PUBLIC_SDK_KEY = (window.Capacitor && window.Capacitor.getPlatform && window.Capacitor.getPlatform() === "ios")
