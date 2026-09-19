@@ -4168,6 +4168,15 @@ function parseVideoLink(raw){
 // opens and explains Premium, it just can't sell it yet) until this is
 // set. See claude/monetization-setup-checklist.md for where to get this.
 const REVENUECAT_PUBLIC_SDK_KEY_ANDROID = "goog_SffETjRYZnPArhWaaEXEgSYzyca";
+// iOS has its own public SDK key (starts with "appl_"): RevenueCat > Apps >
+// Style-LORE (App Store) > Public API Key. Same publishable-key rules as
+// the Android one above; leave blank and iOS purchases stay disabled.
+const REVENUECAT_PUBLIC_SDK_KEY_IOS = "";
+// One bundle serves both stores, so pick the key for the platform we are
+// actually running on. RevenueCat rejects a goog_ key on iOS and vice versa.
+const REVENUECAT_PUBLIC_SDK_KEY = (window.Capacitor && window.Capacitor.getPlatform && window.Capacitor.getPlatform() === "ios")
+  ? REVENUECAT_PUBLIC_SDK_KEY_IOS
+  : REVENUECAT_PUBLIC_SDK_KEY_ANDROID;
 // Must exactly match the identifier of the entitlement you create in
 // RevenueCat (Project > Entitlements) and attach both subscription
 // products to.
@@ -7606,7 +7615,7 @@ function PaywallSheet({ reason, onClose, onPurchased, profile, webCheckout: webC
   const Purchases = isNative && window.Capacitor.Plugins && window.Capacitor.Plugins.Purchases;
 
   useEffect(() => {
-    if(!Purchases || !REVENUECAT_PUBLIC_SDK_KEY_ANDROID) return;
+    if(!Purchases || !REVENUECAT_PUBLIC_SDK_KEY) return;
     let cancelled = false;
     Purchases.getOfferings().then(res => {
       if(!cancelled) setOfferings(res && res.current ? res.current.availablePackages : []);
@@ -7680,7 +7689,7 @@ function PaywallSheet({ reason, onClose, onPurchased, profile, webCheckout: webC
     );
   } else if (!isNative){
     plansContent = e(Banner, { kind:"info" }, "Subscriptions are handled through the Style-LORE mobile app right now — open the app on your phone to upgrade.");
-  } else if (!REVENUECAT_PUBLIC_SDK_KEY_ANDROID){
+  } else if (!REVENUECAT_PUBLIC_SDK_KEY){
     plansContent = e(Banner, { kind:"info" }, "Premium isn't fully set up yet — check back soon.");
   } else if (offerings === null){
     plansContent = e("p", { style:{ fontSize:13, color:"var(--ink-soft)" } }, "Loading plans…");
@@ -10297,7 +10306,7 @@ function App(){
     const Capacitor = window.Capacitor;
     const isNative = Capacitor && Capacitor.isNativePlatform && Capacitor.isNativePlatform();
     const Purchases = isNative && Capacitor.Plugins && Capacitor.Plugins.Purchases;
-    if(!Purchases || !REVENUECAT_PUBLIC_SDK_KEY_ANDROID) return;
+    if(!Purchases || !REVENUECAT_PUBLIC_SDK_KEY) return;
     if(purchasesConfiguredForRef.current === profile.visitorId) return;
     purchasesConfiguredForRef.current = profile.visitorId;
 
@@ -10310,7 +10319,7 @@ function App(){
     }
 
     async function setUp(){
-      await Purchases.configure({ apiKey: REVENUECAT_PUBLIC_SDK_KEY_ANDROID, appUserID: profile.visitorId });
+      await Purchases.configure({ apiKey: REVENUECAT_PUBLIC_SDK_KEY, appUserID: profile.visitorId });
       if(cancelled) return;
       listeners.push(await Purchases.addListener("customerInfoUpdate", (event) => {
         // Fires immediately after a purchase completes, well before
