@@ -10304,6 +10304,17 @@ function App(){
       if(cancelled && h && h.remove) h.remove(); else handle = h;
     }).catch(() => {});
     if(CapApp.getLaunchUrl) CapApp.getLaunchUrl().then((r) => route(r && r.url)).catch(() => {});
+    // The iOS simulator check (codemagic.yaml, ios-check) cannot tap the
+    // "Open in Style-LORE?" prompt a custom-scheme URL raises, so it drops
+    // the URL into a file in the app's private Documents folder before
+    // launch instead. Nothing else can write there on a real phone (the
+    // app has no file sharing), so this is inert outside the simulator.
+    const FS = Capacitor.Plugins.Filesystem;
+    if(FS && FS.readFile){
+      FS.readFile({ path: "ci-open-url.txt", directory: "DOCUMENTS", encoding: "utf8" })
+        .then((r) => route(String((r && r.data) || "").trim()))
+        .catch(() => {});
+    }
     return () => { cancelled = true; if(handle && handle.remove) { try{ handle.remove(); }catch(err){} } };
   }, []);
 
