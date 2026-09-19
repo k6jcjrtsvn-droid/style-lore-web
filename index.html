@@ -7615,7 +7615,11 @@ function PaywallSheet({ reason, onClose, onPurchased, profile, webCheckout: webC
   const Purchases = isNative && window.Capacitor.Plugins && window.Capacitor.Plugins.Purchases;
 
   useEffect(() => {
-    if(!Purchases || !REVENUECAT_PUBLIC_SDK_KEY) return;
+    // RevenueCat is configured only once an account exists (its app user
+    // id is the account id), so signed out there is nothing to ask it —
+    // getOfferings() would reject with "not configured" and the sheet
+    // showed an error banner instead of the plans.
+    if(!Purchases || !REVENUECAT_PUBLIC_SDK_KEY || !profile) return;
     let cancelled = false;
     Purchases.getOfferings().then(res => {
       if(!cancelled) setOfferings(res && res.current ? res.current.availablePackages : []);
@@ -7691,6 +7695,18 @@ function PaywallSheet({ reason, onClose, onPurchased, profile, webCheckout: webC
     plansContent = e(Banner, { kind:"info" }, "Subscriptions are handled through the Style-LORE mobile app right now — open the app on your phone to upgrade.");
   } else if (!REVENUECAT_PUBLIC_SDK_KEY){
     plansContent = e(Banner, { kind:"info" }, "Premium isn't fully set up yet — check back soon.");
+  } else if (!profile){
+    // Signed out (the Home "See Premium" card): show the plans as fixed
+    // copy — same prices as App Store Connect and Play — and send a tap to
+    // sign-in, after which the live store prices take over.
+    plansContent = e("div", { style:{ display:"flex", flexDirection:"column", gap:10, marginBottom:12 } },
+      e("button", { className:"btn btn-accent btn-block", onClick:()=>{ if(onSignIn) onSignIn(); } },
+        trialEligible ? "Start 7-day free trial — then $39.99 / year" : "Yearly — $39.99 / year"),
+      e("button", { className:"btn btn-ghost btn-block", onClick:()=>{ if(onSignIn) onSignIn(); } },
+        trialEligible ? "Monthly — $4.99 / month (7-day free trial)" : "Monthly — $4.99 / month"),
+      e("p", { className:"footnote", style:{ margin:"4px 0 0", textAlign:"center" } },
+        "Create a free account to subscribe. Billed through the App Store or Google Play; cancel anytime from your phone's subscription settings.")
+    );
   } else if (offerings === null){
     plansContent = e("p", { style:{ fontSize:13, color:"var(--ink-soft)" } }, "Loading plans…");
   } else if (offerings.length === 0){
