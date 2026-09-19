@@ -10286,7 +10286,7 @@ function App(){
   // because simctl can screenshot but not tap. The latest openPaywall/goTo
   // are read through a ref so the one listener never goes stale.
   const deepLinkRef = useRef(null);
-  deepLinkRef.current = { openPaywall, goTo };
+  deepLinkRef.current = { openPaywall, goTo, exploreAsGuest, atGate: !profile && !guest };
   useEffect(() => {
     const Capacitor = window.Capacitor;
     const isNative = Capacitor && Capacitor.isNativePlatform && Capacitor.isNativePlatform();
@@ -10297,8 +10297,14 @@ function App(){
       const m = /^stylelore:\/\/([a-z-]+)/i.exec(url || "");
       if(!m || !deepLinkRef.current) return;
       const target = m[1].toLowerCase();
-      if(target === "paywall") deepLinkRef.current.openPaywall("home");
-      else if(["home","closet","checker","color","community","inbox","notifications","quiz"].includes(target)) deepLinkRef.current.goTo(target);
+      const d = deepLinkRef.current;
+      const screens = ["home","closet","checker","color","community","inbox","notifications","quiz"];
+      if(target !== "paywall" && !screens.includes(target)) return;
+      // At the welcome gate nothing below it renders (App returns early),
+      // so step past it as an explorer first, the same as "just look around".
+      if(d.atGate) d.exploreAsGuest(target === "paywall" ? "home" : target);
+      if(target === "paywall") d.openPaywall("home");
+      else d.goTo(target);
     }
     Promise.resolve(CapApp.addListener("appUrlOpen", (ev) => route(ev && ev.url))).then((h) => {
       if(cancelled && h && h.remove) h.remove(); else handle = h;
