@@ -10263,6 +10263,34 @@ function App(){
     };
   }, [profile && profile.visitorId, profile && profile.token]);
 
+  // Deep links. stylelore://paywall opens the Premium sheet (the Home
+  // "See Premium" path, so it works signed out) and stylelore://<screen>
+  // switches to that screen. iOS registers the scheme in Info.plist (see
+  // codemagic.yaml); the iOS simulator check opens the paywall this way
+  // because simctl can screenshot but not tap. The latest openPaywall/goTo
+  // are read through a ref so the one listener never goes stale.
+  const deepLinkRef = useRef(null);
+  deepLinkRef.current = { openPaywall, goTo };
+  useEffect(() => {
+    const Capacitor = window.Capacitor;
+    const isNative = Capacitor && Capacitor.isNativePlatform && Capacitor.isNativePlatform();
+    const CapApp = isNative && Capacitor.Plugins && Capacitor.Plugins.App;
+    if(!CapApp || !CapApp.addListener) return;
+    let cancelled = false, handle = null;
+    function route(url){
+      const m = /^stylelore:\/\/([a-z-]+)/i.exec(url || "");
+      if(!m || !deepLinkRef.current) return;
+      const target = m[1].toLowerCase();
+      if(target === "paywall") deepLinkRef.current.openPaywall("home");
+      else if(["home","closet","checker","color","community","inbox","notifications","quiz"].includes(target)) deepLinkRef.current.goTo(target);
+    }
+    Promise.resolve(CapApp.addListener("appUrlOpen", (ev) => route(ev && ev.url))).then((h) => {
+      if(cancelled && h && h.remove) h.remove(); else handle = h;
+    }).catch(() => {});
+    if(CapApp.getLaunchUrl) CapApp.getLaunchUrl().then((r) => route(r && r.url)).catch(() => {});
+    return () => { cancelled = true; if(handle && handle.remove) { try{ handle.remove(); }catch(err){} } };
+  }, []);
+
   // Style-LORE Premium status — refetched on sign-in, and again whenever
   // the paywall closes (a purchase may have just gone through). This is
   // the one source every screen reads isPremium/closetFreeLimit from;
