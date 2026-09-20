@@ -37,8 +37,13 @@
       }catch(err){}
       return "web";
     }
+    // Crawlers (Google's AdSense fetcher, Googlebot, ...) run the page without
+    // the CDN scripts and used to file a "React is not defined" report per
+    // URL they visited -- 12 a day with no human behind any of them.
+    var isCrawler = /bot|crawl|spider|slurp|Mediapartners|APIs-Google|AdsBot|Lighthouse|HeadlessChrome/i.test(navigator.userAgent || "");
     window.loreReport = function(kind, message, extra){
       try{
+        if(isCrawler) return;
         message = String(message || "").slice(0, 500);
         if(!message) return;
         var key = kind + "|" + message.slice(0, 120);
@@ -71,7 +76,13 @@
       var msg = r && (r.message || String(r)) || "Unhandled promise rejection";
       // AbortError = our own request timeout; user-facing screens already handle it.
       if(r && r.name === "AbortError") return;
-      window.loreReport("unhandled_rejection", msg, { stack: r && r.stack, name: r && r.name, code: r && r.code });
+      // A rejection carrying no reason at all (the two iPhone Safari reports
+      // of Sep 16/19) says nothing on its own; record what kind of value it
+      // was and a JSON glimpse so the next one can be traced.
+      var detail = { stack: r && r.stack, name: r && r.name, code: r && r.code, reasonType: r === undefined ? "undefined" : (r === null ? "null" : typeof r) };
+      if(r && typeof r === "object" && !r.message){ try{ detail.reasonJson = JSON.stringify(r).slice(0, 300); }catch(err){} }
+      if(!(r && (r.message || String(r)))) msg = "Unhandled promise rejection (empty reason: " + detail.reasonType + ")";
+      window.loreReport("unhandled_rejection", msg, detail);
     });
   })();
   window.dataLayer = window.dataLayer || [];
@@ -1156,8 +1167,13 @@
 </main>
 </div>
 
-<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.3.1/umd/react.production.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.3.1/umd/react-dom.production.min.js"></script>
+<!-- React ships with the site (vendor/react, 18.3.1 UMD, same bytes as the
+     cdnjs copy) so a blocked or slow CDN can no longer leave a blank page;
+     cdnjs is only the fallback if the local file somehow fails to load. -->
+<script src="vendor/react/react.production.min.js"></script>
+<script>window.React||document.write('<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.3.1/umd/react.production.min.js"><\/script>');</script>
+<script src="vendor/react/react-dom.production.min.js"></script>
+<script>window.ReactDOM||document.write('<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.3.1/umd/react-dom.production.min.js"><\/script>');</script>
 
 <script>
 (function(){
