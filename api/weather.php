@@ -7,11 +7,18 @@
  * Coordinates are rounded to 2 decimals (~1 km) before use, never logged
  * or stored; responses are cached on disk per rounded cell for 30 minutes
  * so a busy morning costs Open-Meteo one call per neighbourhood, not one
- * per person.
+ * per person. If Open-Meteo is unreachable the last good reading for the
+ * cell is served instead (up to WEATHER_STALE_MAX) rather than an error.
  *
  * Returns {tempC, highC, lowC, rainChance (0-100), code, label}.
  */
 require_once __DIR__ . '/../includes/helpers.php';
+
+const WEATHER_ATTEMPTS = 2;         // upstream tries before giving up
+const WEATHER_CONNECT_TIMEOUT = 3;  // seconds to get a connection
+const WEATHER_TIMEOUT = 4;          // seconds per attempt (2 x 4 = the old 8s ceiling)
+const WEATHER_CACHE_TTL = 1800;     // 30 min: how long a reading is served as fresh
+const WEATHER_STALE_MAX = 21600;    // 6 h: how long it may stand in when upstream is down
 
 require_method('GET');
 
@@ -27,20 +34,50 @@ $cacheDir = sys_get_temp_dir() . '/style-lore-weather';
 if (!is_dir($cacheDir)) @mkdir($cacheDir, 0700, true);
 $cacheFile = $cacheDir . '/' . md5($lat . ',' . $lon) . '.json';
 header('Cache-Control: private, max-age=900');
-if (is_file($cacheFile) && filemtime($cacheFile) > time() - 1800) {
+if (is_file($cacheFile) && filemtime($cacheFile) > time() - WEATHER_CACHE_TTL) {
     $cached = file_get_contents($cacheFile);
     if ($cached) { header('Content-Type: application/json'); echo $cached; exit; }
 }
 
 $url = 'https://api.open-meteo.com/v1/forecast?latitude=' . $lat . '&longitude=' . $lon
      . '&current=temperature_2m,weather_code&daily=temperature_2m_max,temperature_2m_min,precipitation_probability_max,weather_code&timezone=auto&forecast_days=1';
-$ch = curl_init($url);
-curl_setopt_array($ch, [CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT => 8, CURLOPT_HTTPHEADER => ['User-Agent: Style-LORE/1.0 (style-lore.com)']]);
-$raw = curl_exec($ch);
-$code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-curl_close($ch);
+// Two attempts: a single dropped connection to Open-Meteo used to surface
+// as a 502 on someone's Home screen (and an api_5xx report in support@).
+// The per-attempt budget is halved so the worst case stays at the 8s this
+// endpoint always had, and CONNECTTIMEOUT bounds a stalled handshake
+// rather than letting it eat the whole budget.
+$raw = null;
+$code = 0;
+for ($attempt = 0; $attempt < WEATHER_ATTEMPTS; $attempt++) {
+    if ($attempt > 0) usleep(250000);
+    $ch = curl_init($url);
+    curl_setopt_array($ch, [
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_CONNECTTIMEOUT => WEATHER_CONNECT_TIMEOUT,
+        CURLOPT_TIMEOUT => WEATHER_TIMEOUT,
+        CURLOPT_HTTPHEADER => ['User-Agent: Style-LORE/1.0 (style-lore.com)'],
+    ]);
+    $raw = curl_exec($ch);
+    $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+    if ($code === 200 && $raw) break;
+}
 $data = $raw ? json_decode($raw, true) : null;
 if ($code !== 200 || !is_array($data) || !isset($data['current']['temperature_2m'])) {
+    // stale-if-error. The cache above is only trusted for 30 minutes, but
+    // when Open-Meteo is unreachable a few-hours-old reading for this same
+    // ~1 km cell is far better than an error card: the temperature has
+    // barely moved and nobody is dressing by the minute. Only past
+    // WEATHER_STALE_MAX is it honestly unusable.
+    if (is_file($cacheFile) && filemtime($cacheFile) > time() - WEATHER_STALE_MAX) {
+        $stale = file_get_contents($cacheFile);
+        if ($stale) {
+            header('Content-Type: application/json');
+            header('X-Weather-Stale: 1');
+            echo $stale;
+            exit;
+        }
+    }
     error_response("Couldn't get the weather right now.", 502);
 }
 
