@@ -30,6 +30,14 @@ RewriteRule ^support/?$ support.html [L]
 # account deletion and works without installing the app. This is that URL.
 RewriteRule ^delete-account/?$ support.html [L]
 
+# Share links for the betas. These hop through api/go.php so the click is
+# recorded before the redirect — Apple publishes no click data for a
+# TestFlight public link and Google none for a Play opt-in page, so without
+# this hop a link nobody clicks and a link everybody abandons look the same.
+# Add ?s=instagram (or any tag) to compare where a post landed.
+RewriteRule ^ios/?$ api/go.php?slug=ios [L,QSA]
+RewriteRule ^android/?$ api/go.php?slug=android [L,QSA]
+
 # --- API routing -------------------------------------------------------
 # CORS preflights from the native apps (see includes/helpers.php
 # cors_headers and api/_cors.php). Must come before the method-conditional
@@ -74,6 +82,7 @@ RewriteRule ^api/auth/verify/?$ api/auth_verify.php [L,QSA]
 RewriteRule ^api/auth/resend-verification/?$ api/auth_resend_verification.php [L,QSA]
 
 RewriteRule ^api/admin/moderation/?$ api/admin_moderation.php [L,QSA]
+RewriteRule ^api/admin/funnel/?$ api/admin_funnel.php [L,QSA]
 RewriteRule ^api/admin/broadcast/?$ api/admin_broadcast.php [L,QSA]
 
 RewriteRule ^api/checker/photo/?$ api/checker_photo.php [L,QSA]

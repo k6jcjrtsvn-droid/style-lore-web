@@ -4309,7 +4309,7 @@ const Api = {
   async signup({ name, email, password }){
     const r = await fetch("/api/auth/signup", {
       method:"POST", headers:{ "Content-Type":"application/json" },
-      body: JSON.stringify({ name, email, password, ref: pendingReferral() || undefined }),
+      body: JSON.stringify({ name, email, password, device: (window.STYLE_LORE_NATIVE && window.Capacitor && window.Capacitor.getPlatform ? window.Capacitor.getPlatform() : "web"), ref: pendingReferral() || undefined }),
     });
     if(!r.ok){
       const body = await r.json().catch(()=>({}));

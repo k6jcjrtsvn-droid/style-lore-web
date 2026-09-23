@@ -14,6 +14,7 @@ if (!is_valid_email($email)) error_response('Enter a valid email address.', 400)
 if (strlen($password) < 8) error_response('Password must be at least 8 characters.', 400);
 
 $pdo = db();
+ensure_funnel_schema($pdo);
 rate_limit($pdo, 'signup:ip:' . client_ip(), 5, 3600, 'Too many sign-ups from this connection — please try again later.');
 
 $check = $pdo->prepare('SELECT id FROM accounts WHERE email = ?');
@@ -48,10 +49,14 @@ try {
 
     $pdo->beginTransaction();
     $ins1 = $pdo->prepare(
-        'INSERT INTO accounts (id, email, password_hash, created_at, auth_token_hash, email_verified, verify_token_hash, verify_token_expires)
-         VALUES (?, ?, ?, ?, ?, 0, ?, ?)'
+        'INSERT INTO accounts (id, email, password_hash, created_at, auth_token_hash, email_verified, verify_token_hash, verify_token_expires, signup_device)
+         VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?)'
     );
-    $ins1->execute([$id, $email, $passwordHash, $now, hash_token($authToken), hash_token($verifyToken), $verifyExpires]);
+    // Which platform this account was created on. The client has always sent
+    // it; signup threw it away, so "how many of these came from the iOS
+    // beta" had no answer. Labels the row and nothing more — never trusted.
+    $signupDevice = normalize_device($body['device'] ?? null);
+    $ins1->execute([$id, $email, $passwordHash, $now, hash_token($authToken), hash_token($verifyToken), $verifyExpires, $signupDevice]);
     // Multi-device sessions: record this first token so later logins on other devices don't sign this one out.
     try { $pdo->prepare('INSERT IGNORE INTO auth_tokens (token_hash, account_id, created_at, last_used_at, label) VALUES (?,?,?,?,?)')->execute([hash_token($authToken), $id, $now, $now, 'signup']); } catch (Throwable $e) { error_log('signup auth_tokens: ' . $e->getMessage()); }
     $ins2 = $pdo->prepare('INSERT INTO profiles (id, name, bio, avatar_url, updated_at) VALUES (?, ?, ?, NULL, ?)');

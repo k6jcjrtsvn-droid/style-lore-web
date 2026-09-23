@@ -1467,3 +1467,48 @@ function is_blocked_pair(PDO $pdo, string $a, string $b): bool {
         return (bool)$stmt->fetchColumn();
     } catch (Throwable $e) { error_log('is_blocked_pair: ' . $e->getMessage()); return false; }
 }
+
+/* =========================================================================
+ * Acquisition funnel: where installs come from, and whether they convert.
+ *
+ * Apple publishes NO click data for a TestFlight public link — you can see
+ * who joined, never how many people looked. Google Play is the same. So the
+ * link people are given is one of ours (/ios, /android), which records the
+ * hit and then redirects; the store's own numbers pick up from there.
+ *
+ * Deliberately coarse. There is no cookie, no per-person id and no attempt
+ * to join a click to the account it may later become: the IP is kept only
+ * so the same phone reloading a page twice can be discounted, and a click
+ * and a signup are counted as populations, not as a chain. That is enough
+ * to answer "is the link working" without building a tracker.
+ * ========================================================================= */
+function ensure_funnel_schema(PDO $pdo): void {
+    static $done = false; if ($done) return; $done = true;
+    try {
+        $pdo->exec(
+            'CREATE TABLE IF NOT EXISTS link_clicks (
+                id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+                slug VARCHAR(32) NOT NULL,
+                created_at BIGINT NOT NULL,
+                referrer VARCHAR(255) DEFAULT NULL,
+                source VARCHAR(64) DEFAULT NULL,
+                user_agent VARCHAR(255) DEFAULT NULL,
+                platform VARCHAR(16) DEFAULT NULL,
+                ip VARCHAR(45) DEFAULT NULL,
+                KEY idx_slug_time (slug, created_at)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4'
+        );
+        // Which platform an account signed up from. The client has always
+        // sent this on login; signup threw it away, so there was no way to
+        // ask "how many of these came from the iOS beta".
+        $pdo->exec('ALTER TABLE accounts ADD COLUMN IF NOT EXISTS signup_device VARCHAR(16) NULL');
+    } catch (Throwable $e) { error_log('ensure_funnel_schema: ' . $e->getMessage()); }
+}
+
+/** "ios" | "android" | "web" from whatever the client claimed, or null.
+ *  Never trusted for anything that matters — it only labels a row. */
+function normalize_device(?string $raw): ?string {
+    $raw = strtolower(trim((string)$raw));
+    if ($raw === 'ios' || $raw === 'android' || $raw === 'web') return $raw;
+    return null;
+}
