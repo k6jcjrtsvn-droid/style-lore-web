@@ -10712,7 +10712,7 @@ function App(){
   // because simctl can screenshot but not tap. The latest openPaywall/goTo
   // are read through a ref so the one listener never goes stale.
   const deepLinkRef = useRef(null);
-  deepLinkRef.current = { openPaywall, goTo, exploreAsGuest, atGate: !profile && !guest };
+  deepLinkRef.current = { openPaywall, goTo, exploreAsGuest, completeGate, signedIn: !!profile, atGate: !profile && !guest };
   useEffect(() => {
     const Capacitor = window.Capacitor;
     const isNative = Capacitor && Capacitor.isNativePlatform && Capacitor.isNativePlatform();
@@ -10743,9 +10743,44 @@ function App(){
     // app has no file sharing), so this is inert outside the simulator.
     const FS = Capacitor.Plugins.Filesystem;
     if(FS && FS.readFile){
-      FS.readFile({ path: "ci-open-url.txt", directory: "DOCUMENTS", encoding: "utf8" })
-        .then((r) => route(String((r && r.data) || "").trim()))
-        .catch(() => {});
+      const readUrlAndRoute = () =>
+        FS.readFile({ path: "ci-open-url.txt", directory: "DOCUMENTS", encoding: "utf8" })
+          .then((r) => route(String((r && r.data) || "").trim()))
+          .catch(() => {});
+
+      // CI sign-in (codemagic.yaml, ios-check). Community, Notifications and
+      // the inbox all render a sign-in prompt for a guest, so a simulator run
+      // could never screenshot the real feed. The workflow drops the demo
+      // account's credentials into the app's own Documents folder and this
+      // signs in with them before routing.
+      //
+      // This is NOT a privilege escalation and should not be read as one: it
+      // posts to the same /api/auth/login as the sign-in form and needs the
+      // same valid credentials, so it grants nothing that typing into the
+      // form would not. The file lives in the app's private container, which
+      // has no file sharing enabled, so nothing on a real phone can write it.
+      // The credentials never appear in this repo — the workflow reads them
+      // from Codemagic's encrypted environment and writes the file at build
+      // time.
+      FS.readFile({ path: "ci-signin.json", directory: "DOCUMENTS", encoding: "utf8" })
+        .then((r) => {
+          const creds = JSON.parse(String((r && r.data) || "{}"));
+          const d = deepLinkRef.current;
+          if(!creds.email || !creds.password || !d || d.signedIn) return readUrlAndRoute();
+          return Api.login({ email: creds.email, password: creds.password })
+            .then((account) => {
+              deepLinkRef.current.completeGate({
+                name: account.name, email: account.email, joinedAt: Date.now(),
+                visitorId: account.id, token: account.token,
+                emailVerified: account.emailVerified !== undefined ? account.emailVerified : true,
+              });
+              // Let the sign-in render before routing, so route() reads a ref
+              // that already knows there is a profile.
+              return new Promise((res) => setTimeout(res, 600)).then(readUrlAndRoute);
+            })
+            .catch(() => readUrlAndRoute()); // bad or expired credentials: carry on as a guest
+        })
+        .catch(() => readUrlAndRoute()); // no file — the normal case on a real device
     }
     return () => { cancelled = true; if(handle && handle.remove) { try{ handle.remove(); }catch(err){} } };
   }, []);
