@@ -5815,7 +5815,11 @@ function LegalLinks(){
   const st = { fontSize:12, color:"var(--ink-soft)" };
   return e("span", { style:st },
     e("a", { href:"https://style-lore.com/terms.html", target:"_blank", rel:"noopener", style:{ color:"inherit" } }, "Terms"), " · ",
-    e("a", { href:"https://style-lore.com/privacy.html", target:"_blank", rel:"noopener", style:{ color:"inherit" } }, "Privacy"));
+    e("a", { href:"https://style-lore.com/privacy.html", target:"_blank", rel:"noopener", style:{ color:"inherit" } }, "Privacy"), " \u00b7 ",
+    // Apple's Support URL has to lead somewhere that visibly offers help, and
+    // people need to find it from inside the app too, not only from a store
+    // listing they will never look at again.
+    e("a", { href:"https://style-lore.com/support.html", target:"_blank", rel:"noopener", style:{ color:"inherit" } }, "Support"));
 }
 
 function LegalSheet({ title, text, onClose }){

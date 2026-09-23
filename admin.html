@@ -1,0 +1,248 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>Moderation — Style-LORE</title>
+<style>
+  :root{
+    --paper:#FBF0F3; --paper-raised:#FFF8F9; --ink:#2E1620; --ink-soft:#6C4C56;
+    --line:#EACBD3; --accent:#C92C69; --danger:#B3483D; --good:#4C6A45;
+    color-scheme: light dark;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{ --paper:#1C1015; --paper-raised:#25141A; --ink:#F6E6EB; --ink-soft:#BB93A1; --line:#3D212B; }
+  }
+  *{ box-sizing:border-box; }
+  body{
+    margin:0; background:var(--paper); color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;
+    padding:24px 16px 60px;
+  }
+  .wrap{ max-width:720px; margin:0 auto; }
+  h1{ font-size:22px; margin:0 0 4px; }
+  p.lede{ color:var(--ink-soft); font-size:13.5px; margin:0 0 20px; }
+  .gate{ background:var(--paper-raised); border:1px solid var(--line); border-radius:14px; padding:20px; }
+  .gate input{
+    width:100%; padding:10px 12px; border-radius:8px; border:1px solid var(--line);
+    background:var(--paper); color:var(--ink); font-size:14px; margin-bottom:10px;
+  }
+  button{
+    font:inherit; border:none; border-radius:8px; padding:9px 16px; cursor:pointer;
+  }
+  .btn-accent{ background:var(--accent); color:#fff; }
+  .btn-danger{ background:var(--danger); color:#fff; }
+  .btn-ghost{ background:transparent; border:1px solid var(--line); color:var(--ink); }
+  .card{
+    background:var(--paper-raised); border:1px solid var(--line); border-radius:14px;
+    padding:16px; margin-bottom:14px;
+  }
+  .card-head{ display:flex; justify-content:space-between; align-items:baseline; margin-bottom:8px; }
+  .card-head b{ font-size:15px; }
+  .flag-count{ font-size:12px; color:var(--danger); font-weight:600; }
+  .meta{ font-size:12px; color:var(--ink-soft); margin-bottom:8px; }
+  .caption{ font-size:13.5px; margin-bottom:10px; white-space:pre-wrap; }
+  img, video{ max-width:100%; border-radius:8px; margin-bottom:10px; display:block; }
+  .actions{ display:flex; gap:8px; }
+  .empty{ color:var(--ink-soft); font-size:14px; padding:30px 0; text-align:center; }
+  .error{ color:var(--danger); font-size:13px; margin-top:8px; }
+  #logout{ font-size:12px; color:var(--ink-soft); background:none; border:none; text-decoration:underline; cursor:pointer; padding:0; }
+  .tabs{ display:flex; gap:6px; }
+  .tab{ border:1px solid var(--line); background:transparent; color:var(--ink-soft);
+        border-radius:999px; padding:6px 14px; font-size:13px; cursor:pointer; }
+  .tab.is-on{ background:var(--accent); border-color:var(--accent); color:#fff; }
+  .comment-text{ font-size:14.5px; margin:6px 0 4px; }
+  .comment-context{ font-size:12px; color:var(--ink-soft); border-left:2px solid var(--line);
+                    padding-left:10px; margin-top:8px; }
+  .hidden-badge{ font-size:11px; text-transform:uppercase; letter-spacing:.08em;
+                 color:var(--danger); margin-left:8px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Moderation queue</h1>
+  <p class="lede">Posts and comments with at least one open report. Not indexed, not linked from the app — bookmark this page.</p>
+
+  <div id="gate" class="gate">
+    <label for="secret" style="font-size:13px; display:block; margin-bottom:6px;">Admin secret</label>
+    <input id="secret" type="password" placeholder="Paste your ADMIN_SECRET" autocomplete="off">
+    <button class="btn-accent" id="unlock">Unlock</button>
+    <div class="error" id="gate-error"></div>
+  </div>
+
+  <div id="app" style="display:none;">
+    <div style="display:flex; justify-content:space-between; align-items:center; gap:12px; margin-bottom:12px;">
+      <div class="tabs">
+        <button id="tab-posts" class="tab is-on" data-kind="posts">Posts</button>
+        <button id="tab-comments" class="tab" data-kind="comments">Comments</button>
+      </div>
+      <button id="logout">Lock this page</button>
+    </div>
+    <div class="error" id="action-error"></div>
+    <div id="list"></div>
+  </div>
+</div>
+
+<script>
+(function(){
+  var SECRET_KEY = "lore_admin_secret";
+  var gate = document.getElementById("gate");
+  var app = document.getElementById("app");
+  var list = document.getElementById("list");
+  var gateError = document.getElementById("gate-error");
+  var actionError = document.getElementById("action-error");
+  // Which queue is showing. Posts and comments are two separate GETs (see
+  // api/admin_moderation.php for why the response stayed a bare array).
+  var kind = "posts";
+
+  function secret(){ return localStorage.getItem(SECRET_KEY) || ""; }
+
+  function esc(s){
+    var d = document.createElement("div");
+    d.textContent = s == null ? "" : String(s);
+    return d.innerHTML;
+  }
+
+  function timeAgo(ms){
+    var s = Math.floor((Date.now() - ms) / 1000);
+    if(s < 60) return "just now";
+    var m = Math.floor(s/60); if(m < 60) return m + "m ago";
+    var h = Math.floor(m/60); if(h < 24) return h + "h ago";
+    return Math.floor(h/24) + "d ago";
+  }
+
+  function renderPost(p){
+    var media = "";
+    if(p.photoUrl) media = '<img src="' + esc(p.photoUrl) + '" alt="">';
+    else if(p.videoFileUrl) media = '<video src="' + esc(p.videoFileUrl) + '" controls playsinline></video>';
+
+    return (
+      '<div class="card" data-id="' + esc(p.id) + '">' +
+        '<div class="card-head"><b>' + esc(p.authorName) + '</b>' +
+          '<span class="flag-count">' + p.reportCount + (p.reportCount === 1 ? " report" : " reports") + '</span></div>' +
+        '<div class="meta">' + esc(p.kibbeTag || "") + ' &middot; ' + timeAgo(p.createdAt) + '</div>' +
+        (p.caption ? '<div class="caption">' + esc(p.caption) + '</div>' : '') +
+        media +
+        '<div class="actions">' +
+          '<button class="btn-danger" data-action="hide">Hide post</button>' +
+          '<button class="btn-ghost" data-action="dismiss">Dismiss reports</button>' +
+        '</div>' +
+      '</div>'
+    );
+  }
+
+  // One reported comment, shown with enough of its post to judge it —
+  // "that's disgusting" reads very differently under a coat than under a
+  // person. Hidden comments stay in the queue with a badge so a wrong
+  // auto-hide can be undone; that was the whole point of building this.
+  function renderComment(c){
+    return (
+      '<div class="card" data-id="' + esc(c.id) + '">' +
+        '<div class="card-head"><b>' + esc(c.authorName) + '</b>' +
+          (c.hidden ? '<span class="hidden-badge">hidden</span>' : '') +
+          '<span class="flag-count">' + c.reportCount + (c.reportCount === 1 ? " report" : " reports") + '</span></div>' +
+        '<div class="meta">' + timeAgo(c.createdAt) + '</div>' +
+        '<div class="comment-text">' + esc(c.text) + '</div>' +
+        '<div class="comment-context">on ' + esc(c.postAuthorName || "a post") +
+          (c.postCaption ? ': &ldquo;' + esc(c.postCaption) + '&rdquo;' : '') + '</div>' +
+        '<div class="actions">' +
+          '<button class="btn-danger" data-action="hide">Hide comment</button>' +
+          '<button class="btn-ghost" data-action="dismiss">' +
+            (c.hidden ? 'Restore &amp; dismiss' : 'Dismiss reports') + '</button>' +
+        '</div>' +
+      '</div>'
+    );
+  }
+
+  async function load(){
+    actionError.textContent = "";
+    list.innerHTML = '<div class="empty">Loading…</div>';
+    var wanted = kind;
+    try{
+      var url = "/api/admin/moderation" + (wanted === "comments" ? "?type=comments" : "");
+      var r = await fetch(url, { headers:{ "X-Admin-Secret": secret() } });
+      if(r.status === 401){ lock("That secret didn't work."); return; }
+      if(!r.ok) throw new Error("Server said " + r.status);
+      var rows = await r.json();
+      if(wanted !== kind) return; // tab switched while this was in flight
+      if(!rows.length){
+        list.innerHTML = '<div class="empty">' +
+          (wanted === "comments" ? "No reported comments right now." : "Nothing flagged right now.") + '</div>';
+        return;
+      }
+      list.innerHTML = rows.map(wanted === "comments" ? renderComment : renderPost).join("");
+    }catch(err){
+      list.innerHTML = '<div class="empty">Couldn\'t load the queue — ' + esc(err.message) + '</div>';
+    }
+  }
+
+  async function act(id, action, btn){
+    btn.disabled = true;
+    actionError.textContent = "";
+    try{
+      var payload = kind === "comments"
+        ? { commentId: Number(id), action: action }
+        : { postId: id, action: action };
+      var r = await fetch("/api/admin/moderation", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-Admin-Secret": secret() },
+        body: JSON.stringify(payload),
+      });
+      if(!r.ok) throw new Error("Server said " + r.status);
+      load();
+    }catch(err){
+      btn.disabled = false;
+      // Inline, not alert(): a modal here blocks the page and there is
+      // nothing useful to do in it.
+      actionError.textContent = "Couldn't do that — " + err.message;
+    }
+  }
+
+  list.addEventListener("click", function(ev){
+    var btn = ev.target.closest("button[data-action]");
+    if(!btn) return;
+    var card = ev.target.closest(".card");
+    act(card.getAttribute("data-id"), btn.getAttribute("data-action"), btn);
+  });
+
+  Array.prototype.forEach.call(document.querySelectorAll(".tab"), function(tab){
+    tab.addEventListener("click", function(){
+      kind = tab.getAttribute("data-kind");
+      Array.prototype.forEach.call(document.querySelectorAll(".tab"), function(t){
+        t.classList.toggle("is-on", t === tab);
+      });
+      load();
+    });
+  });
+
+  function unlock(){
+    var val = document.getElementById("secret").value.trim();
+    if(!val) return;
+    localStorage.setItem(SECRET_KEY, val);
+    gateError.textContent = "";
+    gate.style.display = "none";
+    app.style.display = "block";
+    load();
+  }
+
+  function lock(message){
+    localStorage.removeItem(SECRET_KEY);
+    app.style.display = "none";
+    gate.style.display = "block";
+    gateError.textContent = message || "";
+  }
+
+  document.getElementById("unlock").addEventListener("click", unlock);
+  document.getElementById("secret").addEventListener("keydown", function(ev){ if(ev.key === "Enter") unlock(); });
+  document.getElementById("logout").addEventListener("click", function(){ lock(""); });
+
+  if(secret()){
+    gate.style.display = "none";
+    app.style.display = "block";
+    load();
+  }
+})();
+</script>
+</body>
+</html>
