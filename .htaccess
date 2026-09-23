@@ -41,6 +41,12 @@ RewriteRule ^api/posts/?$ api/posts.php [L,QSA]
 RewriteRule ^api/follows/([^/]+)/([^/]+)/?$ api/follow_delete.php?followerId=$1&followingId=$2 [L,QSA]
 RewriteRule ^api/follows/?$ api/follows.php [L,QSA]
 
+# Blocking another member (api/user_block.php). GET lists this account's
+# blocks, POST blocks/unblocks. Required by App Store guideline 1.2 —
+# without this rewrite the endpoint is a 404 and the Block button does
+# nothing, which is exactly what a reviewer would find.
+RewriteRule ^api/user_block/?$ api/user_block.php [L,QSA]
+
 RewriteRule ^api/profiles/([^/]+)/?$ api/profile.php?id=$1 [L,QSA]
 RewriteRule ^api/profile-style/([^/]+)/?$ api/profile_style.php?id=$1 [L,QSA]
 
