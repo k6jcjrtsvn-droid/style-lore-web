@@ -12,20 +12,26 @@ RewriteEngine On
 RewriteRule ^p/([A-Za-z0-9-]+)/?$ p.php?id=$1 [L,QSA]
 RewriteRule ^pi/([A-Za-z0-9-]+)/?$ pi.php?id=$1 [L,QSA]
 
-# --- API routing -------------------------------------------------------
-# CORS preflights from the native apps (see includes/helpers.php
-# cors_headers and api/_cors.php). Must come before the method-conditional
-# rules below, which would otherwise 404 an OPTIONS request.
-RewriteCond %{REQUEST_METHOD} =OPTIONS
 # Clean URLs for the legal and support pages. /privacy and /terms were both
 # 404s while the app, the emails and the store listings all say
 # "style-lore.com/privacy" out loud; only the .html forms resolved. Apple's
 # Support URL field also wants a page that clearly offers help, which is
 # what support.html is.
+#
+# NOTE: this block sits ABOVE the API section on purpose. A RewriteCond binds
+# only to the RewriteRule immediately after it, so putting anything between
+# "RewriteCond %{REQUEST_METHOD} =OPTIONS" and its rule detaches the
+# condition and sends EVERY /api/ request to _cors.php (204 on everything).
+# That happened on 2026-09-23; do not move these rules down.
 RewriteRule ^privacy/?$ privacy.html [L]
 RewriteRule ^terms/?$ terms.html [L]
 RewriteRule ^support/?$ support.html [L]
 
+# --- API routing -------------------------------------------------------
+# CORS preflights from the native apps (see includes/helpers.php
+# cors_headers and api/_cors.php). Must come before the method-conditional
+# rules below, which would otherwise 404 an OPTIONS request.
+RewriteCond %{REQUEST_METHOD} =OPTIONS
 RewriteRule ^api/ api/_cors.php [L]
 
 RewriteRule ^api/auth/signup/?$ api/auth_signup.php [L,QSA]
