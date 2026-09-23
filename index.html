@@ -10679,6 +10679,14 @@ function App(){
     }
 
     async function setUp(){
+      // Simulator capture run (codemagic.yaml, ios-check): iOS raises the
+      // "would like to send you notifications" alert on top of whatever is
+      // on screen, which lands in the middle of every App Store screenshot,
+      // and push can never work on a simulator anyway. The CI probe below
+      // settles in milliseconds, so waiting on it costs a real device
+      // nothing and keeps the alert out of the captures.
+      if(window.STYLE_LORE_CI_PROBE){ try{ await window.STYLE_LORE_CI_PROBE; }catch(err){} }
+      if(window.STYLE_LORE_CI) return;
       let perm = await Push.checkPermissions();
       if(perm.receive !== "granted"){
         perm = await Push.requestPermissions();
@@ -10743,9 +10751,18 @@ function App(){
     // app has no file sharing), so this is inert outside the simulator.
     const FS = Capacitor.Plugins.Filesystem;
     if(FS && FS.readFile){
+      // Outcome of the CI sign-in, written back into the same private
+      // Documents folder so codemagic.yaml can cat it into the build log.
+      // Without this a failed sign-in is silent and the run just produces
+      // signed-out screenshots with no explanation.
+      const ciNote = (msg) => {
+        try{ FS.writeFile({ path: "ci-signin-result.txt", directory: "DOCUMENTS", encoding: "utf8", data: String(msg) }).catch(() => {}); }
+        catch(err){}
+      };
+
       const readUrlAndRoute = () =>
         FS.readFile({ path: "ci-open-url.txt", directory: "DOCUMENTS", encoding: "utf8" })
-          .then((r) => route(String((r && r.data) || "").trim()))
+          .then((r) => { window.STYLE_LORE_CI = true; route(String((r && r.data) || "").trim()); })
           .catch(() => {});
 
       // CI sign-in (codemagic.yaml, ios-check). Community, Notifications and
@@ -10762,13 +10779,19 @@ function App(){
       // The credentials never appear in this repo — the workflow reads them
       // from Codemagic's encrypted environment and writes the file at build
       // time.
-      FS.readFile({ path: "ci-signin.json", directory: "DOCUMENTS", encoding: "utf8" })
+      window.STYLE_LORE_CI_PROBE = FS.readFile({ path: "ci-signin.json", directory: "DOCUMENTS", encoding: "utf8" })
         .then((r) => {
-          const creds = JSON.parse(String((r && r.data) || "{}"));
+          window.STYLE_LORE_CI = true;
+          let creds = {};
+          try{ creds = JSON.parse(String((r && r.data) || "{}")); }
+          catch(err){ ciNote("skipped: ci-signin.json is not valid JSON"); return readUrlAndRoute(); }
           const d = deepLinkRef.current;
-          if(!creds.email || !creds.password || !d || d.signedIn) return readUrlAndRoute();
+          if(!creds.email || !creds.password){ ciNote("skipped: no email/password in ci-signin.json"); return readUrlAndRoute(); }
+          if(!d){ ciNote("skipped: deepLinkRef was not ready yet"); return readUrlAndRoute(); }
+          if(d.signedIn){ ciNote("skipped: already signed in"); return readUrlAndRoute(); }
           return Api.login({ email: creds.email, password: creds.password })
             .then((account) => {
+              ciNote("ok: signed in as " + ((account && account.email) || "?"));
               deepLinkRef.current.completeGate({
                 name: account.name, email: account.email, joinedAt: Date.now(),
                 visitorId: account.id, token: account.token,
@@ -10778,7 +10801,10 @@ function App(){
               // that already knows there is a profile.
               return new Promise((res) => setTimeout(res, 600)).then(readUrlAndRoute);
             })
-            .catch(() => readUrlAndRoute()); // bad or expired credentials: carry on as a guest
+            .catch((err) => { // bad or expired credentials: carry on as a guest
+              ciNote("login failed: " + String((err && err.message) || err));
+              return readUrlAndRoute();
+            });
         })
         .catch(() => readUrlAndRoute()); // no file — the normal case on a real device
     }
