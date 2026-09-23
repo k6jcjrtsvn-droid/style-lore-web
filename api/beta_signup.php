@@ -65,7 +65,12 @@ $stepsHtml = '<table role="presentation" cellpadding="0" cellspacing="0" style="
 $html = style_lore_email_html(
     "You're in — here's your download",
     "<p style=\"margin:0 0 16px;\">Hi $safeName,</p><p style=\"margin:0 0 18px;\">Thanks for testing Style-LORE. Three taps and you're in:</p>" . $stepsHtml
-    . "<p style=\"margin:8px 0 0;font-size:13px;color:#6C4C56;\">Step 1 not working? Make sure you're signed in to Google as the account your phone uses, then try again. If Google Play says the app isn't available, give it a few minutes after joining the group.</p>",
+    . "<p style=\"margin:18px 0 0;padding:14px 16px;background:#F7D9E5;border-radius:10px;font-size:14px;line-height:1.5;\">"
+    . "<b>No Android phone, or want to start right now?</b> Style-LORE works in any browser at "
+    . "<a href=\"https://style-lore.com/\" style=\"color:#C92C69;font-weight:700;\">style-lore.com</a> &mdash; "
+    . "take the quiz, get your colours and build your closet today. It is the same account either way, so anything "
+    . "you do on the website is already there when the app installs.</p>"
+    . "<p style=\"margin:12px 0 0;font-size:13px;color:#6C4C56;\">Step 1 not working? Make sure you're signed in to Google as the account your phone uses, then try again. If Google Play says the app isn't available, give it a few minutes after joining the group.</p>",
     null,
     null,
     "Questions or feedback? Just reply to this email — it goes straight to us."
@@ -74,7 +79,7 @@ send_app_html_email(
     $email,
     "Your Style-LORE beta download — 3 quick steps",
     $html,
-    "Hi " . ($name !== '' ? $name : 'there') . ",\n\nThanks for testing Style-LORE. Three quick steps:\n\n1) Join the tester group (signed in as the Google account your phone uses): " . TESTER_GROUP_URL . "\n2) On your phone, become a tester: " . PLAY_OPT_IN_URL . "\n3) Install from Google Play: " . PLAY_LISTING_URL . "\n\nReply to this email with any questions.\n"
+    "Hi " . ($name !== '' ? $name : 'there') . ",\n\nThanks for testing Style-LORE. Three quick steps:\n\n1) Join the tester group (signed in as the Google account your phone uses): " . TESTER_GROUP_URL . "\n2) On your phone, become a tester: " . PLAY_OPT_IN_URL . "\n3) Install from Google Play: " . PLAY_LISTING_URL . "\n\nNo Android phone, or want to start right now? Style-LORE works in any browser at https://style-lore.com/ - same account either way, so anything you do on the website is already there when the app installs.\n\nReply to this email with any questions.\n"
 );
 
 if (!$row) {
