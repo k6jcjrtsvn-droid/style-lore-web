@@ -882,6 +882,32 @@
     padding:9px 14px; font-size:13px; transition:border-color .15s ease, box-shadow .15s ease;
   }
   .comment-input-row input:focus{border-color:var(--accent); box-shadow:0 0 0 3px var(--accent-soft);}
+  /* Threaded replies: one level deep, hung off a hairline so the eye can
+     follow a reply back to what it answers. */
+  .comment-item{margin-bottom:8px;}
+  .comment-item.is-reply{margin-left:16px; padding-left:12px; border-left:2px solid var(--line-soft);}
+  .comment-actions{display:flex; gap:12px; align-items:center; margin-top:2px;}
+  .comment-reply-btn{
+    background:none; border:0; padding:0; cursor:pointer;
+    font-family:inherit; font-size:11.5px; font-weight:600; color:var(--accent);
+    min-height:24px; position:relative;
+  }
+  .comment-reply-btn::after{content:""; position:absolute; left:50%; top:50%;
+    transform:translate(-50%,-50%); width:44px; height:44px; min-width:100%; min-height:100%;}
+  .comment-time{font-size:11px; color:var(--ink-soft);}
+  /* Where a notification tap lands. Fades out on its own so the post does
+     not stay highlighted forever. */
+  .comment-item.is-focus{
+    background:var(--accent-soft); border-radius:10px; padding:8px 10px; margin-left:-4px;
+    animation:commentFocus 4s ease forwards;
+  }
+  .comment-item.is-focus.is-reply{margin-left:12px;}
+  @keyframes commentFocus{0%{background:var(--accent-soft);} 70%{background:var(--accent-soft);} 100%{background:transparent;}}
+  .reply-banner{
+    display:flex; align-items:center; gap:8px; margin-top:10px;
+    font-size:12px; color:var(--ink-soft);
+  }
+  .reply-banner b{color:var(--ink); font-weight:600;}
 
   .sheet-backdrop{
     position:fixed; inset:0; background:rgba(20,10,15,.5);
@@ -4295,6 +4321,8 @@ const Api = {
     const params = new URLSearchParams({ limit:"100" });
     if(opts && opts.authorId) params.set("authorId", opts.authorId);
     if(opts && opts.groupId) params.set("groupId", opts.groupId);
+    // One post by id — what a notification opens.
+    if(opts && opts.postId) params.set("postId", opts.postId);
     // So a poll comes back with this person's own vote already marked.
     if(opts && opts.viewerId) params.set("viewerId", opts.viewerId);
     const r = await fetch("/api/posts?" + params.toString());
@@ -4340,13 +4368,21 @@ const Api = {
     if(!r.ok) throw await apiError(r, "Couldn't update like.");
     return r.json();
   },
-  async comment(id, visitorId, authToken, text){
+  // parentId (optional) makes this a reply to that comment instead of a new
+  // top-level one; the server keeps threads one level deep.
+  async comment(id, visitorId, authToken, text, parentId){
     const r = await fetch("/api/posts/"+id+"/comments", {
       method:"POST", headers:{ "Content-Type":"application/json" },
-      body: JSON.stringify({ visitorId, authToken, text }),
+      body: JSON.stringify({ visitorId, authToken, text, parentId: parentId || 0 }),
     });
     if(!r.ok) throw await apiError(r, "Couldn't post comment.");
     return r.json();
+  },
+  // One post, for the screen a notification tap opens. Returns null when the
+  // post is gone (deleted or hidden) so the caller can say so plainly.
+  async getPost(postId, viewerId){
+    const rows = await Api.getPosts({ postId, viewerId });
+    return (rows && rows.length) ? rows[0] : null;
   },
   async report(id, visitorId, authToken){
     const r = await fetch("/api/posts/"+id+"/report", {
@@ -8709,8 +8745,13 @@ function copyShareLink(postId, setStatus){
   }
 }
 
-function PostCard({ post, profile, followingIds, onToggleFollow, onOpenProfile, onPatch, onRemove }){
-  const [showComments, setShowComments] = useState(false);
+function PostCard({ post, profile, followingIds, onToggleFollow, onOpenProfile, onPatch, onRemove, startWithComments, focusCommentId }){
+  const [showComments, setShowComments] = useState(!!startWithComments);
+  // The comment being replied to: { id, authorName }. null = a new top-level
+  // comment, which is what the composer does when nothing is selected.
+  const [replyTo, setReplyTo] = useState(null);
+  const commentInputRef = useRef(null);
+  const focusRef = useRef(null);
   const [shareCopied, setShareCopied] = useState(null);
   const [commentText, setCommentText] = useState("");
   const [confirmReport, setConfirmReport] = useState(false);
@@ -8730,6 +8771,19 @@ function PostCard({ post, profile, followingIds, onToggleFollow, onOpenProfile, 
   const likeCount = post.likes ? Object.values(post.likes).filter(Boolean).length : 0;
   const isOwnPost = post.authorId === profile.visitorId;
   const isFollowing = !!(followingIds && post.authorId && followingIds.has(post.authorId));
+
+  // Arrived here from a notification about one particular comment: bring it
+  // on screen once, after the post's photo has had a moment to lay out.
+  const scrolledToFocusRef = useRef(false);
+  useEffect(() => {
+    if(!focusCommentId || !showComments || scrolledToFocusRef.current) return;
+    const t = setTimeout(() => {
+      if(!focusRef.current) return;
+      scrolledToFocusRef.current = true;
+      try{ focusRef.current.scrollIntoView({ behavior:"smooth", block:"center" }); }catch(err){}
+    }, 350);
+    return () => clearTimeout(t);
+  }, [focusCommentId, showComments, (post.comments || []).length]);
 
   async function handleToggleFollow(){
     if(!onToggleFollow || followBusy) return;
@@ -8756,11 +8810,20 @@ function PostCard({ post, profile, followingIds, onToggleFollow, onOpenProfile, 
     setCommentBusy(true);
     try{
       setActionError(null);
-      const updated = await Api.comment(post.id, profile.visitorId, profile.token, commentText.trim());
+      const updated = await Api.comment(post.id, profile.visitorId, profile.token, commentText.trim(), replyTo ? replyTo.id : 0);
       if(updated) onPatch({ comments: updated.comments });
       setCommentText("");
+      setReplyTo(null);
     }catch(err){ onAuthError(err); setActionError(err.message || "Couldn't post that comment — try again."); }
     finally{ setCommentBusy(false); }
+  }
+
+  function startReply(c){
+    setReplyTo({ id: c.id, authorName: c.authorName });
+    setShowComments(true);
+    // Put the cursor where the reply is going to be typed, without yanking
+    // the page around on a phone.
+    setTimeout(() => { try{ commentInputRef.current && commentInputRef.current.focus({ preventScroll:true }); }catch(err){} }, 0);
   }
 
   async function report(){
@@ -8889,14 +8952,128 @@ function PostCard({ post, profile, followingIds, onToggleFollow, onOpenProfile, 
     ) : null,
     actionError ? e("p", { style:{ fontSize:12, color:"var(--danger)", marginTop:6 } }, actionError) : null,
     showComments ? e("div", { className:"comment-list" },
-      (post.comments||[]).map((c,i) => e("div", { key:i, className:"comment-row" }, e("b", null, c.authorName+": "), c.text)),
+      threadComments(post.comments).map(node => e(CommentThread, {
+        key: node.comment.id != null ? ("c"+node.comment.id) : ("i"+node.index),
+        node, profile, focusCommentId, focusRef,
+        onReply: startReply, onOpenProfile,
+      })),
+      replyTo ? e("div", { className:"reply-banner" },
+        e("span", null, "Replying to ", e("b", null, replyTo.authorName)),
+        e("button", { className:"btn-text", style:{ padding:0, fontSize:12 }, onClick:()=>setReplyTo(null) }, "Cancel")
+      ) : null,
       e("div", { className:"comment-input-row" },
-        e("input", { type:"text", value:commentText, maxLength:180, placeholder:"Add a comment…",
+        e("input", { type:"text", value:commentText, maxLength:180, ref:commentInputRef,
+          placeholder: replyTo ? ("Reply to " + replyTo.authorName + "…") : "Add a comment…",
           onChange: ev=>setCommentText(ev.target.value),
           onKeyDown: ev => { if(ev.key === "Enter") submitComment(); } }),
-        e("button", { className:"btn-text", disabled:commentBusy || !commentText.trim(), onClick:submitComment }, commentBusy ? "Sending…" : "Send")
+        e("button", { className:"btn-text", disabled:commentBusy || !commentText.trim(), onClick:submitComment },
+          commentBusy ? "Sending…" : (replyTo ? "Reply" : "Send"))
       )
     ) : null
+  );
+}
+
+/* Comments arrive as one flat, chronological list; the client hangs each
+   reply under its parent. Anything whose parent is missing (deleted, or an
+   older row from before threading) is shown as a top-level comment rather
+   than dropped. */
+function threadComments(comments){
+  const list = comments || [];
+  const byId = new Map();
+  list.forEach((c, index) => { if(c.id != null) byId.set(c.id, { comment:c, index, replies:[] }); });
+  const roots = [];
+  list.forEach((c, index) => {
+    const node = (c.id != null) ? byId.get(c.id) : { comment:c, index, replies:[] };
+    const parent = (c.parentId != null) ? byId.get(c.parentId) : null;
+    if(parent && parent !== node) parent.replies.push(node);
+    else roots.push(node);
+  });
+  return roots;
+}
+
+function CommentThread({ node, profile, focusCommentId, focusRef, onReply, onOpenProfile, isReply }){
+  const c = node.comment;
+  const isFocus = focusCommentId != null && c.id != null && String(c.id) === String(focusCommentId);
+  return e(React.Fragment, null,
+    e("div", {
+      className: "comment-item" + (isReply ? " is-reply" : "") + (isFocus ? " is-focus" : ""),
+      ref: isFocus ? focusRef : null,
+    },
+      e("div", { className:"comment-row" },
+        (onOpenProfile && c.authorId && c.authorId !== profile.visitorId)
+          ? e("button", { className:"btn-text", style:{ padding:0, fontWeight:600, fontSize:13 },
+              onClick:()=>onOpenProfile(c.authorId) }, c.authorName)
+          : e("b", null, c.authorName),
+        ": ", c.text
+      ),
+      e("div", { className:"comment-actions" },
+        c.createdAt ? e("span", { className:"comment-time" }, timeAgo(c.createdAt)) : null,
+        (onReply && c.id != null) ? e("button", { type:"button", className:"comment-reply-btn", onClick:()=>onReply(c) }, "Reply") : null
+      )
+    ),
+    node.replies.map(child => e(CommentThread, {
+      key: child.comment.id != null ? ("c"+child.comment.id) : ("i"+child.index),
+      node: child, profile, focusCommentId, focusRef, onReply, onOpenProfile, isReply: true,
+    }))
+  );
+}
+
+/* =====================================================================
+   ONE POST — where a notification about a like, comment or reply lands.
+   Tapping "X commented: …" used to open X's profile, which answered the
+   wrong question: you want to see the comment, not the commenter. This
+   screen loads that one post, opens its comments and scrolls to the comment
+   in question (PostCard's focusCommentId).
+===================================================================== */
+
+function PostDetailScreen({ postId, focusCommentId, profile, onBack, onOpenProfile }){
+  const [post, setPost] = useState(undefined); // undefined = loading, null = gone
+  const [followingIds, setFollowingIds] = useState(() => new Set());
+  const [loadError, setLoadError] = useState(null);
+
+  const refreshFollows = useCallback(() => {
+    if(!profile) return;
+    Api.getFollows(profile.visitorId).then(ids => setFollowingIds(new Set(ids))).catch(()=>{});
+  }, [profile && profile.visitorId]);
+
+  const load = useCallback(() => {
+    Api.getPost(postId, profile ? profile.visitorId : null)
+      .then(row => { setPost(row); setLoadError(null); })
+      .catch(err => { onAuthError(err); setLoadError("Couldn't load this post."); });
+  }, [postId, profile && profile.visitorId]);
+
+  useEffect(() => { load(); refreshFollows(); }, [load, refreshFollows]);
+  // Slower than the feed's 8s: one post, usually read once and left.
+  useEffect(() => startPolling(load, 15000), [load]);
+
+  async function toggleFollow(authorId, authorName){
+    if(!authorId || authorId === profile.visitorId) return;
+    const wasFollowing = followingIds.has(authorId);
+    setFollowingIds(prev => {
+      const next = new Set(prev);
+      wasFollowing ? next.delete(authorId) : next.add(authorId);
+      return next;
+    });
+    try{
+      if(wasFollowing) await Api.unfollow(profile.visitorId, authorId, profile.token);
+      else await Api.follow(profile.visitorId, profile.name, authorId, authorName, profile.token);
+    }catch(err){ refreshFollows(); }
+  }
+
+  return e("div", null,
+    e("button", { className:"btn-text", style:{ padding:0, marginBottom:14 }, onClick:onBack }, "← Back"),
+    e("div", { className:"eyebrow" }, "Community"),
+    e("h1", { className:"screen-title", style:{ marginBottom:16 } }, "Post"),
+    loadError ? e(Banner, { kind:"error" }, loadError) : null,
+    post === undefined ? e("div", { style:{ padding:"20px 0" } }, e(Thinking, { label:"Loading…" }))
+      : post === null
+        ? e(EmptyState, { icon:"community" }, "This post isn't here any more — it may have been deleted or removed.")
+        : e(PostCard, {
+            post, profile, followingIds, onToggleFollow: toggleFollow, onOpenProfile,
+            startWithComments: true, focusCommentId,
+            onPatch: patch => setPost(prev => prev ? Object.assign({}, prev, patch) : prev),
+            onRemove: onBack,
+          })
   );
 }
 
@@ -9533,7 +9710,7 @@ function CreateGroupSheet({ profile, onCreated, onClose }){
    NOTIFICATIONS
 ===================================================================== */
 
-function NotificationsScreen({ profile, onBack, onOpenProfile, onOpenConversation }){
+function NotificationsScreen({ profile, onBack, onOpenProfile, onOpenConversation, onOpenPost }){
   const [data, setData] = useState(null); // { notifications, unreadCount }
   const [loadError, setLoadError] = useState(null);
 
@@ -9554,8 +9731,16 @@ function NotificationsScreen({ profile, onBack, onOpenProfile, onOpenConversatio
       onOpenConversation({ id:n.data.conversationId, otherId:n.data.otherId, otherName:n.data.otherName });
       return;
     }
-    // A poll notification has no actor (it is sent by Style-LORE once votes
-    // reach a milestone), so tapping it must go to Community, not nowhere.
+    // Anything about a post — a comment, a reply, a like, a vote on your
+    // poll — opens that post with the comment in question highlighted.
+    // Tapping these used to open the other person's profile, which showed
+    // you everything except the thing you were notified about.
+    if(onOpenPost && n.data && n.data.postId){
+      onOpenPost(n.data.postId, n.data.commentId || null);
+      return;
+    }
+    // A poll notification with no post id (older rows) still has Community
+    // as the only sensible destination.
     if(n.type === "poll"){
       if(window.__loreGoTo) window.__loreGoTo("community");
       return;
@@ -9805,6 +9990,8 @@ function App(){
   const [screen, setScreen] = useState(loadLastScreen);
   const [viewingProfileId, setViewingProfileId] = useState(null);
   const [viewingConversation, setViewingConversation] = useState(null); // {id, otherId, otherName} | null
+  // One post, opened from a notification: { postId, commentId } | null.
+  const [viewingPost, setViewingPost] = useState(null);
   const [unreadNotifCount, setUnreadNotifCount] = useState(0);
   const [unreadMsgCount, setUnreadMsgCount] = useState(0);
   // Holds whatever FCM token this install last registered (set by the
@@ -9892,11 +10079,12 @@ function App(){
   // since history.go() resolves asynchronously while pushState() is
   // synchronous, and React runs a commit's effect cleanups before any of its
   // new effect setups.
-  const navStackRef = useRef([{ screen, viewingProfileId: null, viewingConversation: null }]);
+  const navStackRef = useRef([{ screen, viewingProfileId: null, viewingConversation: null, viewingPost: null }]);
   const handlingPopRef = useRef(false);
   const suppressNavPopRef = useRef(0);
   function navFrameKey(f){
-    return f.screen + "|" + (f.viewingProfileId || "") + "|" + (f.viewingConversation ? f.viewingConversation.id : "");
+    return f.screen + "|" + (f.viewingProfileId || "") + "|" + (f.viewingConversation ? f.viewingConversation.id : "")
+      + "|" + (f.viewingPost ? f.viewingPost.postId : "");
   }
   useEffect(() => {
     function onPopState(){
@@ -9909,13 +10097,14 @@ function App(){
       setScreen(prevFrame.screen);
       setViewingProfileId(prevFrame.viewingProfileId);
       setViewingConversation(prevFrame.viewingConversation);
+      setViewingPost(prevFrame.viewingPost || null);
     }
     window.addEventListener("popstate", onPopState);
     return () => window.removeEventListener("popstate", onPopState);
   }, []);
   useEffect(() => {
     const stack = navStackRef.current;
-    const frame = { screen, viewingProfileId, viewingConversation };
+    const frame = { screen, viewingProfileId, viewingConversation, viewingPost };
     const key = navFrameKey(frame);
     const topKey = navFrameKey(stack[stack.length - 1]);
 
@@ -9957,7 +10146,7 @@ function App(){
         window.history.pushState({ navDepth: stack.length - 1 }, "");
       }
     }catch(err){ /* history API unavailable — app still works, just no back-button integration */ }
-  }, [screen, viewingProfileId, viewingConversation]);
+  }, [screen, viewingProfileId, viewingConversation, viewingPost]);
 
   // A ?verify=<token> or ?reset=<token> link from an email takes over the
   // whole screen regardless of login state, then is stripped from the URL
@@ -10261,6 +10450,8 @@ function App(){
       if(data.screen === "home"){ goTo("home"); return; }
       if(data.type === "message" && data.conversationId){
         openConversation({ id:data.conversationId, otherId:data.otherId || null, otherName:data.otherName || "" });
+      } else if(data.postId){
+        openPost(data.postId, data.commentId || null);
       } else if(data.actorId){
         openProfile(data.actorId);
       } else {
@@ -10501,21 +10692,36 @@ function App(){
   function goTo(nextScreen){
     setViewingProfileId(null);
     setViewingConversation(null);
+    setViewingPost(null);
     setScreen(nextScreen);
   }
   window.__loreGoTo = goTo;
   function openProfile(id){
     setViewingConversation(null);
+    setViewingPost(null);
     setViewingProfileId(id);
   }
   function closeProfile(){
     setViewingProfileId(null);
+  }
+  // A like/comment/reply notification opens the post it is about, with that
+  // comment highlighted — not the commenter's profile, which is where every
+  // one of these used to land.
+  function openPost(postId, commentId){
+    if(!postId) return;
+    setViewingProfileId(null);
+    setViewingConversation(null);
+    setViewingPost({ postId, commentId: commentId || null });
+  }
+  function closePost(){
+    setViewingPost(null);
   }
   function renameLocalProfile(nextName){
     setProfile(prev => prev ? Object.assign({}, prev, { name: nextName }) : prev);
   }
   function openConversation(convo){
     setViewingProfileId(null);
+    setViewingPost(null);
     setViewingConversation(convo);
   }
   async function openConversationWith(otherId, otherName){
@@ -10556,13 +10762,13 @@ function App(){
   }
   // Signed-out explorer: screens that only make sense with an account get
   // a friendly sign-in prompt instead of a broken screen.
-  const needsAccount = !profile && (viewingConversation || viewingProfileId ||
+  const needsAccount = !profile && (viewingConversation || viewingProfileId || viewingPost ||
     screen === "community" || screen === "notifications" || screen === "inbox");
 
   let body;
   if(needsAccount){
     body = e(SignInPromptScreen, {
-      screen: viewingConversation ? "inbox" : viewingProfileId ? "profile" : screen,
+      screen: viewingConversation ? "inbox" : viewingProfileId ? "profile" : viewingPost ? "community" : screen,
       onSignIn: leaveGuestForGate, onBack: () => goTo("home"),
     });
   }
@@ -10570,6 +10776,12 @@ function App(){
     body = e(ConversationScreen, {
       profile, conversationId: viewingConversation.id, otherName: viewingConversation.otherName, otherId: viewingConversation.otherId || null, otherAvatarUrl: viewingConversation.otherAvatarUrl || null,
       onBack: closeConversation, onOpenProfile: openProfile,
+    });
+  }
+  else if(viewingPost){
+    body = e(PostDetailScreen, {
+      postId: viewingPost.postId, focusCommentId: viewingPost.commentId,
+      profile, onBack: closePost, onOpenProfile: openProfile,
     });
   }
   else if(viewingProfileId){
@@ -10585,7 +10797,7 @@ function App(){
   else if(screen === "closet") body = e(ClosetScreen, { closet, setCloset, blend, styleWordBlend:styleBlend, kibbeTypeName, topStyleWords, profile, isPremium, closetFreeLimit, onUpgrade:openPaywall, syncStatus:closetSyncStatus, onRetrySync:retryClosetSync, storageFull:closetStorageFull, outfits, setOutfits });
   else if(screen === "checker") body = e(CheckerScreen, { blend, styleWordBlend:styleBlend, kibbeTypeName, topStyleWords, visitorId: profile ? profile.visitorId : null, authToken: profile ? profile.token : null, isPremium, freeAiReadsLeft, onFreeAiReadUsed: () => setFreeAiReadsLeft(n => Math.max(0, n - 1)), onSignIn: profile ? null : leaveGuestForGate, onUpgrade:openPaywall });
   else if(screen === "community") body = e(CommunityScreen, { profile, blend, onOpenProfile:openProfile });
-  else if(screen === "notifications") body = e(NotificationsScreen, { profile, onBack:()=>goTo("home"), onOpenProfile:openProfile, onOpenConversation:openConversation });
+  else if(screen === "notifications") body = e(NotificationsScreen, { profile, onBack:()=>goTo("home"), onOpenProfile:openProfile, onOpenConversation:openConversation, onOpenPost:openPost });
   else if(screen === "inbox") body = e(InboxScreen, { profile, onBack:()=>goTo("home"), onOpenConversation:openConversation });
 
   return e("div", { className:"app" },
@@ -10599,7 +10811,7 @@ function App(){
       e("span", { className:"wordmark", style:{ display:"inline-flex", alignItems:"center", gap:"0.12em" } },
         e(LogoMark, { size:"0.85em" }), "Style-LORE"),
       e("div", { style:{ display:"flex", alignItems:"center", gap:8 } },
-        e("span", { className:"topbar-sub" }, viewingConversation ? "messages" : viewingProfileId ? "profile" : screen),
+        e("span", { className:"topbar-sub" }, viewingConversation ? "messages" : viewingProfileId ? "profile" : viewingPost ? "post" : screen),
         e("div", { className:"topbar-icons" },
           e("button", { className:"topbar-icon-btn", "aria-label":"Notifications", onClick:()=>goTo("notifications") },
             Icon("bell"),

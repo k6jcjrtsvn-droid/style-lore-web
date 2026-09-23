@@ -4,6 +4,7 @@ require_once __DIR__ . '/../includes/helpers.php';
 $pdo = db();
 ensure_poll_schema($pdo);
 ensure_post_share_column($pdo);
+ensure_comment_threads_schema($pdo);
 
 if ($_SERVER['REQUEST_METHOD'] === 'GET') {
     // Who is asking, so a poll can come back with their own vote on it. Not
@@ -19,6 +20,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
     // group's posts, matching Facebook-Groups-style separation from the
     // main feed.
     $groupId = isset($_GET['groupId']) ? (string)$_GET['groupId'] : null;
+
+    // One post by id — what a notification tap opens (see the app's
+    // PostDetailScreen). Group posts are included: if you were notified
+    // about it you are already in that group. Hidden/reported posts are
+    // not, so a removed post stays removed.
+    $postId = isset($_GET['postId']) ? (string)$_GET['postId'] : null;
+    if ($postId !== null && $postId !== '') {
+        $stmt = $pdo->prepare('SELECT * FROM posts WHERE hidden = 0 AND id = ? LIMIT 1');
+        $stmt->execute([$postId]);
+        $rows = $stmt->fetchAll();
+        json_response(array_map(fn($r) => post_to_public($pdo, $r, $viewerId), $rows));
+    }
 
     if ($groupId !== null && $groupId !== '') {
         $stmt = $pdo->prepare('SELECT * FROM posts WHERE hidden = 0 AND group_id = ? ORDER BY created_at DESC LIMIT ' . $limit);

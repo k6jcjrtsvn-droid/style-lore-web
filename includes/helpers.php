@@ -757,6 +757,22 @@ function ensure_post_share_column(PDO $pdo): void {
  *  two people's devices can legitimately mint the same one. Keying on the
  *  item id by itself would hang one person's advice under another person's
  *  coat. */
+/** Threaded comments: `parent_id` points at the comment being replied to
+ *  (NULL for a top-level comment), `author_id` is the replier's account so a
+ *  reply notification can be tapped through. Both are added here rather than
+ *  in a hand-run migration so a deploy is the only step. Replies are kept
+ *  ONE level deep on purpose (api/post_comments.php re-parents a reply-to-a-
+ *  reply onto its root) — two levels is all a comment thread on a photo
+ *  needs, and it keeps the indent readable on a phone. */
+function ensure_comment_threads_schema(PDO $pdo): void {
+    static $done = false; if ($done) return; $done = true;
+    try {
+        $pdo->exec('ALTER TABLE comments ADD COLUMN IF NOT EXISTS author_id CHAR(36) NULL');
+        $pdo->exec('ALTER TABLE comments ADD COLUMN IF NOT EXISTS parent_id INT NULL');
+        $pdo->exec('ALTER TABLE comments ADD INDEX IF NOT EXISTS idx_parent (parent_id)');
+    } catch (Throwable $e) { error_log('ensure_comment_threads_schema: ' . $e->getMessage()); }
+}
+
 function ensure_closet_tips_table(PDO $pdo): void {
     static $done = false; if ($done) return; $done = true;
     try {
@@ -995,15 +1011,30 @@ function post_to_public(PDO $pdo, array $row, ?string $viewerId = null): array {
         $likes[$l['visitor_id']] = (bool)$l['liked'];
     }
 
-    $commentsStmt = $pdo->prepare('SELECT author_name, text, created_at FROM comments WHERE post_id = ? ORDER BY id ASC');
-    $commentsStmt->execute([$row['id']]);
+    // id/parent_id/author_id let the client thread replies under their
+    // parent and scroll a notification straight to one comment. Older
+    // databases may not have those columns yet (see
+    // ensure_comment_threads_schema), so fall back to the flat shape
+    // rather than 500ing the whole feed.
+    try {
+        $commentsStmt = $pdo->prepare('SELECT id, parent_id, author_id, author_name, text, created_at FROM comments WHERE post_id = ? ORDER BY id ASC');
+        $commentsStmt->execute([$row['id']]);
+        $commentRows = $commentsStmt->fetchAll();
+    } catch (PDOException $e) {
+        $commentsStmt = $pdo->prepare('SELECT id, author_name, text, created_at FROM comments WHERE post_id = ? ORDER BY id ASC');
+        $commentsStmt->execute([$row['id']]);
+        $commentRows = $commentsStmt->fetchAll();
+    }
     $comments = array_map(function ($c) {
         return [
+            'id' => isset($c['id']) ? (int)$c['id'] : null,
+            'parentId' => isset($c['parent_id']) && $c['parent_id'] !== null ? (int)$c['parent_id'] : null,
+            'authorId' => $c['author_id'] ?? null,
             'authorName' => $c['author_name'],
             'text' => $c['text'],
             'createdAt' => (int)$c['created_at'],
         ];
-    }, $commentsStmt->fetchAll());
+    }, $commentRows);
 
     $styleTags = json_decode($row['style_tags'] ?: '[]', true);
     if (!is_array($styleTags)) $styleTags = [];
