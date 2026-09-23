@@ -4247,6 +4247,10 @@ const REQUEST_TIMEOUT_MS = 45000;
 // "/uploads/..." media path the API hands back has to be pointed at the
 // real host. On the website API_BASE is "" and both helpers are no-ops.
 const IS_NATIVE_APP = !!window.STYLE_LORE_NATIVE;
+// Which account the store actually bills, for the subscription disclosure on
+// the paywall. Apple and Google both want their own name used.
+const STORE_ACCOUNT_NAME = (window.Capacitor && window.Capacitor.getPlatform && window.Capacitor.getPlatform() === "ios")
+  ? "Apple ID" : "Google Play account";
 const API_BASE = window.STYLE_LORE_API_BASE || "";
 function mediaUrl(u){
   if(!u || typeof u !== "string") return u;
@@ -7801,7 +7805,9 @@ function PaywallSheet({ reason, onClose, onPurchased, profile, webCheckout: webC
       e("button", { className:"btn btn-ghost btn-block", onClick:()=>{ if(onSignIn) onSignIn(); } },
         trialEligible ? "Monthly — $4.99 / month (7-day free trial)" : "Monthly — $4.99 / month"),
       e("p", { className:"footnote", style:{ margin:"4px 0 0", textAlign:"center" } },
-        "Create a free account to subscribe. Billed through the App Store or Google Play; cancel anytime from your phone's subscription settings.")
+        "Create a free account to subscribe. Style-LORE Premium is an auto-renewing subscription billed through the App Store or Google Play; cancel anytime from your phone's subscription settings. ",
+        e("a", { href:"https://style-lore.com/terms.html", target:"_blank", rel:"noopener" }, "Terms of Use"), " · ",
+        e("a", { href:"https://style-lore.com/privacy.html", target:"_blank", rel:"noopener" }, "Privacy Policy"))
     );
   } else if (offerings === null){
     plansContent = e("p", { style:{ fontSize:13, color:"var(--ink-soft)" } }, "Loading plans…");
@@ -7809,11 +7815,32 @@ function PaywallSheet({ reason, onClose, onPurchased, profile, webCheckout: webC
     plansContent = e(Banner, { kind:"info" }, "No plans are available right now — check back soon.");
   } else {
     plansContent = e("div", { style:{ display:"flex", flexDirection:"column", gap:10, marginBottom:12 } },
-      offerings.map(pkg => e("button", {
-        key: pkg.identifier, className:"btn btn-accent btn-block",
-        disabled: !!busy, onClick: ()=>buy(pkg),
-      }, busy === pkg.identifier ? "Processing…" : (pkg.product.title || pkg.product.identifier) + " — " + pkg.product.priceString)),
-      e("button", { className:"btn-text", style:{ fontSize:12.5 }, disabled:!!busy, onClick:restore }, busy === "restore" ? "Restoring…" : "Restore purchases")
+      offerings.map(pkg => {
+        // Apple 3.1.2 wants the LENGTH of the subscription stated at the point
+        // of purchase, not just a price. RevenueCat's priceString is bare
+        // ("$39.99"), so the period is appended from the package identifier
+        // rather than trusted to be inside the store's product title.
+        const period = pkg.identifier === "$rc_annual" ? " / year"
+                     : pkg.identifier === "$rc_monthly" ? " / month" : "";
+        return e("button", {
+          key: pkg.identifier, className:"btn btn-accent btn-block",
+          disabled: !!busy, onClick: ()=>buy(pkg),
+        }, busy === pkg.identifier ? "Processing…"
+          : (pkg.product.title || pkg.product.identifier) + " — " + pkg.product.priceString + period);
+      }),
+      e("button", { className:"btn-text", style:{ fontSize:12.5 }, disabled:!!busy, onClick:restore }, busy === "restore" ? "Restoring…" : "Restore purchases"),
+      // Auto-renew terms + functional Terms and Privacy links, in the binary,
+      // at the point of purchase. App Store Review Guideline 3.1.2 and
+      // Schedule 2 of the Paid Apps Agreement both require this and it is one
+      // of the most common subscription rejections; Google Play asks for the
+      // same disclosure. The store name is switched per platform because the
+      // wording has to name the account that is actually charged.
+      e("p", { className:"footnote", style:{ margin:"10px 0 0", textAlign:"left", lineHeight:1.45 } },
+        "Style-LORE Premium is an auto-renewing subscription. ",
+        trialEligible ? "Your 7-day free trial becomes a paid subscription unless you cancel at least 24 hours before it ends. " : "",
+        "Payment is charged to your ", STORE_ACCOUNT_NAME, " at confirmation, and renews at the same price each period unless you turn off auto-renew at least 24 hours before the period ends. Manage or cancel in your phone's subscription settings. ",
+        e("a", { href:"https://style-lore.com/terms.html", target:"_blank", rel:"noopener" }, "Terms of Use"), " · ",
+        e("a", { href:"https://style-lore.com/privacy.html", target:"_blank", rel:"noopener" }, "Privacy Policy"))
     );
   }
 

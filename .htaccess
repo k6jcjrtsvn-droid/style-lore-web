@@ -26,6 +26,9 @@ RewriteRule ^pi/([A-Za-z0-9-]+)/?$ pi.php?id=$1 [L,QSA]
 RewriteRule ^privacy/?$ privacy.html [L]
 RewriteRule ^terms/?$ terms.html [L]
 RewriteRule ^support/?$ support.html [L]
+# Google Play's App content → Data deletion form wants a URL that explains
+# account deletion and works without installing the app. This is that URL.
+RewriteRule ^delete-account/?$ support.html [L]
 
 # --- API routing -------------------------------------------------------
 # CORS preflights from the native apps (see includes/helpers.php
