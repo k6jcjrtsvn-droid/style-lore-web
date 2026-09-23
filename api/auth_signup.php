@@ -31,6 +31,21 @@ try {
     $verifyToken = new_auth_token();
     $verifyExpires = $now + (48 * 60 * 60 * 1000); // 48 hours
 
+    // MUST stay OUTSIDE the transaction. It runs CREATE TABLE IF NOT EXISTS,
+    // and DDL forces an implicit COMMIT in MySQL -- so called from inside the
+    // transaction (where this line used to sit, just after the accounts
+    // INSERT) it silently ended it. The $pdo->commit() below then threw
+    // "There is no active transaction" and this endpoint returned 500, even
+    // though the implicit commit had already persisted the rows. The account
+    // existed while the person was told sign-up had failed, and their retry
+    // hit "An account with that email already exists".
+    //
+    // Intermittent because of the `static $done` guard inside the function:
+    // only the FIRST sign-up handled by each fresh PHP-FPM worker ran the DDL.
+    // Recorded in public_html/api/error_log as "Signup failed: There is no
+    // active transaction" on 2026-09-22 20:37:43 and 2026-09-23 16:53:16 UTC.
+    ensure_auth_tokens_table($pdo);
+
     $pdo->beginTransaction();
     $ins1 = $pdo->prepare(
         'INSERT INTO accounts (id, email, password_hash, created_at, auth_token_hash, email_verified, verify_token_hash, verify_token_expires)
@@ -38,7 +53,6 @@ try {
     );
     $ins1->execute([$id, $email, $passwordHash, $now, hash_token($authToken), hash_token($verifyToken), $verifyExpires]);
     // Multi-device sessions: record this first token so later logins on other devices don't sign this one out.
-    ensure_auth_tokens_table($pdo);
     try { $pdo->prepare('INSERT IGNORE INTO auth_tokens (token_hash, account_id, created_at, last_used_at, label) VALUES (?,?,?,?,?)')->execute([hash_token($authToken), $id, $now, $now, 'signup']); } catch (Throwable $e) { error_log('signup auth_tokens: ' . $e->getMessage()); }
     $ins2 = $pdo->prepare('INSERT INTO profiles (id, name, bio, avatar_url, updated_at) VALUES (?, ?, ?, NULL, ?)');
     $ins2->execute([$id, $name, '', $now]);
