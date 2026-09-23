@@ -34,6 +34,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     // Ownership check — only the follower themself can create the edge.
     require_owner($pdo, $followerId, (string)($body['authToken'] ?? ''));
 
+    // Following someone who blocked you (or whom you blocked) would put
+    // their posts back in your feed through the follow graph.
+    ensure_block_schema($pdo);
+    if (is_blocked_pair($pdo, $followerId, $followingId)) {
+        error_response('You cannot follow this account.', 403);
+    }
+
     // Names come from the profiles table, never from the client.
     $followerName = profile_identity($pdo, $followerId)['name'];
     $followingName = profile_identity($pdo, $followingId)['name'];

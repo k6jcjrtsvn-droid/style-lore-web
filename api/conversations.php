@@ -15,6 +15,7 @@
 require_once __DIR__ . '/../includes/helpers.php';
 
 $pdo = db();
+ensure_block_schema($pdo);
 
 if ($_SERVER['REQUEST_METHOD'] === 'GET') {
     $visitorId = (string)($_GET['visitorId'] ?? '');
@@ -31,7 +32,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
          LIMIT 100'
     );
     $stmt->execute([$visitorId, $visitorId]);
-    $rows = $stmt->fetchAll();
+    // A blocked person's thread disappears from the inbox on both sides.
+    // The conversation and its history are kept, not deleted: unblocking
+    // restores the thread rather than destroying the record.
+    $blocked = blocked_ids($pdo, $visitorId);
+    $rows = array_values(array_filter($stmt->fetchAll(), function ($r) use ($blocked) {
+        return !in_array($r['other_id'], $blocked, true);
+    }));
 
     json_response(array_map(function ($r) {
         return [
@@ -59,6 +66,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $otherExists = $pdo->prepare('SELECT id FROM accounts WHERE id = ?');
     $otherExists->execute([$otherId]);
     if (!$otherExists->fetch()) error_response('That account no longer exists.', 404);
+
+    // Either direction: the blocker must not be reachable, and the blocked
+    // person must not be able to open a new thread to get around it.
+    if (is_blocked_pair($pdo, $visitorId, $otherId)) {
+        error_response('You cannot start a conversation with this account.', 403);
+    }
 
     // Names come from the profiles table, never from the client.
     $visitorName = profile_identity($pdo, $visitorId)['name'];

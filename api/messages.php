@@ -12,6 +12,7 @@
 require_once __DIR__ . '/../includes/helpers.php';
 
 $pdo = db();
+ensure_block_schema($pdo);
 
 function require_conversation_member(PDO $pdo, string $conversationId, string $visitorId): void {
     $stmt = $pdo->prepare('SELECT 1 FROM conversation_members WHERE conversation_id = ? AND account_id = ?');
@@ -47,6 +48,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     require_verified($pdo, $visitorId);
     rate_limit($pdo, 'msg:' . $visitorId, 60, 60);
     require_conversation_member($pdo, $conversationId, $visitorId);
+
+    // A blocked pair keeps its old thread but can add nothing to it. The
+    // wording is deliberately neutral in both directions — the blocked
+    // person is not told they were blocked, and the blocker sees the same
+    // message, which is what they asked for by blocking.
+    $otherStmt = $pdo->prepare('SELECT account_id FROM conversation_members WHERE conversation_id = ? AND account_id != ?');
+    $otherStmt->execute([$conversationId, $visitorId]);
+    foreach ($otherStmt->fetchAll() as $m) {
+        if (is_blocked_pair($pdo, $visitorId, (string)$m['account_id'])) {
+            error_response('You cannot send messages in this conversation.', 403);
+        }
+    }
 
     $senderStmt = $pdo->prepare('SELECT account_name FROM conversation_members WHERE conversation_id = ? AND account_id = ?');
     $senderStmt->execute([$conversationId, $visitorId]);

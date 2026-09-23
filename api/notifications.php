@@ -16,12 +16,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
     $visitorId = (string)($_GET['visitorId'] ?? '');
     require_owner($pdo, $visitorId, bearer_token());
 
-    $stmt = $pdo->prepare('SELECT * FROM notifications WHERE recipient_id = ? ORDER BY created_at DESC LIMIT 50');
-    $stmt->execute([$visitorId]);
+    // Blocking clears that person's existing notifications (see
+    // api/user_block.php), but anything that arrived in the gap before the
+    // block, or from a re-block, is filtered here too — and so is the
+    // unread badge, or blocking someone would leave a badge you could
+    // never clear by reading.
+    ensure_block_schema($pdo);
+    $blocked = blocked_ids($pdo, $visitorId);
+    $notifBlockSql = blocked_filter_sql($blocked, 'actor_id');
+
+    $stmt = $pdo->prepare('SELECT * FROM notifications WHERE recipient_id = ?' . $notifBlockSql . ' ORDER BY created_at DESC LIMIT 50');
+    $stmt->execute(array_merge([$visitorId], $blocked));
     $rows = $stmt->fetchAll();
 
-    $countStmt = $pdo->prepare('SELECT COUNT(*) AS c FROM notifications WHERE recipient_id = ? AND is_read = 0');
-    $countStmt->execute([$visitorId]);
+    $countStmt = $pdo->prepare('SELECT COUNT(*) AS c FROM notifications WHERE recipient_id = ? AND is_read = 0' . $notifBlockSql);
+    $countStmt->execute(array_merge([$visitorId], $blocked));
     $unreadCount = (int)($countStmt->fetch()['c'] ?? 0);
 
     json_response([

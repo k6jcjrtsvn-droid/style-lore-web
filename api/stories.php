@@ -21,6 +21,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
     $authorIds = array_column($followStmt->fetchAll(), 'following_id');
     $authorIds[] = $visitorId;
     $authorIds = array_values(array_unique($authorIds));
+    // Blocking already deletes the follow edges in both directions (see
+    // api/user_block.php), so this is belt and braces — but a story is the
+    // one thing that would otherwise reappear if a follow row survived.
+    ensure_block_schema($pdo);
+    $blocked = blocked_ids($pdo, $visitorId);
+    if ($blocked) {
+        $authorIds = array_values(array_diff($authorIds, $blocked));
+        if (!$authorIds) json_response([]);
+    }
 
     $placeholders = implode(',', array_fill(0, count($authorIds), '?'));
     $now = current_time_ms();

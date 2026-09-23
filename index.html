@@ -903,7 +903,13 @@
   }
   .comment-item.is-focus.is-reply{margin-left:12px;}
   @keyframes commentFocus{0%{background:var(--accent-soft);} 70%{background:var(--accent-soft);} 100%{background:transparent;}}
-  .reply-banner{
+  .comment-report-btn{background:none;border:0;padding:0;margin-left:10px;font-size:11.5px;color:var(--ink-soft);cursor:pointer;position:relative;}
+.comment-report-btn:hover{color:var(--danger);}
+.comment-report-btn::after{content:"";position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:44px;height:44px;}
+.blocked-row{display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--line-soft);}
+.blocked-row:last-child{border-bottom:0;}
+.blocked-row .blocked-name{flex:1;min-width:0;font-weight:600;font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.reply-banner{
     display:flex; align-items:center; gap:8px; margin-top:10px;
     font-size:12px; color:var(--ink-soft);
   }
@@ -3428,7 +3434,8 @@ const GUIDELINES_TEXT = `Style-LORE is meant to be a safe, welcoming space to ta
 • Keep photos and videos to style and outfits — no images or clips of other people posted without their consent.
 • Video clips should be short (aim for 10–30 seconds) — upload a short clip directly, or link out to a longer one hosted elsewhere.
 • Give real feedback, not put-downs. Disagreement is fine; cruelty isn't.
-• Use the report button on anything that breaks these guidelines. Reported posts are hidden right away.
+• Use the report button on anything that breaks these guidelines — a whole post, or a single comment. Enough reports from different people and it is hidden automatically, and we review it.
+• You can block anyone. Blocking hides their posts, comments and stories from you and yours from them, stops messages both ways, and undoes any follows. Manage your blocks under Home → Blocked accounts.
 
 Accounts that repeatedly violate these guidelines may lose access to Community.`;
 
@@ -4390,6 +4397,34 @@ const Api = {
       body: JSON.stringify({ visitorId, authToken }),
     });
     if(!r.ok) throw await apiError(r, "Couldn't report post.");
+    return r.json();
+  },
+  // Reporting ONE comment rather than the whole post. Same endpoint and
+  // the same 3-report hide threshold — see api/post_report.php.
+  async reportComment(postId, visitorId, authToken, commentId){
+    const r = await fetch("/api/posts/"+postId+"/report", {
+      method:"POST", headers:{ "Content-Type":"application/json" },
+      body: JSON.stringify({ visitorId, authToken, commentId }),
+    });
+    if(!r.ok) throw await apiError(r, "Couldn't report that comment.");
+    return r.json();
+  },
+  // Blocking (App Store guideline 1.2). Hides both people from each other
+  // and tears down follows; only the blocker can undo it, from Home →
+  // Blocked accounts.
+  async blockUser(visitorId, authToken, targetId, action){
+    const r = await fetch("/api/user_block", {
+      method:"POST", headers:{ "Content-Type":"application/json" },
+      body: JSON.stringify({ visitorId, authToken, targetId, action: action || "block" }),
+    });
+    if(!r.ok) throw await apiError(r, "Couldn't update that block.");
+    return r.json();
+  },
+  async getBlocked(visitorId, authToken){
+    const r = await fetch("/api/user_block?visitorId="+encodeURIComponent(visitorId), {
+      headers: authToken ? { Authorization: "Bearer " + authToken } : {},
+    });
+    if(!r.ok) throw await apiError(r, "Couldn't load your blocked accounts.");
     return r.json();
   },
   async editPost(id, authorId, authToken, fields){
@@ -6144,6 +6179,7 @@ function HomeScreen({ profile, blend, styleBlend, kibbeResult, colorResult, clos
 
   const [confirmingSignOut, setConfirmingSignOut] = useState(false);
   const [showDeleteAccount, setShowDeleteAccount] = useState(false);
+  const [showBlocked, setShowBlocked] = useState(false);
   const [verifyBannerDismissed, setVerifyBannerDismissed] = useState(false);
   const [resendBusy, setResendBusy] = useState(false);
   const [resendSent, setResendSent] = useState(false);
@@ -6312,10 +6348,14 @@ function HomeScreen({ profile, blend, styleBlend, kibbeResult, colorResult, clos
         e("span", null, "Morning nudge — “Today's outfit is ready” at 8 AM (once your closet has a few pieces)")
       ) : null,
       e("div", { style:{ marginTop:10, display:"flex", gap:14, flexWrap:"wrap", alignItems:"center" } },
+        e("button", { className:"btn-text", style:{ padding:0, fontSize:12, color:"var(--ink-soft)" }, onClick:()=>setShowBlocked(true) }, "Blocked accounts"),
         e("button", { className:"btn-text", style:{ padding:0, fontSize:12, color:"var(--ink-soft)" }, onClick:()=>setShowDeleteAccount(true) }, "Delete my account"),
         e(LegalLinks, null)
       )
     ),
+    (profile && showBlocked) ? e(BlockedAccountsSheet, {
+      viewer:profile, onClose:()=>setShowBlocked(false)
+    }) : null,
     (profile && showDeleteAccount) ? e(DeleteAccountSheet, {
       viewer:profile, onDeleted:onAccountDeleted, onClose:()=>setShowDeleteAccount(false)
     }) : null
@@ -8836,6 +8876,23 @@ function PostCard({ post, profile, followingIds, onToggleFollow, onOpenProfile, 
     finally{ setReportBusy(false); setConfirmReport(false); }
   }
 
+  // One comment, reported. The comment stays on screen (CommentThread
+  // flips its own label to "Reported") rather than vanishing, because a
+  // single report does not hide anything — it takes REPORT_HIDE_THRESHOLD
+  // different people, same as a post. Making it disappear for the reporter
+  // alone would be a lie about what just happened; blocking is the control
+  // for "I never want to see this person again".
+  async function reportComment(commentId){
+    setActionError(null);
+    try{
+      await Api.reportComment(post.id, profile.visitorId, profile.token, commentId);
+    }catch(err){
+      onAuthError(err);
+      setActionError(err.message || "Couldn't report that comment — try again.");
+      throw err;
+    }
+  }
+
   function startEditing(){
     setEditCaption(post.caption || "");
     setActionError(null);
@@ -8955,7 +9012,7 @@ function PostCard({ post, profile, followingIds, onToggleFollow, onOpenProfile, 
       threadComments(post.comments).map(node => e(CommentThread, {
         key: node.comment.id != null ? ("c"+node.comment.id) : ("i"+node.index),
         node, profile, focusCommentId, focusRef,
-        onReply: startReply, onOpenProfile,
+        onReply: startReply, onOpenProfile, onReportComment: reportComment,
       })),
       replyTo ? e("div", { className:"reply-banner" },
         e("span", null, "Replying to ", e("b", null, replyTo.authorName)),
@@ -8991,9 +9048,22 @@ function threadComments(comments){
   return roots;
 }
 
-function CommentThread({ node, profile, focusCommentId, focusRef, onReply, onOpenProfile, isReply }){
+function CommentThread({ node, profile, focusCommentId, focusRef, onReply, onOpenProfile, onReportComment, isReply }){
   const c = node.comment;
   const isFocus = focusCommentId != null && c.id != null && String(c.id) === String(focusCommentId);
+  // Per-comment reporting. Guideline 1.2 wants the report control on the
+  // objectionable thing itself; before this the only option was to report
+  // the whole post, which punished its author for someone else's comment.
+  const [confirming, setConfirming] = useState(false);
+  const [done, setDone] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const canReport = !!(onReportComment && c.id != null && profile && c.authorId !== profile.visitorId);
+  async function doReport(){
+    setBusy(true);
+    try{ await onReportComment(c.id); setDone(true); }
+    catch(err){ setDone(false); }
+    finally{ setBusy(false); setConfirming(false); }
+  }
   return e(React.Fragment, null,
     e("div", {
       className: "comment-item" + (isReply ? " is-reply" : "") + (isFocus ? " is-focus" : ""),
@@ -9008,12 +9078,22 @@ function CommentThread({ node, profile, focusCommentId, focusRef, onReply, onOpe
       ),
       e("div", { className:"comment-actions" },
         c.createdAt ? e("span", { className:"comment-time" }, timeAgo(c.createdAt)) : null,
-        (onReply && c.id != null) ? e("button", { type:"button", className:"comment-reply-btn", onClick:()=>onReply(c) }, "Reply") : null
-      )
+        (onReply && c.id != null) ? e("button", { type:"button", className:"comment-reply-btn", onClick:()=>onReply(c) }, "Reply") : null,
+        done
+          ? e("span", { className:"comment-time", style:{ marginLeft:10 } }, "Reported")
+          : (canReport && !confirming)
+            ? e("button", { type:"button", className:"comment-report-btn", onClick:()=>setConfirming(true) }, "Report")
+            : null
+      ),
+      confirming ? e("div", { style:{ marginTop:6, display:"flex", alignItems:"center", gap:12 } },
+        e("span", { style:{ fontSize:12, color:"var(--ink-soft)" } }, "Report this comment?"),
+        e("button", { className:"btn-text", style:{ padding:0, fontSize:12, color:"var(--danger)" }, disabled:busy, onClick:doReport }, busy ? "Reporting…" : "Report"),
+        e("button", { className:"btn-text", style:{ padding:0, fontSize:12 }, onClick:()=>setConfirming(false) }, "Cancel")
+      ) : null
     ),
     node.replies.map(child => e(CommentThread, {
       key: child.comment.id != null ? ("c"+child.comment.id) : ("i"+child.index),
-      node: child, profile, focusCommentId, focusRef, onReply, onOpenProfile, isReply: true,
+      node: child, profile, focusCommentId, focusRef, onReply, onOpenProfile, onReportComment, isReply: true,
     }))
   );
 }
@@ -9093,6 +9173,12 @@ function ProfileScreen({ id, viewer, onBack, onOpenProfile, onNameChange, onMess
   const [closetItems, setClosetItems] = useState(null); // this account's Public closet items, null while loading
   const [messageError, setMessageError] = useState(null);
   const [messageBusy, setMessageBusy] = useState(false);
+  // Blocking (App Store guideline 1.2). The profile is where it belongs:
+  // you get here from a post, a comment or a notification, so it is at most
+  // one tap away from anywhere the person's content appears.
+  const [isBlocked, setIsBlocked] = useState(false);
+  const [confirmBlock, setConfirmBlock] = useState(false);
+  const [blockBusy, setBlockBusy] = useState(false);
 
   const isMe = id === viewer.visitorId;
 
@@ -9102,6 +9188,11 @@ function ProfileScreen({ id, viewer, onBack, onOpenProfile, onNameChange, onMess
     Api.getFollowers(id).then(ids => setFollowerIds(new Set(ids))).catch(() => setFollowerIds(new Set()));
     Api.getFollows(id).then(ids => setFollowingCount(ids.length)).catch(() => setFollowingCount(0));
     Api.getCloset(id).then(setClosetItems).catch(() => setClosetItems([]));
+    if(id !== viewer.visitorId){
+      Api.getBlocked(viewer.visitorId, viewer.token)
+        .then(rows => setIsBlocked((rows || []).some(r => r.id === id)))
+        .catch(() => {});
+    }
   }, [id]);
 
   useEffect(() => { load(); }, [load]);
@@ -9122,6 +9213,29 @@ function ProfileScreen({ id, viewer, onBack, onOpenProfile, onNameChange, onMess
       load(); // resync on failure
     }finally{
       setFollowBusy(false);
+    }
+  }
+
+  async function toggleBlock(){
+    if(isMe || blockBusy) return;
+    setBlockBusy(true);
+    try{
+      const action = isBlocked ? "unblock" : "block";
+      await Api.blockUser(viewer.visitorId, viewer.token, id, action);
+      setIsBlocked(!isBlocked);
+      setConfirmBlock(false);
+      // Blocking removes the follow edges server-side and takes this
+      // person's posts out of every feed, so the screen behind this one is
+      // now stale — go back to it rather than leaving a profile on display
+      // that the viewer just said they did not want to see.
+      if(action === "block" && onBack) onBack();
+      else load();
+    }catch(err){
+      onAuthError(err);
+      setLoadError(err.message || "Couldn't update that block — try again.");
+      setConfirmBlock(false);
+    }finally{
+      setBlockBusy(false);
     }
   }
 
@@ -9185,10 +9299,26 @@ function ProfileScreen({ id, viewer, onBack, onOpenProfile, onNameChange, onMess
               catch(err){ setMessageError(err.message || "Couldn't start that conversation — try again."); }
               finally{ setMessageBusy(false); }
             }
-          }, messageBusy ? "Opening…" : "Message") : null
+          }, messageBusy ? "Opening…" : "Message") : null,
+          (!isMe && !loadError) ? (
+            isBlocked
+              ? e("button", { className:"btn btn-ghost btn-sm", disabled:blockBusy, onClick:toggleBlock }, blockBusy ? "Working…" : "Unblock")
+              : e("button", { className:"btn btn-ghost btn-sm", disabled:blockBusy, onClick:()=>setConfirmBlock(true) }, "Block")
+          ) : null
         )
       )
     ),
+
+    confirmBlock ? e("div", { style:{ marginTop:12, padding:"12px 14px", border:"1px solid var(--line-soft)", borderRadius:12 } },
+      e("p", { style:{ fontSize:13, margin:0, color:"var(--ink-soft)" } },
+        "Block ", e("b", null, displayName), "? You won't see their posts, comments or stories and they won't see yours. ",
+        "Messages stop both ways and any follows between you are removed. They aren't told. ",
+        "You can undo this any time under Home → Blocked accounts."),
+      e("div", { style:{ marginTop:10, display:"flex", gap:16 } },
+        e("button", { className:"btn-text", style:{ padding:0, fontSize:13, color:"var(--danger)" }, disabled:blockBusy, onClick:toggleBlock }, blockBusy ? "Blocking…" : "Block"),
+        e("button", { className:"btn-text", style:{ padding:0, fontSize:13 }, onClick:()=>setConfirmBlock(false) }, "Cancel")
+      )
+    ) : null,
 
     messageError ? e(Banner, { kind:"error" }, messageError) : null,
 
@@ -9387,6 +9517,64 @@ function EditProfileSheet({ viewer, currentProfile, onSaved, onClose }){
       error ? e(Banner, { kind:"error" }, error) : null,
       e("button", { className:"btn btn-accent btn-block", disabled:saving || !name.trim(), onClick:submit },
         saving ? "Saving…" : "Save profile")
+    )
+  );
+}
+
+/* =====================================================================
+   BLOCKED ACCOUNTS — the only place a block can be undone.
+   App Store guideline 1.2 requires a way to block abusive users; a block
+   people cannot find again is a block they cannot lift, so this list is
+   reachable from Home alongside "Delete my account".
+===================================================================== */
+function BlockedAccountsSheet({ viewer, onClose }){
+  const dialogRef = useDialog(onClose);
+  useBackClose(onClose);
+  const [rows, setRows] = useState(null); // null = still loading
+  const [error, setError] = useState(null);
+  const [busyId, setBusyId] = useState(null);
+
+  useEffect(() => {
+    Api.getBlocked(viewer.visitorId, viewer.token)
+      .then(setRows)
+      .catch(err => { onAuthError(err); setError(err.message || "Couldn't load your blocked accounts."); setRows([]); });
+  }, [viewer.visitorId]);
+
+  async function unblock(id){
+    setBusyId(id);
+    setError(null);
+    try{
+      await Api.blockUser(viewer.visitorId, viewer.token, id, "unblock");
+      setRows(prev => (prev || []).filter(r => r.id !== id));
+    }catch(err){
+      onAuthError(err);
+      setError(err.message || "Couldn't unblock — try again.");
+    }finally{ setBusyId(null); }
+  }
+
+  return e("div", { className:"sheet-backdrop", onClick:onClose },
+    e("div", { className:"sheet", ref:dialogRef, role:"dialog", "aria-modal":"true", onClick: ev=>ev.stopPropagation() },
+      e("div", { className:"sheet-handle" }),
+      e("div", { className:"sheet-head" },
+        e("h2", { className:"display", style:{ fontSize:20, fontWeight:700 } }, "Blocked accounts"),
+        e("button", { className:"close-btn", onClick:onClose, "aria-label":"Close" }, Icon("x"))
+      ),
+
+      e("p", { style:{ fontSize:13, color:"var(--ink-soft)", marginBottom:14 } },
+        "Blocking hides someone's posts, comments and stories from you and yours from them, and stops messages both ways. Unblocking does not put back any follows."),
+
+      error ? e(Banner, { kind:"error" }, error) : null,
+
+      rows === null
+        ? e("p", { style:{ fontSize:13, color:"var(--ink-soft)" } }, "Loading\u2026")
+        : rows.length === 0
+          ? e("p", { style:{ fontSize:13, color:"var(--ink-soft)" } }, "You haven't blocked anyone.")
+          : e("div", null, rows.map(r => e("div", { key:r.id, className:"blocked-row" },
+              e(Avatar, { url:r.avatarUrl, name:r.name, size:36 }),
+              e("span", { className:"blocked-name" }, r.name),
+              e("button", { className:"btn btn-ghost btn-sm", disabled: busyId === r.id, onClick:()=>unblock(r.id) },
+                busyId === r.id ? "Working\u2026" : "Unblock")
+            )))
     )
   );
 }

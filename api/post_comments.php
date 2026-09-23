@@ -16,6 +16,7 @@ if (!$visitorId || !$text) {
 
 $pdo = db();
 ensure_comment_threads_schema($pdo);
+ensure_block_schema($pdo);
 // Ownership check — only a logged-in account can comment, and the name
 // shown is the one on their profile, not whatever the client sent.
 require_owner($pdo, $visitorId, (string)($body['authToken'] ?? ''));
@@ -31,6 +32,13 @@ $check = $pdo->prepare('SELECT id, author_id FROM posts WHERE id = ?');
 $check->execute([$postId]);
 $post = $check->fetch();
 if (!$post) error_response('Post not found.', 404);
+
+// You cannot comment on a post by someone you have blocked, or who has
+// blocked you — the post is not visible to you in the first place (see
+// api/posts.php), and this closes the direct-POST path around that.
+if (!empty($post['author_id']) && is_blocked_pair($pdo, $visitorId, (string)$post['author_id'])) {
+    error_response('Post not found.', 404);
+}
 
 // A reply must belong to the same post, and threads stay one level deep:
 // replying to a reply attaches to that reply's root, so the UI never has to

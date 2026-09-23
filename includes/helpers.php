@@ -1016,11 +1016,23 @@ function post_to_public(PDO $pdo, array $row, ?string $viewerId = null): array {
     // databases may not have those columns yet (see
     // ensure_comment_threads_schema), so fall back to the flat shape
     // rather than 500ing the whole feed.
+    // Comments by (or for) someone in a block relationship with the viewer
+    // are dropped here rather than in every caller, so blocking works the
+    // same on the feed, on a profile and on a single post opened from a
+    // notification. Reported-and-hidden comments go the same way.
+    $blocked = blocked_ids($pdo, $viewerId);
+    $commentBlockSql = blocked_filter_sql($blocked, 'author_id');
     try {
-        $commentsStmt = $pdo->prepare('SELECT id, parent_id, author_id, author_name, text, created_at FROM comments WHERE post_id = ? ORDER BY id ASC');
-        $commentsStmt->execute([$row['id']]);
+        $commentsStmt = $pdo->prepare(
+            'SELECT id, parent_id, author_id, author_name, text, created_at FROM comments
+             WHERE post_id = ? AND hidden = 0' . $commentBlockSql . ' ORDER BY id ASC'
+        );
+        $commentsStmt->execute(array_merge([$row['id']], $blocked));
         $commentRows = $commentsStmt->fetchAll();
     } catch (PDOException $e) {
+        // Older database without comments.hidden / author_id / parent_id
+        // (see ensure_block_schema / ensure_comment_threads_schema). A feed
+        // request must never 500 over a missing moderation column.
         $commentsStmt = $pdo->prepare('SELECT id, author_name, text, created_at FROM comments WHERE post_id = ? ORDER BY id ASC');
         $commentsStmt->execute([$row['id']]);
         $commentRows = $commentsStmt->fetchAll();
@@ -1360,4 +1372,98 @@ function group_to_public(array $row, ?bool $isMember = null): array {
     ];
     if ($isMember !== null) $out['isMember'] = $isMember;
     return $out;
+}
+
+/* =========================================================================
+ * Blocking and comment reporting.
+ *
+ * App Store Review Guideline 1.2 requires an app with user-generated
+ * content to offer ALL of: a filter for objectionable material, a way to
+ * report it, a way to BLOCK abusive users, and published contact info.
+ * Style-LORE had the first, second and fourth (api/post_report.php,
+ * api/admin_moderation.php, support@style-lore.com) but no blocking at
+ * all, and no way to report anything smaller than a whole post — which is
+ * the usual reason a social feature gets rejected. This section is that
+ * gap.
+ *
+ * A block is deliberately SYMMETRIC in what it hides: once A blocks B,
+ * neither sees the other's posts, comments, stories, closet items or
+ * messages, and neither can start a conversation with the other. Making it
+ * one-way would leave the blocked person able to keep watching and keep
+ * replying, which is exactly the situation someone blocks to get out of.
+ * It is NOT symmetric in who can undo it: only the blocker can unblock.
+ * ========================================================================= */
+function ensure_block_schema(PDO $pdo): void {
+    static $done = false; if ($done) return; $done = true;
+    try {
+        $pdo->exec(
+            'CREATE TABLE IF NOT EXISTS blocked_users (
+                blocker_id VARCHAR(64) NOT NULL,
+                blocked_id VARCHAR(64) NOT NULL,
+                created_at BIGINT NOT NULL,
+                PRIMARY KEY (blocker_id, blocked_id),
+                KEY idx_blocked_by (blocked_id)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4'
+        );
+        // Comment-level moderation, mirroring posts.hidden/report_count.
+        $pdo->exec('ALTER TABLE comments ADD COLUMN IF NOT EXISTS hidden TINYINT(1) NOT NULL DEFAULT 0');
+        $pdo->exec('ALTER TABLE comments ADD COLUMN IF NOT EXISTS report_count INT NOT NULL DEFAULT 0');
+        $pdo->exec(
+            'CREATE TABLE IF NOT EXISTS comment_reports (
+                comment_id INT NOT NULL,
+                visitor_id VARCHAR(64) NOT NULL,
+                created_at BIGINT NOT NULL,
+                PRIMARY KEY (comment_id, visitor_id)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4'
+        );
+    } catch (Throwable $e) { error_log('ensure_block_schema: ' . $e->getMessage()); }
+}
+
+/** Every account id $viewerId should not see, in EITHER direction: people
+ *  they blocked, and people who blocked them. Cached per request — the
+ *  feed calls this once per post otherwise. Returns [] for a signed-out
+ *  viewer, which is correct: there is no one to hide from. */
+function blocked_ids(PDO $pdo, ?string $viewerId): array {
+    if ($viewerId === null || $viewerId === '') return [];
+    static $cache = [];
+    if (array_key_exists($viewerId, $cache)) return $cache[$viewerId];
+    ensure_block_schema($pdo);
+    $out = [];
+    try {
+        $stmt = $pdo->prepare(
+            'SELECT blocked_id AS other FROM blocked_users WHERE blocker_id = ?
+             UNION
+             SELECT blocker_id AS other FROM blocked_users WHERE blocked_id = ?'
+        );
+        $stmt->execute([$viewerId, $viewerId]);
+        $out = array_values(array_filter(array_column($stmt->fetchAll(), 'other'), 'strlen'));
+    } catch (Throwable $e) { error_log('blocked_ids: ' . $e->getMessage()); }
+    return $cache[$viewerId] = $out;
+}
+
+/** SQL fragment excluding $ids from $column, for appending to a WHERE
+ *  clause. Returns '' when there is nothing to exclude so the caller's
+ *  parameter list stays untouched. NULL authors (legacy rows) are kept —
+ *  they belong to no one, so they cannot belong to a blocked account. */
+function blocked_filter_sql(array $ids, string $column): string {
+    if (!$ids) return '';
+    return ' AND (' . $column . ' IS NULL OR ' . $column
+         . ' NOT IN (' . implode(',', array_fill(0, count($ids), '?')) . '))';
+}
+
+/** True if either of these two has blocked the other. Used on the write
+ *  paths (starting a conversation, sending a message, following) where a
+ *  feed filter is not enough. */
+function is_blocked_pair(PDO $pdo, string $a, string $b): bool {
+    if ($a === '' || $b === '' || $a === $b) return false;
+    ensure_block_schema($pdo);
+    try {
+        $stmt = $pdo->prepare(
+            'SELECT 1 FROM blocked_users
+             WHERE (blocker_id = ? AND blocked_id = ?) OR (blocker_id = ? AND blocked_id = ?)
+             LIMIT 1'
+        );
+        $stmt->execute([$a, $b, $b, $a]);
+        return (bool)$stmt->fetchColumn();
+    } catch (Throwable $e) { error_log('is_blocked_pair: ' . $e->getMessage()); return false; }
 }

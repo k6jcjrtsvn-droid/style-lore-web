@@ -5,6 +5,7 @@ $pdo = db();
 ensure_poll_schema($pdo);
 ensure_post_share_column($pdo);
 ensure_comment_threads_schema($pdo);
+ensure_block_schema($pdo);
 
 if ($_SERVER['REQUEST_METHOD'] === 'GET') {
     // Who is asking, so a poll can come back with their own vote on it. Not
@@ -25,23 +26,33 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
     // PostDetailScreen). Group posts are included: if you were notified
     // about it you are already in that group. Hidden/reported posts are
     // not, so a removed post stays removed.
+    //
+    // Posts by anyone in a block relationship with the viewer are excluded
+    // from every branch below (see blocked_ids / blocked_filter_sql in
+    // helpers.php). A blocked author's post comes back as an empty list,
+    // which the client already renders as "This post isn't here any more" —
+    // the same thing it shows for a deleted post, and deliberately so: a
+    // block should not announce itself to the person who was blocked.
+    $blocked = blocked_ids($pdo, $viewerId);
+    $blockSql = blocked_filter_sql($blocked, 'author_id');
+
     $postId = isset($_GET['postId']) ? (string)$_GET['postId'] : null;
     if ($postId !== null && $postId !== '') {
-        $stmt = $pdo->prepare('SELECT * FROM posts WHERE hidden = 0 AND id = ? LIMIT 1');
-        $stmt->execute([$postId]);
+        $stmt = $pdo->prepare('SELECT * FROM posts WHERE hidden = 0 AND id = ?' . $blockSql . ' LIMIT 1');
+        $stmt->execute(array_merge([$postId], $blocked));
         $rows = $stmt->fetchAll();
         json_response(array_map(fn($r) => post_to_public($pdo, $r, $viewerId), $rows));
     }
 
     if ($groupId !== null && $groupId !== '') {
-        $stmt = $pdo->prepare('SELECT * FROM posts WHERE hidden = 0 AND group_id = ? ORDER BY created_at DESC LIMIT ' . $limit);
-        $stmt->execute([$groupId]);
+        $stmt = $pdo->prepare('SELECT * FROM posts WHERE hidden = 0 AND group_id = ?' . $blockSql . ' ORDER BY created_at DESC LIMIT ' . $limit);
+        $stmt->execute(array_merge([$groupId], $blocked));
     } elseif ($authorId !== null && $authorId !== '') {
-        $stmt = $pdo->prepare('SELECT * FROM posts WHERE hidden = 0 AND author_id = ? AND group_id IS NULL ORDER BY created_at DESC LIMIT ' . $limit);
-        $stmt->execute([$authorId]);
+        $stmt = $pdo->prepare('SELECT * FROM posts WHERE hidden = 0 AND author_id = ? AND group_id IS NULL' . $blockSql . ' ORDER BY created_at DESC LIMIT ' . $limit);
+        $stmt->execute(array_merge([$authorId], $blocked));
     } else {
-        $stmt = $pdo->prepare('SELECT * FROM posts WHERE hidden = 0 AND group_id IS NULL ORDER BY created_at DESC LIMIT ' . $limit);
-        $stmt->execute();
+        $stmt = $pdo->prepare('SELECT * FROM posts WHERE hidden = 0 AND group_id IS NULL' . $blockSql . ' ORDER BY created_at DESC LIMIT ' . $limit);
+        $stmt->execute($blocked);
     }
     $rows = $stmt->fetchAll();
     json_response(array_map(fn($r) => post_to_public($pdo, $r, $viewerId), $rows));
