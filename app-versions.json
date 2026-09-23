@@ -1,7 +1,7 @@
 {
   "_comment": "Latest app builds. The apps fetch this on launch and show an 'Update available' card on Home when the running version is older. Only bump 'version' once the release is actually AVAILABLE on the store (not while it is in review) -- otherwise the button leads to a store page with nothing to update. THIS IS THE ONLY THING THAT MAKES THE IN-APP UPDATE NOTICE APPEAR: Play can have a new version ready to install while the app says nothing, because the app compares itself to THIS FILE, not to Play. Bumping it is pipeline step 3b and must not be skipped.",
   "androidStoreUrl": "https://play.google.com/store/apps/details?id=com.stylelore.app",
-  "iosStoreUrl": "https://apps.apple.com/app/id0000000000",
+  "iosStoreUrl": "https://apps.apple.com/app/id6813713328",
   "android": {
     "version": "1.8",
     "versionCode": 10,
@@ -11,6 +11,6 @@
   "ios": {
     "version": "0",
     "notes": "",
-    "url": "https://apps.apple.com/app/id0000000000"
+    "url": "https://apps.apple.com/app/id6813713328"
   }
 }
