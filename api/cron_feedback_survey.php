@@ -84,7 +84,7 @@ foreach ($rows as $r) {
 
     $heading = 'Can I ask you three questions?';
     $body =
-        '<p style="margin:0 0 14px;">Hi ' . htmlspecialchars($hi) . ' — I\'m Kenneth. I built Style-LORE, and you took the quiz a little while back.</p>'
+        '<p style="margin:0 0 14px;">Hi ' . htmlspecialchars($hi) . ' — I\'m Jayne, from Style-LORE. You took the quiz a little while back.</p>'
       . '<p style="margin:0 0 18px;">I would like to know what you actually thought. Three questions, and <b>hitting reply is a perfectly good way to answer</b> — a sentence each is plenty.</p>'
       . '<p style="margin:0 0 10px; padding:14px 16px; background:#F7D9E5; border-radius:12px;">'
       . '<b>1.</b> What made you go looking for something like this?<br><br>'
@@ -96,13 +96,13 @@ foreach ($rows as $r) {
             . '<a href="' . htmlspecialchars($unsub) . '" style="color:#6C4C56;">Unsubscribe from Style-LORE emails</a>';
     $html = style_lore_email_html($heading, $body, 'Open Style-LORE', SITE_BASE_URL . '/', $footer);
 
-    $text = "Hi $hi — I'm Kenneth. I built Style-LORE, and you took the quiz a little while back.\n\n"
+    $text = "Hi $hi — I'm Jayne, from Style-LORE. You took the quiz a little while back.\n\n"
           . "I'd like to know what you actually thought. Three questions, and just hitting reply is a perfectly good way to answer — a sentence each is plenty.\n\n"
           . "1. What made you go looking for something like this?\n"
           . "2. What's the one thing that would make it more useful to you?\n"
           . "3. Was anything confusing, wrong, or broken?\n\n"
           . "Every reply comes straight to me, and I read all of them.\n\n"
-          . "— Kenneth, Style-LORE\n"
+          . "— Jayne, Style-LORE\n"
           . SITE_BASE_URL . "/\n\n"
           . "You're getting this once, because you made a Style-LORE account.\n"
           . "Unsubscribe: $unsub\n";
