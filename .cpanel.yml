@@ -42,6 +42,9 @@ deployment:
     # here is committed but never reaches the live site.
     - /bin/mkdir -p $DEPLOYPATH/vendor/bg
     - /bin/cp -rf vendor/. $DEPLOYPATH/vendor/
+    # Demo-account artwork for the store screenshots (see demo-seed/README.md).
+    - /bin/mkdir -p $DEPLOYPATH/demo-seed
+    - /bin/cp -rf demo-seed/. $DEPLOYPATH/demo-seed/
     - /bin/mkdir -p $DEPLOYPATH/email-assets
     - /bin/cp -rf email-assets/. $DEPLOYPATH/email-assets/
     - /bin/mkdir -p $DEPLOYPATH/uploads/avatars
