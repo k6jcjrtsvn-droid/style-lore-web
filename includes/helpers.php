@@ -1003,6 +1003,34 @@ function save_upload(string $field, string $subdir, string $requiredMimePrefix, 
  * moderation-only fields (hidden/reportCount) stripped, matching
  * publicPost() in the local server.
  */
+/**
+ * The account's CURRENT display name, for a row that snapshotted a name when
+ * it was written. posts, comments and closet_items all store author_name at
+ * write time, so until this existed, renaming a profile left every one of
+ * that person's older posts and comments under the old name — the feed would
+ * show the same person under two names at once.
+ *
+ * Falls back to the stored value when the profile row is gone (a deleted
+ * account keeps its posts' attribution rather than losing it) or when the
+ * current name is blank. Cached per request, so one feed page costs one
+ * query per distinct author, not one per row.
+ */
+function display_name(PDO $pdo, $accountId, string $stored): string {
+    static $cache = [];
+    $id = trim((string)$accountId);
+    if ($id === '') return $stored;
+    if (!array_key_exists($id, $cache)) {
+        $cache[$id] = null;
+        try {
+            $st = $pdo->prepare('SELECT name FROM profiles WHERE id = ?');
+            $st->execute([$id]);
+            $n = $st->fetchColumn();
+            if ($n !== false && trim((string)$n) !== '') $cache[$id] = (string)$n;
+        } catch (PDOException $e) { /* keep the stored name */ }
+    }
+    return $cache[$id] !== null ? $cache[$id] : $stored;
+}
+
 function post_to_public(PDO $pdo, array $row, ?string $viewerId = null): array {
     $likesStmt = $pdo->prepare('SELECT visitor_id, liked FROM likes WHERE post_id = ?');
     $likesStmt->execute([$row['id']]);
@@ -1037,12 +1065,12 @@ function post_to_public(PDO $pdo, array $row, ?string $viewerId = null): array {
         $commentsStmt->execute([$row['id']]);
         $commentRows = $commentsStmt->fetchAll();
     }
-    $comments = array_map(function ($c) {
+    $comments = array_map(function ($c) use ($pdo) {
         return [
             'id' => isset($c['id']) ? (int)$c['id'] : null,
             'parentId' => isset($c['parent_id']) && $c['parent_id'] !== null ? (int)$c['parent_id'] : null,
             'authorId' => $c['author_id'] ?? null,
-            'authorName' => $c['author_name'],
+            'authorName' => display_name($pdo, $c['author_id'] ?? null, (string)$c['author_name']),
             'text' => $c['text'],
             'createdAt' => (int)$c['created_at'],
         ];
@@ -1053,7 +1081,7 @@ function post_to_public(PDO $pdo, array $row, ?string $viewerId = null): array {
 
     $out = [
         'id' => $row['id'],
-        'authorName' => $row['author_name'],
+        'authorName' => display_name($pdo, $row['author_id'] ?? null, (string)$row['author_name']),
         'authorId' => $row['author_id'],
         'authorAvatarUrl' => $row['author_avatar_url'],
         'kibbeTag' => $row['kibbe_tag'],
