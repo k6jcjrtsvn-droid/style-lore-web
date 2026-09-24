@@ -10686,6 +10686,20 @@ function App(){
       // settles in milliseconds, so waiting on it costs a real device
       // nothing and keeps the alert out of the captures.
       if(window.STYLE_LORE_CI_PROBE){ try{ await window.STYLE_LORE_CI_PROBE; }catch(err){} }
+      else {
+        // On a relaunch the profile is restored from local storage before the
+        // deep-link effect runs, so the probe may not exist yet. Read the
+        // marker file directly rather than depending on effect order - this
+        // is what stopped the alert appearing on every screenshot after the
+        // first one.
+        const CiFS = Capacitor.Plugins && Capacitor.Plugins.Filesystem;
+        if(CiFS && CiFS.readFile){
+          try{
+            await CiFS.readFile({ path: "ci-open-url.txt", directory: "DOCUMENTS", encoding: "utf8" });
+            window.STYLE_LORE_CI = true;
+          }catch(err){}
+        }
+      }
       if(window.STYLE_LORE_CI) return;
       let perm = await Push.checkPermissions();
       if(perm.receive !== "granted"){
@@ -10720,7 +10734,7 @@ function App(){
   // because simctl can screenshot but not tap. The latest openPaywall/goTo
   // are read through a ref so the one listener never goes stale.
   const deepLinkRef = useRef(null);
-  deepLinkRef.current = { openPaywall, goTo, exploreAsGuest, completeGate, signedIn: !!profile, atGate: !profile && !guest };
+  deepLinkRef.current = { openPaywall, goTo, exploreAsGuest, completeGate, setWardrobeAsked, signedIn: !!profile, atGate: !profile && !guest };
   useEffect(() => {
     const Capacitor = window.Capacitor;
     const isNative = Capacitor && Capacitor.isNativePlatform && Capacitor.isNativePlatform();
@@ -10788,6 +10802,14 @@ function App(){
           const d = deepLinkRef.current;
           if(!creds.email || !creds.password){ ciNote("skipped: no email/password in ci-signin.json"); return readUrlAndRoute(); }
           if(!d){ ciNote("skipped: deepLinkRef was not ready yet"); return readUrlAndRoute(); }
+          // The rack question (WardrobeSheet) lives in local storage, not on
+          // the account, so a fresh simulator install shows it over every
+          // screenshot even when signed in. The workflow states the answer
+          // in ci-signin.json so the captures show the app in steady state.
+          if(creds.wardrobe && !getWardrobe()){
+            setWardrobe(creds.wardrobe);
+            if(d.setWardrobeAsked) d.setWardrobeAsked(true);
+          }
           if(d.signedIn){ ciNote("skipped: already signed in"); return readUrlAndRoute(); }
           return Api.login({ email: creds.email, password: creds.password })
             .then((account) => {
