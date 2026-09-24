@@ -168,7 +168,9 @@ if ($closet) {
     $context .= "\n\nWHAT THEY ALREADY OWN (their logged closet - descriptions they typed themselves):\n  - "
               . implode("\n  - ", $closet)
               . "\nIf a piece here would fix or lift the outfit, name it exactly as written. Never claim they own "
-              . "something that is not on this list.";
+              . "something that is not on this list. Note that the photo may well BE pieces from this list - if the "
+              . "garment you want to change is already the closest thing on it, do not suggest swapping it for "
+              . "itself; pick a genuinely different piece, or suggest a change that is not a swap at all.";
 }
 
 $instructions = <<<TXT
@@ -200,7 +202,9 @@ WHAT YOUR ANSWER MUST DO
    it, name that piece. "Try accessorising" and "consider a belt" are
    failures; "swap the flat sandals for the red ankle boots you own - the
    shorter, harder shoe breaks the line the maxi is running away with" is
-   the standard.
+   the standard. Keep it under 45 words and finish the sentence - it is cut
+   off at 400 characters, and a suggestion that stops mid-word is worse than
+   a shorter one.
 
 Be honest. If it works, say precisely why, in a way they could repeat next
 time. If it does not, say so plainly and warmly - they paid for a real
@@ -218,7 +222,7 @@ VERDICT
   "mismatch" - the silhouette or the palette genuinely fights them.
 
 Respond with ONLY a single JSON object, no other text:
-{"verdict": "match" | "caution" | "mismatch", "headline": "under 12 words, specific to THIS photo, no generic praise", "detail": "3-5 sentences covering the lines and the colour, naming real garments and shades you can see", "suggestion": "one concrete change they could make tonight, naming a piece from their closet where one fits"}
+{"verdict": "match" | "caution" | "mismatch", "headline": "under 12 words, specific to THIS photo, no generic praise", "detail": "3-5 sentences covering the lines and the colour, naming real garments and shades you can see", "suggestion": "one concrete change they could make tonight, under 45 words, a complete sentence, naming a piece from their closet where one genuinely fits"}
 TXT;
 
 $payload = [
@@ -289,7 +293,7 @@ try {
         'verdict' => $verdict,
         'headline' => mb_substr((string)($verdictData['headline'] ?? ''), 0, 140),
         'detail' => mb_substr((string)($verdictData['detail'] ?? ''), 0, 800),
-        'suggestion' => mb_substr((string)($verdictData['suggestion'] ?? ''), 0, 300),
+        'suggestion' => mb_substr((string)($verdictData['suggestion'] ?? ''), 0, 400),
     ]);
 } catch (Throwable $e) {
     error_log('Checker photo failed: ' . $e->getMessage());
