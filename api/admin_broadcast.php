@@ -56,14 +56,21 @@ Thanks for testing — reply any time with feedback or bugs.
 — Jayne and Kenneth, Style-LORE
 TXT;
 
+// Everyone below excludes accounts that unsubscribed. One opt-out covers
+// every non-transactional email: someone who turned off the weekly digest
+// said they did not want us in their inbox, and a broadcast is not a
+// different enough thing to override that.
+ensure_digest_columns($pdo);
+
 if (($_SERVER['REQUEST_METHOD'] ?? '') === 'GET') {
-    $total = (int)$pdo->query('SELECT COUNT(*) c FROM accounts')->fetch()['c'];
-    $unverified = (int)$pdo->query('SELECT COUNT(*) c FROM accounts WHERE email_verified = 0')->fetch()['c'];
-    json_response(['ok' => true, 'dryRun' => true, 'wouldEmail' => $total, 'unverifiedAmongThem' => $unverified]);
+    $total = (int)$pdo->query('SELECT COUNT(*) c FROM accounts WHERE COALESCE(digest_opt_out, 0) = 0')->fetch()['c'];
+    $unverified = (int)$pdo->query('SELECT COUNT(*) c FROM accounts WHERE COALESCE(digest_opt_out, 0) = 0 AND email_verified = 0')->fetch()['c'];
+    $optedOut = (int)$pdo->query('SELECT COUNT(*) c FROM accounts WHERE COALESCE(digest_opt_out, 0) = 1')->fetch()['c'];
+    json_response(['ok' => true, 'dryRun' => true, 'wouldEmail' => $total, 'unverifiedAmongThem' => $unverified, 'skippedOptedOut' => $optedOut]);
 }
 
 if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST') {
-    $stmt = $pdo->query('SELECT a.id, a.email, a.email_verified, p.name FROM accounts a LEFT JOIN profiles p ON p.id = a.id');
+    $stmt = $pdo->query('SELECT a.id, a.email, a.email_verified, p.name FROM accounts a LEFT JOIN profiles p ON p.id = a.id WHERE COALESCE(a.digest_opt_out, 0) = 0');
     $accounts = $stmt->fetchAll();
 
     $sent = 0;
@@ -79,6 +86,12 @@ if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST') {
             $verifyUrl = SITE_BASE_URL . '/?verify=' . $verifyToken;
             $body .= "\n\nOne more thing: you haven't verified your email yet, so you can't post in Community until you do. Verify here (link works for 48 hours):\n$verifyUrl\n";
         }
+
+        // A commercial email has to carry a way out of it. Same one-click
+        // HMAC link the weekly digest uses, so there is one unsubscribe
+        // mechanism rather than two that can disagree.
+        $unsub = SITE_BASE_URL . '/api/digest_unsubscribe.php?id=' . rawurlencode($a['id']) . '&t=' . digest_unsub_token($a['id']);
+        $body .= "\n\n--\nYou're getting this because you made a Style-LORE account.\nUnsubscribe from Style-LORE emails: $unsub\n";
 
         $ok = send_app_email($a['email'], "What's new on Style-LORE", $body);
         if ($ok) $sent++; else $failed++;

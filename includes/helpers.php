@@ -677,7 +677,7 @@ function ensure_color_result_column(PDO $pdo): void {
 /** Adds the weekly-email columns if a deploy got ahead of the migration. Cheap, idempotent, MariaDB. */
 function ensure_digest_columns(PDO $pdo): void {
     static $done = false; if ($done) return; $done = true;
-    try { $pdo->exec('ALTER TABLE accounts ADD COLUMN IF NOT EXISTS digest_opt_out TINYINT(1) NOT NULL DEFAULT 0, ADD COLUMN IF NOT EXISTS digest_sent_at BIGINT DEFAULT NULL, ADD COLUMN IF NOT EXISTS morning_push_opt_out TINYINT(1) NOT NULL DEFAULT 0'); }
+    try { $pdo->exec('ALTER TABLE accounts ADD COLUMN IF NOT EXISTS digest_opt_out TINYINT(1) NOT NULL DEFAULT 0, ADD COLUMN IF NOT EXISTS digest_sent_at BIGINT DEFAULT NULL, ADD COLUMN IF NOT EXISTS morning_push_opt_out TINYINT(1) NOT NULL DEFAULT 0, ADD COLUMN IF NOT EXISTS survey_sent_at BIGINT DEFAULT NULL'); }
     catch (Throwable $e) { error_log('ensure_digest_columns: ' . $e->getMessage()); }
 }
 
