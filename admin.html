@@ -52,6 +52,16 @@
   .tab{ border:1px solid var(--line); background:transparent; color:var(--ink-soft);
         border-radius:999px; padding:6px 14px; font-size:13px; cursor:pointer; }
   .tab.is-on{ background:var(--accent); border-color:var(--accent); color:#fff; }
+  .fsec{ margin:0 0 22px; }
+  .fsec h2{ font-size:14px; letter-spacing:.06em; text-transform:uppercase; color:var(--ink-soft);
+            margin:0 0 8px; font-weight:600; }
+  .fbig{ font-size:28px; font-weight:700; margin:0 0 2px; }
+  .fbig small{ font-size:13px; font-weight:400; color:var(--ink-soft); }
+  table.f{ width:100%; border-collapse:collapse; font-size:14px; }
+  table.f th, table.f td{ text-align:left; padding:7px 10px; border-bottom:1px solid var(--line); }
+  table.f th{ font-size:12px; text-transform:uppercase; letter-spacing:.05em; color:var(--ink-soft); font-weight:600; }
+  table.f td.n{ text-align:right; font-variant-numeric:tabular-nums; }
+  .fnote{ font-size:13px; color:var(--ink-soft); line-height:1.5; margin-top:14px; }
   .comment-text{ font-size:14.5px; margin:6px 0 4px; }
   .comment-context{ font-size:12px; color:var(--ink-soft); border-left:2px solid var(--line);
                     padding-left:10px; margin-top:8px; }
@@ -76,6 +86,7 @@
       <div class="tabs">
         <button id="tab-posts" class="tab is-on" data-kind="posts">Posts</button>
         <button id="tab-comments" class="tab" data-kind="comments">Comments</button>
+        <button id="tab-funnel" class="tab" data-kind="funnel">Funnel</button>
       </div>
       <button id="logout">Lock this page</button>
     </div>
@@ -155,10 +166,65 @@
     );
   }
 
+  /* The funnel tab. Clicks and signups are two separate populations - see
+     api/admin_funnel.php - so they are shown side by side and never divided
+     into each other. "iOS" on the signup side means the account was created
+     from the iOS app, which started being recorded on 23 Sep 2026; anything
+     older reads as (unrecorded) rather than as web. */
+  function renderFunnel(d){
+    var signups = d.signups || [], clicks = d.clicks || [], bySource = d.clicksBySource || [];
+    var LABEL = { ios:"iOS app", android:"Android app", web:"Web", "(unrecorded)":"Before 23 Sep (not recorded)" };
+    function num(x){ return Number(x || 0).toLocaleString(); }
+    var total = signups.reduce(function(a, r){ return a + Number(r.total || 0); }, 0);
+    var ios = signups.filter(function(r){ return r.device === "ios"; })[0];
+
+    var head = '<div class="fsec">' +
+      '<h2>Signups from iOS</h2>' +
+      '<p class="fbig">' + num(ios && ios.total) +
+        ' <small>of ' + num(total) + ' accounts \u00b7 ' + num(ios && ios.last7) + ' in the last 7 days</small></p>' +
+      '</div>';
+
+    var t1 = '<div class="fsec"><h2>Signups by platform</h2><table class="f">' +
+      '<tr><th>Platform</th><th class="n">Accounts</th><th class="n">Last 7 days</th><th class="n">Email verified</th></tr>' +
+      (signups.length ? signups.map(function(r){
+        return '<tr><td>' + esc(LABEL[r.device] || r.device) + '</td><td class="n">' + num(r.total) +
+               '</td><td class="n">' + num(r.last7) + '</td><td class="n">' + num(r.verified) + '</td></tr>';
+      }).join("") : '<tr><td colspan="4">No accounts yet.</td></tr>') + '</table></div>';
+
+    var t2 = '<div class="fsec"><h2>Share-link clicks</h2><table class="f">' +
+      '<tr><th>Link</th><th class="n">Clicks</th><th class="n">Distinct IPs</th><th class="n">Last 7 days</th><th class="n">On that platform</th></tr>' +
+      (clicks.length ? clicks.map(function(r){
+        return '<tr><td>/' + esc(r.slug) + '</td><td class="n">' + num(r.total) +
+               '</td><td class="n">' + num(r.unique_ips) + '</td><td class="n">' + num(r.last7) +
+               '</td><td class="n">' + num(r.right_platform) + '</td></tr>';
+      }).join("") : '<tr><td colspan="5">No clicks recorded yet.</td></tr>') + '</table></div>';
+
+    var t3 = bySource.length ? '<div class="fsec"><h2>Clicks by tag</h2><table class="f">' +
+      '<tr><th>Link</th><th>Tag (?s=)</th><th class="n">Clicks</th></tr>' +
+      bySource.map(function(r){
+        return '<tr><td>/' + esc(r.slug) + '</td><td>' + esc(r.source) + '</td><td class="n">' + num(r.n) + '</td></tr>';
+      }).join("") + '</table></div>' : "";
+
+    return head + t1 + t2 + t3 + '<p class="fnote">' + esc(d.note || "") + '</p>';
+  }
+
   async function load(){
     actionError.textContent = "";
     list.innerHTML = '<div class="empty">Loading…</div>';
     var wanted = kind;
+    if(wanted === "funnel"){
+      try{
+        var fr = await fetch("/api/admin/funnel", { headers:{ "X-Admin-Secret": secret() } });
+        if(fr.status === 401){ lock("That secret didn't work."); return; }
+        if(!fr.ok) throw new Error("Server said " + fr.status);
+        var fd = await fr.json();
+        if(wanted !== kind) return;
+        list.innerHTML = renderFunnel(fd);
+      }catch(err){
+        list.innerHTML = '<div class="empty">Couldn\'t load the funnel — ' + esc(err.message) + '</div>';
+      }
+      return;
+    }
     try{
       var url = "/api/admin/moderation" + (wanted === "comments" ? "?type=comments" : "");
       var r = await fetch(url, { headers:{ "X-Admin-Secret": secret() } });
