@@ -51,6 +51,16 @@
         if(isCrawler) return;
         message = String(message || "").slice(0, 500);
         if(!message) return;
+        // Browser extensions run inside the page, so when one of them throws,
+        // it surfaces through our own error handlers and files a bug report
+        // against us. "Invalid call to runtime.sendMessage(). Tab not found."
+        // arrived that way on 24 Sep -- a chrome.runtime call from an injected
+        // extension script, nothing of ours, on a person's closet screen.
+        // Same lesson as the crawler filter: something that is not a user
+        // hitting a bug must not look like one, and the audience is about to
+        // get much larger.
+        var src = message + " " + ((extra && (extra.stack || extra.source)) || "");
+        if(/runtime\.sendMessage|chrome\.runtime|chrome-extension:\/\/|moz-extension:\/\/|safari-web-extension:\/\/|Extension context invalidated/i.test(src)) return;
         var key = kind + "|" + message.slice(0, 120);
         if(seen[key] || sent >= 8) return;
         seen[key] = true; sent++;
