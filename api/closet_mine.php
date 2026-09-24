@@ -52,7 +52,7 @@ $stmt = $pdo->prepare($itemSql);
 $stmt->execute($params);
 // closet_item_to_owner, not _to_public: this endpoint is the only one that
 // may return the item's price (see the note on that function).
-$items = array_map('closet_item_to_owner', $stmt->fetchAll());
+$items = array_map(function ($r) use ($pdo) { return closet_item_to_owner($r, $pdo); }, $stmt->fetchAll());
 
 $delSql = 'SELECT client_id, id, deleted_at FROM closet_items WHERE account_id = ? AND deleted_at IS NOT NULL';
 $delParams = [$visitorId];

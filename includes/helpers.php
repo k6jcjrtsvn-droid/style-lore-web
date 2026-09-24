@@ -1357,7 +1357,14 @@ function story_to_public(array $row, bool $viewed): array {
  * item is individually Hidden or Public — see Kenneth's 2026-09-14
  * feedback that a single account-wide toggle wasn't granular enough).
  */
-function closet_item_to_public(array $row): array {
+/** $pdo is optional only so that any caller written before this parameter
+ *  existed keeps working. Pass it: author_name is a snapshot taken when the
+ *  item was saved, so without it someone who renames themselves keeps the old
+ *  name on every piece in their closet forever. Posts and comments were fixed
+ *  the same way (see post_to_public); this is the last place it was wrong. */
+function closet_item_to_public(array $row, ?PDO $pdo = null): array {
+    $stored = (string)($row['author_name'] ?? '');
+    $owner  = $row['account_id'] ?? null;
     return [
         // The app's own id for this item when we have it. The server row id
         // is an internal detail and used to change on every sync — handing
@@ -1367,8 +1374,8 @@ function closet_item_to_public(array $row): array {
         'photo' => $row['photo_data'],
         'createdAt' => (int)$row['created_at'],
         'visibility' => $row['visibility'] ?? 'hidden',
-        'authorName' => $row['author_name'] ?? '',
-        'authorId' => $row['account_id'] ?? null,
+        'authorName' => $pdo !== null ? display_name($pdo, $owner, $stored) : $stored,
+        'authorId' => $owner,
     ];
 }
 
@@ -1379,8 +1386,8 @@ function closet_item_to_public(array $row): array {
  *  to strangers through api/closet.php's GET and the Community closets feed,
  *  and what someone paid for a coat is nobody else's business. Only
  *  api/closet_mine.php — which requires the owner's auth token — uses this. */
-function closet_item_to_owner(array $row): array {
-    $out = closet_item_to_public($row);
+function closet_item_to_owner(array $row, ?PDO $pdo = null): array {
+    $out = closet_item_to_public($row, $pdo);
     $cents = $row['price_cents'] ?? null;
     $out['price'] = $cents === null ? null : round((int)$cents / 100, 2);
     return $out;

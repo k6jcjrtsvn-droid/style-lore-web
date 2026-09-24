@@ -30,4 +30,4 @@ $stmt = $pdo->prepare(
      ORDER BY created_at DESC LIMIT $limit"
 );
 $stmt->execute($blocked);
-json_response(array_map('closet_item_to_public', $stmt->fetchAll()));
+json_response(array_map(function ($r) use ($pdo) { return closet_item_to_public($r, $pdo); }, $stmt->fetchAll()));
