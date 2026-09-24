@@ -3,10 +3,11 @@
   "androidStoreUrl": "https://play.google.com/store/apps/details?id=com.stylelore.app",
   "iosStoreUrl": "https://apps.apple.com/app/id6813713328",
   "android": {
-    "version": "1.8",
-    "versionCode": 10,
-    "notes": "Small fixes: \"+ Add a piece\" in Outfits works with an empty closet, and share cards are centred properly.",
-    "url": "https://play.google.com/store/apps/details?id=com.stylelore.app"
+    "version": "0",
+    "versionCode": 0,
+    "notes": "",
+    "url": "https://play.google.com/store/apps/details?id=com.stylelore.app",
+    "_pending": "1.8 (versionCode 10) is submitted to Play production and awaiting approval. version is held at \"0\" so the in-app Update card stays hidden while the public store page still 404s - a card now would send people to a dead page. Restore version 1.8 / versionCode 10 and the notes the moment the listing is live."
   },
   "ios": {
     "version": "0",
