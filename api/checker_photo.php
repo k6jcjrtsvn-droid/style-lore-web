@@ -27,6 +27,7 @@
  * and show the right message for each.
  */
 require_once __DIR__ . '/../includes/helpers.php';
+require_once __DIR__ . '/../includes/style_brief.php';
 
 /**
  * Turns whatever the model wrote into the {verdict, headline, detail,
@@ -143,53 +144,86 @@ $topStyleWords = array_slice(array_map('strval', $topStyleWords), 0, 8);
 $wardrobe = (string)($_POST['wardrobe'] ?? '');
 if (!in_array($wardrobe, ['women', 'men', 'both'], true)) $wardrobe = '';
 
-$context = 'No Kibbe type or style-quiz words are on file for this person yet — judge the photo on general fit and styling principles instead.';
-if ($kibbeTypeName || $topStyleWords) {
-    $parts = [];
-    if ($kibbeTypeName) $parts[] = "their Kibbe body type is \"$kibbeTypeName\"";
-    if ($topStyleWords) $parts[] = 'their own stated style words are: ' . implode(', ', $topStyleWords);
-    $context = 'Context on this person: ' . implode('; ', $parts) . '.';
-}
-// "Shopping for" preference from the quiz: keep suggestions inside the
-// wardrobe the person actually buys from. Menswear shoppers should never be
-// told to try a dress, skirt or heels; "both" means suggest freely.
-if ($wardrobe === 'men') {
-    $context .= ' This person shops menswear: every suggestion must be a menswear piece (shirts, knits, trousers, tailoring, outerwear, men\'s shoes and accessories). Never suggest dresses, skirts, heels, blouses or other womenswear, and describe fit and proportion in menswear terms (drop, rise, break, collar, shoulder line).';
-} elseif ($wardrobe === 'women') {
-    $context .= ' This person shops womenswear.';
-} elseif ($wardrobe === 'both') {
-    $context .= ' This person shops both menswear and womenswear — suggest from either without assuming a gender.';
+/* What the model is told about this person.
+ *
+ * Read from the profiles row first, and only fall back to what the request
+ * carried. That ordering matters: the builds already in people's hands post
+ * a type NAME and nothing else - no colour season, no closet - so pulling
+ * from the row is what lets the stylist get better for everyone already on
+ * 1.8 without shipping a new app.
+ *
+ * Until this existed, the model got the string "Flamboyant Gamine" and was
+ * left to fill in the rest from whatever it had absorbed about Kibbe on the
+ * internet, which is a system that is widely written about and widely
+ * written about wrongly. See includes/style_brief.php. */
+$ctx = style_profile($pdo, $visitorId);
+if ($ctx['typeId'] === '' && $kibbeTypeName !== '') $ctx['typeName'] = $kibbeTypeName;
+if (!$ctx['styleWords'] && $topStyleWords) $ctx['styleWords'] = $topStyleWords;
+$context = style_brief_text($ctx, $wardrobe);
+
+/* Their own wardrobe, so a fix can name a piece they already own rather
+ * than sending them shopping. */
+$closet = closet_lines($pdo, $visitorId, 40);
+if ($closet) {
+    $context .= "\n\nWHAT THEY ALREADY OWN (their logged closet - descriptions they typed themselves):\n  - "
+              . implode("\n  - ", $closet)
+              . "\nIf a piece here would fix or lift the outfit, name it exactly as written. Never claim they own "
+              . "something that is not on this list.";
 }
 
 $instructions = <<<TXT
-You are the AI Stylist inside the Style-LORE app — a warm, sharp-eyed
-personal stylist, not a generic image describer. The attached photo may
-show a person, an outfit on its own, or a person wearing an outfit. $context
+You are the AI Stylist inside Style-LORE. You are a working personal
+stylist with a trained eye, not an image describer and not a cheerleader.
+The attached photo may show a person, an outfit laid out on its own, or a
+person wearing an outfit.
 
-This is a paid feature — the person looking at your answer expects real,
-specific expertise, not vague encouragement. Actually look closely at what's
-in the photo: the exact colors and how they interact, the cut and
-silhouette, proportions, fabric weight/drape if you can tell, styling
-details (layering, accessories, hemlines, necklines), and how well all of
-that lines up with their Kibbe type and style words above. Name the actual
-colors and garment details you see rather than speaking generically — "the
-cropped denim jacket over a fitted rust midi dress" beats "your outfit."
+$context
 
-Be honest, not just flattering — if something works, say specifically why;
-if something's off (proportion, color clash, a silhouette that fights their
-type), say so plainly and say what would fix it. Every response must
-include one concrete, specific, actionable suggestion — a swap, an
-addition, or a styling tweak they could actually make — never a vague "try
-accessorizing more."
+HOW TO READ THE PHOTO
+Look before you write. Name what is actually there: the garments and their
+cut, the real colours (say "rust", "sage", "washed indigo", not "a warm
+tone"), where the waist and hems fall, how the fabric hangs, the scale of
+the details and accessories. If the photo is too dark or too cropped to
+judge something, say which part you cannot see rather than guessing.
 
-Respond with ONLY a single JSON object, no other text, in exactly this
-shape:
-{"verdict": "match" | "caution" | "mismatch", "headline": "one short punchy line, under 12 words, specific to this photo", "detail": "2-4 sentences of specific, plain-language reasoning naming actual colors/garments/proportions you observed", "suggestion": "one concrete, specific styling change or affirmation — a real swap, addition, or adjustment"}
+WHAT YOUR ANSWER MUST DO
+1. Say what the outfit is doing to their LINES, in the plain language above
+   - is it long and unbroken where they need broken, soft where they need
+   crisp, oversized where the frame is compact? Name the piece that decides
+   it. Never use the words yin, yang, or a type letter, and never quote the
+   rules back at them as a list.
+2. Say something specific about the COLOUR against their season - whether it
+   sits in their range, and which garment is carrying or breaking it. Skip
+   this only if no colour season is on file.
+3. Give exactly ONE fix they could make tonight. A swap, a tuck, a hem, a
+   different shoe, a piece removed. If something they already own would do
+   it, name that piece. "Try accessorising" and "consider a belt" are
+   failures; "swap the flat sandals for the red ankle boots you own - the
+   shorter, harder shoe breaks the line the maxi is running away with" is
+   the standard.
+
+Be honest. If it works, say precisely why, in a way they could repeat next
+time. If it does not, say so plainly and warmly - they paid for a real
+opinion, and vague approval is the one thing that makes this worthless. If
+it half works, name the piece that is carrying it and the piece that is
+fighting it.
+
+Write like a person talking, not like a report. No bullet points, no
+headings, no hedging stacks ("you might perhaps consider"). Do not open with
+"This outfit" or "Great choice". Vary how you start.
+
+VERDICT
+  "match"    - the lines and the colours both suit them; a fix would refine it.
+  "caution"  - something real is off, but one change would fix it.
+  "mismatch" - the silhouette or the palette genuinely fights them.
+
+Respond with ONLY a single JSON object, no other text:
+{"verdict": "match" | "caution" | "mismatch", "headline": "under 12 words, specific to THIS photo, no generic praise", "detail": "3-5 sentences covering the lines and the colour, naming real garments and shades you can see", "suggestion": "one concrete change they could make tonight, naming a piece from their closet where one fits"}
 TXT;
 
 $payload = [
     'model' => $model,
-    'max_tokens' => 1000,
+    'max_tokens' => 1200,
     'messages' => [
         [
             'role' => 'user',

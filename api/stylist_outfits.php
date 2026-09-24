@@ -28,6 +28,7 @@
  * model sees garment descriptions the person typed, and nothing else.
  */
 require_once __DIR__ . '/../includes/helpers.php';
+require_once __DIR__ . '/../includes/style_brief.php';
 
 require_method('POST');
 
@@ -89,39 +90,64 @@ foreach ($outfits as $i => $o) {
 if (!$lines) error_response('No outfits to write about.', 400);
 
 $profile = is_array($body['profile'] ?? null) ? $body['profile'] : [];
-$typeName = mb_substr(trim((string)($profile['kibbeTypeName'] ?? '')), 0, 40);
-$words = [];
-foreach (array_slice(is_array($profile['styleWords'] ?? null) ? $profile['styleWords'] : [], 0, 4) as $w) {
-    $w = mb_substr(trim((string)$w), 0, 24);
-    if ($w !== '') $words[] = $w;
-}
 $weather = mb_substr(trim((string)($body['weather'] ?? '')), 0, 60);
 
-$who = $typeName !== '' ? "They are a Kibbe {$typeName}." : 'Their Kibbe type is not recorded.';
-if ($words) $who .= ' Their style words are: ' . implode(', ', $words) . '.';
-if ($weather !== '') $who .= " Today's weather: {$weather}.";
+/* The type, colour season and style words come from the profiles row, not
+ * from the request. The apps already shipped send a type NAME and nothing
+ * else - no season - so reading server-side is what lets this get better for
+ * people who are not on the newest build. The posted values are only a
+ * fallback for an account whose quiz has never synced. */
+$ctx = style_profile($pdo, $visitorId);
+if ($ctx['typeId'] === '' && $ctx['typeName'] === '') {
+    $ctx['typeName'] = mb_substr(trim((string)($profile['kibbeTypeName'] ?? '')), 0, 40);
+}
+if (!$ctx['styleWords'] && is_array($profile['styleWords'] ?? null)) {
+    foreach (array_slice($profile['styleWords'], 0, 4) as $w) {
+        $w = mb_substr(trim((string)$w), 0, 24);
+        if ($w !== '') $ctx['styleWords'][] = $w;
+    }
+}
+$brief = style_brief_text($ctx, (string)($profile['wardrobe'] ?? ''));
 
 $outfitBlock = implode("\n", $lines);
 $n = count($lines);
+$weatherLine = $weather !== '' ? "\n\nTODAY'S WEATHER: {$weather}. A note may mention it only if it actually changes what to wear." : '';
 
 $instructions = <<<TXT
-You are a working stylist writing one short note about each outfit a client has been offered. {$who}
+You are a working personal stylist. A client has been handed {$n} outfits
+built from their own wardrobe, and you are writing the note that goes under
+each one.
 
-The outfits, each a list of pieces from their own wardrobe:
+{$brief}{$weatherLine}
+
+THE OUTFITS, each a list of pieces they own:
 {$outfitBlock}
 
-For each outfit write ONE sentence, 12-28 words, saying why it works for them — name specific pieces and tie it to their lines or their words. Be concrete and warm, never flattering or vague. Do not invent garments they do not own, do not mention brands, do not repeat the piece list back, and do not start every sentence the same way. If an outfit is a weaker combination, say what carries it rather than pretending it is perfect.
+For each outfit, write ONE sentence of 14-30 words that names a specific
+piece and says what it is doing to their lines or their colour - the reason
+this combination works, in words they could use again next time. Do not
+list the pieces back. Do not start two notes the same way. Do not mention
+brands or invent garments. No hedging, no "a great choice".
 
-Respond with ONLY a JSON array of exactly {$n} strings, in the same order.
+If a combination is weaker, say which piece is carrying it and which one is
+fighting it, rather than pretending it is perfect. That honesty is the
+product.
+
+Then pick the ONE outfit you would actually put them in today and say why
+in a sentence, and name one swap that would lift any of the {$n} - a piece
+from their wardrobe above, or a specific thing to change.
+
+Respond with ONLY this JSON object:
+{"notes": [{$n} strings, in the same order as the outfits], "best": <the 1-based number of the outfit you would put them in>, "bestWhy": "one sentence", "swap": "one concrete swap, naming pieces"}
 TXT;
 
 $payload = [
     'model' => (defined('ANTHROPIC_MODEL') && ANTHROPIC_MODEL) ? ANTHROPIC_MODEL : 'claude-sonnet-5',
-    'max_tokens' => 600,
+    'max_tokens' => 900,
     'messages' => [
         ['role' => 'user', 'content' => $instructions],
-        // Prefilled so the reply starts inside the array and can't preamble.
-        ['role' => 'assistant', 'content' => '['],
+        // Prefilled so the reply starts inside the object and can't preamble.
+        ['role' => 'assistant', 'content' => '{'],
     ],
 ];
 
@@ -154,17 +180,27 @@ foreach (($decoded['content'] ?? []) as $block) {
 }
 $text = trim($text);
 if ($text === '') json_response(['ok' => false, 'code' => 'fallback']);
-if ($text[0] !== '[') $text = '[' . $text;                 // undo the prefill
-$notes = json_decode($text, true);
-if (!is_array($notes)) {
+if ($text[0] !== '{') $text = '{' . $text;                 // undo the prefill
+$reply = json_decode($text, true);
+if (!is_array($reply) || !is_array($reply['notes'] ?? null)) {
     error_log('Stylist outfits: unparseable reply: ' . substr($text, 0, 300));
     json_response(['ok' => false, 'code' => 'fallback']);
 }
+$notes = $reply['notes'];
 
+$tidy = static function ($v, int $max): string {
+    return mb_substr(trim(preg_replace('/\s+/', ' ', (string)$v)), 0, $max);
+};
 $clean = [];
 foreach (array_slice($notes, 0, $n) as $note) {
-    $clean[] = mb_substr(trim(preg_replace('/\s+/', ' ', (string)$note)), 0, 300);
+    $clean[] = $tidy($note, 300);
 }
+// best/bestWhy/swap are additive: builds already in people's hands read
+// `notes` and ignore anything else, so this needs no app release.
+$best = (int)($reply['best'] ?? 0);
+if ($best < 1 || $best > $n) $best = 0;
+$bestWhy = $tidy($reply['bestWhy'] ?? '', 260);
+$swap    = $tidy($reply['swap'] ?? '', 260);
 // A short reply is fine — the UI shows notes where it has them and leaves
 // the rest as they were.
 if (!$clean) json_response(['ok' => false, 'code' => 'fallback']);
@@ -185,4 +221,5 @@ try {
     }
 } catch (Throwable $e) { /* never fail a good response over the counter */ }
 
-json_response(['ok' => true, 'notes' => $clean, 'used' => $used, 'cap' => STYLIST_MONTHLY_CAP]);
+json_response(['ok' => true, 'notes' => $clean, 'best' => $best, 'bestWhy' => $bestWhy,
+    'swap' => $swap, 'used' => $used, 'cap' => STYLIST_MONTHLY_CAP]);
