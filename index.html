@@ -6039,6 +6039,16 @@ const NAV_ITEMS = [
   { id:"community", label:"Community", icon:"community" },
 ];
 
+/* What the top bar calls the screen you are on.
+   Derived from NAV_ITEMS rather than written out again, so the label above
+   the page can never drift from the label on the tab — which is exactly how
+   the top bar carried on saying "CHECKER" after the tab became Style-ME: it
+   was printing the raw screen key, and the key is deliberately still
+   "checker" (deep links and the analytics keys in builds already on people's
+   phones point at it). Screens with no tab of their own — notifications,
+   inbox, settings — fall through to the key, as before. */
+const SCREEN_LABELS = NAV_ITEMS.reduce(function(m, n){ m[n.id] = n.label; return m; }, {});
+
 /* Which tab you were on, remembered across a reload.
 
    Refreshing the page used to drop you back on Home no matter where you
@@ -11347,7 +11357,7 @@ function App(){
       e("span", { className:"wordmark", style:{ display:"inline-flex", alignItems:"center", gap:"0.12em" } },
         e(LogoMark, { size:"0.85em" }), "Style-LORE"),
       e("div", { style:{ display:"flex", alignItems:"center", gap:8 } },
-        e("span", { className:"topbar-sub" }, viewingConversation ? "messages" : viewingProfileId ? "profile" : viewingPost ? "post" : screen),
+        e("span", { className:"topbar-sub" }, viewingConversation ? "messages" : viewingProfileId ? "profile" : viewingPost ? "post" : (SCREEN_LABELS[screen] || screen)),
         e("div", { className:"topbar-icons" },
           e("button", { className:"topbar-icon-btn", "aria-label":"Notifications", onClick:()=>goTo("notifications") },
             Icon("bell"),
