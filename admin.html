@@ -191,10 +191,58 @@
     var signups = d.signups || [], clicks = d.clicks || [], bySource = d.clicksBySource || [];
     var LABEL = { ios:"iOS app", android:"Android app", web:"Web", "(unrecorded)":"Before 23 Sep (not recorded)" };
     function num(x){ return Number(x || 0).toLocaleString(); }
+
     var total = signups.reduce(function(a, r){ return a + Number(r.total || 0); }, 0);
     var ios = signups.filter(function(r){ return r.device === "ios"; })[0];
 
-    var head = '<div class="fsec">' +
+    /* How far an account gets, in the order the person experiences it. This
+       is the number that decides whether the product works, and until now
+       nothing reported it. The blind spot is stated, not hidden: the quiz
+       runs signed out, so anyone who took it and left never reached this
+       table at all. */
+    var st = d.stage || {};
+    var order = [
+      ["accounts",     "Made an account"],
+      ["verified",     "Verified their email"],
+      ["tookQuiz",     "Finished the quiz"],
+      ["loggedCloset", "Logged a closet item"],
+      ["posted",       "Posted in Community"],
+      ["premium",      "Went Premium"]
+    ];
+    var base = Number(st.accounts || 0);
+    var stage = '<div class="fsec"><h2>How far people get</h2><table class="f">' +
+      '<tr><th>Step</th><th class="n">People</th><th class="n">Of accounts</th></tr>' +
+      order.map(function(o){
+        var v = Number(st[o[0]] || 0);
+        var pct = base ? Math.round(v / base * 100) + "%" : "\u2014";
+        return '<tr><td>' + esc(o[1]) + '</td><td class="n">' + num(v) +
+               '</td><td class="n">' + (o[0] === "accounts" ? "\u2014" : pct) + '</td></tr>';
+      }).join("") + '</table>' +
+      '<p class="fnote">Accounts only. The quiz works signed out, so anyone who took it, read their type and left without signing up is invisible here.</p></div>';
+
+    /* The room census. A type with members and no posts is a room that
+       greets its own people with "be the first" — the most common reason a
+       new member never comes back. */
+    function slug(n){ return String(n || "").toLowerCase().replace(/\s+/g, "-"); }
+    var accByType = {}, postByType = {}, authByType = {}, types = {};
+    (d.roomAccounts || []).forEach(function(r){ var k = slug(r.type); accByType[k] = Number(r.accounts || 0); types[k] = r.type; });
+    (d.roomPosts || []).forEach(function(r){ var k = String(r.type || "");
+      postByType[k] = Number(r.posts || 0); authByType[k] = Number(r.authors || 0);
+      if(!types[k]) types[k] = k.replace(/-/g, " ").replace(/\b\w/g, function(c){ return c.toUpperCase(); }); });
+    var keys = Object.keys(types).sort(function(a, b){ return (postByType[b] || 0) - (postByType[a] || 0); });
+    var dead = keys.filter(function(k){ return !postByType[k]; }).length;
+    var census = keys.length ? '<div class="fsec"><h2>Rooms \u2014 who is in them, who posts</h2><table class="f">' +
+      '<tr><th>Type</th><th class="n">Members</th><th class="n">Posts</th><th class="n">People posting</th></tr>' +
+      keys.map(function(k){
+        var empty = !postByType[k];
+        return '<tr><td>' + esc(types[k]) + (empty ? ' <span class="pill off">Empty</span>' : '') +
+               '</td><td class="n">' + num(accByType[k] || 0) +
+               '</td><td class="n">' + num(postByType[k] || 0) +
+               '</td><td class="n">' + num(authByType[k] || 0) + '</td></tr>';
+      }).join("") + '</table>' +
+      '<p class="fnote">' + (dead ? dead + ' of these rooms have no posts at all. Someone of that type who finishes the quiz is shown the rest of their Kibbe family instead of an empty room \u2014 but the room is still theirs to start.' : 'Every room here has something in it.') + '</p></div>' : "";
+
+    var head = stage + census + '<div class="fsec">' +
       '<h2>Signups from iOS</h2>' +
       '<p class="fbig">' + num(ios && ios.total) +
         ' <small>of ' + num(total) + ' accounts \u00b7 ' + num(ios && ios.last7) + ' in the last 7 days</small></p>' +

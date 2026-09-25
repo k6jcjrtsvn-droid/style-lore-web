@@ -809,6 +809,16 @@
   .style-tile-grid{ display:grid; grid-template-columns:repeat(3,1fr); gap:8px; }
   /* Community home: the Kibbe rooms as one swipeable strip instead of a
      13-tile wall, so the feed is the first real content on the screen. */
+  .lines-grid{ display:grid; grid-template-columns:repeat(3,1fr); gap:8px; margin:12px 0 0; }
+  .lines-grid a{ display:block; position:relative; aspect-ratio:1/1; border-radius:12px; overflow:hidden;
+                 border:1px solid var(--line); background:var(--paper-raised); }
+  .lines-grid img{ width:100%; height:100%; object-fit:cover; margin:0; border-radius:0; display:block; }
+  .lines-grid .who{ position:absolute; left:0; right:0; bottom:0; padding:14px 8px 6px; font-size:11.5px;
+                    font-weight:600; color:#fff; text-shadow:0 1px 3px rgba(0,0,0,.6);
+                    background:linear-gradient(transparent, rgba(0,0,0,.55)); }
+  .lines-names{ display:flex; flex-wrap:wrap; gap:6px; margin-top:10px; }
+  .lines-names span{ font-size:12.5px; padding:5px 11px; border-radius:999px;
+                     background:var(--paper-raised); border:1px solid var(--line); }
   .kibbe-strip{ display:flex; gap:8px; overflow-x:auto; padding:2px 2px 8px; margin:0 -2px; scroll-snap-type:x proximity; -webkit-overflow-scrolling:touch; scrollbar-width:none; }
   .kibbe-strip::-webkit-scrollbar{ display:none; }
   .kibbe-strip .kibbe-tile{ flex:0 0 138px; min-height:74px; padding:11px 12px 10px; scroll-snap-align:start; }
@@ -6790,6 +6800,11 @@ function StyleQuizScreen({ kibbeResult, styleLanguageResult, onSaveKibbe, onSave
       )
     ),
 
+    // The reason to stay. Directly under the type, above the style words,
+    // and a long way above the shopping block that used to be the last
+    // thing on this screen.
+    hasKibbe ? e(PeopleWithYourLines, { typeId: kibbeType.id, typeName: kibbeType.name }) : null,
+
     e("div", { className:"rule" }),
 
     e("div", { style:{ marginTop:20 } },
@@ -6821,6 +6836,111 @@ function StyleQuizScreen({ kibbeResult, styleLanguageResult, onSaveKibbe, onSave
       },
       heading: "Shop these lines",
     })
+  );
+}
+
+
+/* =====================================================================
+   PEOPLE WITH YOUR LINES — the quiz result's most important block.
+
+   Until this existed the result screen ended in Amazon links and never
+   mentioned Community once. Someone had just been told who they are, at the
+   single moment of most curiosity they will ever have about this app, and
+   the next thing offered was a shopping list. The reason to stay is other
+   people with the same bone structure, and nothing on the screen said so.
+
+   It shows FACES, not a button. A button that says "join the community" is
+   an ask; three photographs of people built like you is the thing itself.
+
+   IT IS NEVER A DEAD BOX. Three levels, always honest about which one you
+   are looking at:
+     1. posts from your own type
+     2. none of those -> the rest of your Kibbe family, labelled as such,
+        because a Soft Natural and a Flamboyant Natural are the same bone
+        structure at different scales and the advice carries
+     3. none of those either -> the newest posts in the whole community,
+        labelled as such, with the honest line that you would be the first
+        of your type
+   If the feed is empty or the fetch fails it renders NOTHING, because an
+   empty grey rectangle under your result is worse than no block at all.
+
+   Counts are real. This never says "12 people like you" unless twelve
+   people like you actually posted — the entire promise of the product is
+   that these are real humans, and the fastest way to lose that is to round
+   it up.
+===================================================================== */
+function PeopleWithYourLines({ typeId, typeName }){
+  const [all, setAll] = useState(null); // null = loading, [] = nothing to show
+
+  useEffect(() => {
+    let live = true;
+    Api.getPosts({})
+      .then(rows => { if(live) setAll(Array.isArray(rows) ? rows : []); })
+      .catch(() => { if(live) setAll([]); });
+    return () => { live = false; };
+  }, []);
+
+  if(all === null || all.length === 0) return null;
+
+  const family = (KIBBE_BY_ID[typeId] || {}).family;
+  const withPhoto = p => !!p.photoUrl;
+  // Photos first within each level — this block's whole job is faces — but a
+  // photoless post still counts toward the number, because the count is a
+  // count of people who posted, not of pictures.
+  const rank = rows => rows.slice().sort((a, b) => (withPhoto(b) ? 1 : 0) - (withPhoto(a) ? 1 : 0));
+
+  const mine = all.filter(p => p.kibbeTag === typeId);
+  const kin = family ? all.filter(p => p.kibbeTag !== typeId && (KIBBE_BY_ID[p.kibbeTag] || {}).family === family) : [];
+
+  let level, shown, count;
+  if(mine.length){ level = "mine"; shown = rank(mine).slice(0, 3); count = new Set(mine.map(p => p.authorId)).size; }
+  else if(kin.length){ level = "kin"; shown = rank(kin).slice(0, 3); count = new Set(kin.map(p => p.authorId)).size; }
+  else { level = "all"; shown = rank(all).slice(0, 3); count = new Set(all.map(p => p.authorId)).size; }
+  if(!shown.length) return null;
+
+  const people = count === 1 ? "1 person" : count + " people";
+  const heading =
+    level === "mine" ? (count === 1 ? "One " + typeName + " has posted here" : count + " " + typeName + "s have posted here")
+    : level === "kin" ? "No " + typeName + " has posted yet — you would be the first"
+    : "No " + typeName + " has posted yet — you would be the first";
+  const blurb =
+    level === "mine" ? "Real people with your lines, wearing real clothes — what worked, what did not, and why. Not models, not diagrams."
+    : level === "kin" ? "These are the rest of the " + (family || "") + " family: the same bone structure at a different scale, so what they have learned mostly carries. Post yours and the " + typeName + " room becomes its own."
+    : "These are the newest posts from the " + people + " here so far. Post yours and you start the " + typeName + " room.";
+
+  function openRoom(){
+    pendingCommunityRoom = typeId || null;
+    if(window.__loreGoTo) window.__loreGoTo("community");
+  }
+
+  const anyPhoto = shown.some(withPhoto);
+
+  return e("div", { className:"card", style:{ marginBottom:20, borderColor:"var(--accent)" } },
+    e("div", { className:"eyebrow", style:{ marginBottom:4 } }, "People with your lines"),
+    e("div", { style:{ fontSize:16, fontWeight:600, marginBottom:6 } }, heading),
+    e("p", { style:{ fontSize:13.5, color:"var(--ink-soft)", margin:0, lineHeight:1.5 } }, blurb),
+
+    anyPhoto
+      ? e("div", { className:"lines-grid" },
+          shown.filter(withPhoto).map(p => e("button", {
+            key:p.id, type:"button", onClick:openRoom,
+            style:{ padding:0, border:"1px solid var(--line)", borderRadius:12, overflow:"hidden",
+                    position:"relative", aspectRatio:"1/1", background:"var(--paper-raised)", cursor:"pointer" },
+            "aria-label": "Open the " + typeName + " room"
+          },
+            e("img", { src:p.photoUrl, alt:"", loading:"lazy",
+                       style:{ width:"100%", height:"100%", objectFit:"cover", display:"block", margin:0, borderRadius:0 },
+                       onError: ev => { ev.currentTarget.style.display = "none"; } }),
+            e("span", { className:"who" }, p.authorName || "")
+          ))
+        )
+      : e("div", { className:"lines-names" },
+          shown.map(p => e("span", { key:p.id }, p.authorName || "Someone"))
+        ),
+
+    e("button", {
+      className:"btn btn-accent btn-block", style:{ marginTop:14 }, onClick:openRoom
+    }, level === "mine" ? "See the " + typeName + " room" : "Start the " + typeName + " room")
   );
 }
 
@@ -8395,15 +8515,19 @@ function postsForSpace(visible, space, ctx){
    same bone structure at different scales, so the advice carries. Padding a
    Romantic room with Dramatic posts would just be noise with a label on it. */
 const ROOM_MIN_POSTS = 3;
-function relatedRoomPosts(visible, space, ownPosts){
-  if(!space || space.kind !== "kibbe") return [];
+function familyFallbackPosts(visible, typeId, ownPosts){
+  if(!typeId) return [];
   if(ownPosts.length >= ROOM_MIN_POSTS) return [];
-  const family = (KIBBE_BY_ID[space.id] || {}).family;
+  const family = (KIBBE_BY_ID[typeId] || {}).family;
   if(!family) return [];
-  const siblings = new Set(KIBBE_TYPES.filter(t => t.family === family && t.id !== space.id).map(t => t.id));
+  const siblings = new Set(KIBBE_TYPES.filter(t => t.family === family && t.id !== typeId).map(t => t.id));
   if(siblings.size === 0) return [];
   const own = new Set(ownPosts.map(p => p.id));
   return visible.filter(p => siblings.has(p.kibbeTag) && !own.has(p.id)).slice(0, 6);
+}
+function relatedRoomPosts(visible, space, ownPosts){
+  if(!space || space.kind !== "kibbe") return [];
+  return familyFallbackPosts(visible, space.id, ownPosts);
 }
 
 function spaceLabel(space){
@@ -8443,11 +8567,20 @@ function WeeklyPrompt({ onPost }){
   );
 }
 
+/* Set by "See the <Type> room" on the quiz result so the tap lands IN the
+   room rather than on the community directory, where a new person has to
+   work out which of thirteen tiles is theirs. Read and cleared once, on
+   mount, so a later visit to Community still opens the directory. */
+let pendingCommunityRoom = null;
+
 function CommunityScreen({ profile, blend, onOpenProfile }){
   const [posts, setPosts] = useState(null);
   const [loadError, setLoadError] = useState(null);
   const [followingIds, setFollowingIds] = useState(() => new Set());
-  const [space, setSpace] = useState(null); // null = directory home, else {kind, id}
+  const [space, setSpace] = useState(() => {
+    const room = pendingCommunityRoom; pendingCommunityRoom = null;
+    return room ? { kind:"kibbe", id:room } : null;
+  }); // null = directory home, else {kind, id}
   const [showCompose, setShowCompose] = useState(false);
   // Home feed tab. "For you" only makes sense with a quiz result.
   const [homeTab, setHomeTab] = useState(blend ? "foryou" : "all");
@@ -8595,6 +8728,12 @@ function CommunityScreen({ profile, blend, onOpenProfile }){
   if(space === null){
     const homeSpace = { kind:"quick", id:homeTab };
     const homePosts = postsForSpace(visible, homeSpace, ctx);
+    /* The family fallback existed only inside a type room — not here, and
+       "For you" is where a new member actually lands. Eight of the thirteen
+       types have no posts at all, so the common case was: finish the quiz,
+       open Community, read "No Dramatic posts yet". Same rule as the room,
+       same labelling: borrowed posts are never mixed in silently. */
+    const homeRelated = (homeTab === "foryou" && myTop) ? familyFallbackPosts(visible, myTop.id, homePosts) : [];
     const homeEmpty = homeTab === "following"
       ? (followingIds.size ? "Nothing new from people you follow yet." : "Follow a few people and their posts will show up here.")
       : homeTab === "foryou"
@@ -8624,13 +8763,28 @@ function CommunityScreen({ profile, blend, onOpenProfile }){
       ),
 
       posts === null ? e("div", { style:{ padding:"20px 0" } }, e(Thinking, { label:"Loading feed…" }))
-        : homePosts.length === 0
+        : (homePosts.length === 0 && homeRelated.length === 0)
           ? e(EmptyState, { icon:"community" }, homeEmpty)
-          : e("div", null, homePosts.map(p => e(PostCard, {
-              key:p.id, post:p, profile, followingIds, onToggleFollow:toggleFollow, onOpenProfile,
-              onPatch: patch => patchPostLocal(setPosts, p.id, patch),
-              onRemove: () => setPosts(prev => prev ? prev.filter(x => x.id !== p.id) : prev),
-            }))),
+          : e("div", null,
+              homePosts.map(p => e(PostCard, {
+                key:p.id, post:p, profile, followingIds, onToggleFollow:toggleFollow, onOpenProfile,
+                onPatch: patch => patchPostLocal(setPosts, p.id, patch),
+                onRemove: () => setPosts(prev => prev ? prev.filter(x => x.id !== p.id) : prev),
+              })),
+              homeRelated.length ? e("div", null,
+                e("div", { className:"eyebrow", style:{ marginTop: homePosts.length ? 20 : 0, marginBottom:8 } },
+                  homePosts.length ? "Also from similar types" : "Nothing from your type yet — from similar types"),
+                e("p", { className:"footnote", style:{ marginTop:0, marginBottom:12 } },
+                  "These are the rest of the " + ((KIBBE_BY_ID[myTop.id] || {}).family || "") +
+                  " family — the same bone structure at a different scale. Post yours and " +
+                  (KIBBE_BY_ID[myTop.id] || {}).name + " stops being empty."),
+                homeRelated.map(p => e(PostCard, {
+                  key:p.id, post:p, profile, followingIds, onToggleFollow:toggleFollow, onOpenProfile,
+                  onPatch: patch => patchPostLocal(setPosts, p.id, patch),
+                  onRemove: () => setPosts(prev => prev ? prev.filter(x => x.id !== p.id) : prev),
+                }))
+              ) : null
+            ),
 
       e("div", { className:"eyebrow", style:{ marginTop:26, marginBottom:10 } }, "Rooms by type"),
       e("div", { className:"kibbe-strip" },
