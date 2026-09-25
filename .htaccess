@@ -86,6 +86,7 @@ RewriteRule ^api/admin/funnel/?$ api/admin_funnel.php [L,QSA]
 RewriteRule ^api/admin/broadcast/?$ api/admin_broadcast.php [L,QSA]
 
 RewriteRule ^api/checker/photo/?$ api/checker_photo.php [L,QSA]
+RewriteRule ^api/checker/ask/?$ api/checker_ask.php [L,QSA]
 
 RewriteRule ^api/subscription/status/?$ api/subscription_status.php [L,QSA]
 # The Premium stylist's written notes on a set of outfits (api/stylist_outfits.php).

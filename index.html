@@ -4775,6 +4775,31 @@ const Api = {
     }
     return body;
   },
+  // A follow-up question about a photo the stylist has already read
+  // (api/checker/ask). The photo goes back up with every question on
+  // purpose: Style-LORE never stores it, so the only way the stylist can
+  // still SEE the outfit on the fourth question is to be shown it again.
+  // `history` is the conversation so far, oldest first, starting with the
+  // read itself as the assistant's turn.
+  async askStylist({ visitorId, authToken, photoBlob, question, history, kibbeTypeName, topStyleWords }){
+    const fd = new FormData();
+    fd.append("visitorId", visitorId);
+    fd.append("authToken", authToken || "");
+    fd.append("photo", photoBlob, "photo.jpg");
+    fd.append("question", (question || "").slice(0, 400));
+    if(history && history.length) fd.append("history", JSON.stringify(history.slice(-6)));
+    if(kibbeTypeName) fd.append("kibbeTypeName", kibbeTypeName);
+    if(topStyleWords && topStyleWords.length) fd.append("topStyleWords", JSON.stringify(topStyleWords));
+    const wardrobe = getWardrobe(); if(wardrobe) fd.append("wardrobe", wardrobe);
+    const r = await fetch("/api/checker/ask", { method:"POST", body:fd });
+    const body = await r.json().catch(()=>({}));
+    if(!r.ok){
+      const err = new Error(body.error || "Couldn't ask the stylist right now — try again.");
+      err.code = body.code || null;
+      throw err;
+    }
+    return body;
+  },
   // "Describe it for me" in Add-to-closet (api/closet_describe.php): one
   // small vision call that returns a closet-ready one-liner. Free for
   // signed-in accounts; the photo is sent once and not stored.
@@ -7978,6 +8003,14 @@ function CheckerScreen({ blend, styleWordBlend, kibbeTypeName, topStyleWords, vi
   // a string once they have opened it. Their wording then overrides the
   // model's eyes and the read is run again.
   const [aiCorrectDraft, setAiCorrectDraft] = useState(null);
+  // The conversation after the read — alternating {role, text}, oldest
+  // first, NOT including the read itself (that is rebuilt from aiResult
+  // each time). Lives here and nowhere else: like the photo, it is never
+  // stored server side.
+  const [aiThread, setAiThread] = useState([]);
+  const [aiAskDraft, setAiAskDraft] = useState("");
+  const [aiAskBusy, setAiAskBusy] = useState(false);
+  const [aiAskError, setAiAskError] = useState(null);
 
   const [historyVersion, setHistoryVersion] = useState(0);
   function remember(entry){ pushHistory(entry); setHistoryVersion(v => v + 1); }
@@ -8005,6 +8038,9 @@ function CheckerScreen({ blend, styleWordBlend, kibbeTypeName, topStyleWords, vi
     setAiResult(null);
     setAiError(null);
     setAiCorrectDraft(null);
+    setAiThread([]);
+    setAiAskDraft("");
+    setAiAskError(null);
     Promise.all([downscaleImage(file, 900, 0.8), downscaleImage(file, 1080, 0.85)]).then(([dataUrl, hiRes]) => {
       setPhotoPreview(dataUrl);
       setPhotoHiRes(hiRes);
@@ -8043,6 +8079,9 @@ function CheckerScreen({ blend, styleWordBlend, kibbeTypeName, topStyleWords, vi
     setAiResult(null);
     setAiError(null);
     setAiCorrectDraft(null);
+    setAiThread([]);
+    setAiAskDraft("");
+    setAiAskError(null);
     try{
       const result = await Api.checkPhoto({ visitorId, authToken, photoBlob, kibbeTypeName, topStyleWords, correction });
       setAiResult(result);
@@ -8059,6 +8098,31 @@ function CheckerScreen({ blend, styleWordBlend, kibbeTypeName, topStyleWords, vi
       }
     }finally{
       setAiBusy(false);
+    }
+  }
+
+  async function askStylist(){
+    const q = aiAskDraft.trim();
+    if(!q || aiAskBusy || !photoBlob || !aiResult) return;
+    setAiAskBusy(true);
+    setAiAskError(null);
+    // The read is the assistant's opening turn. Rebuilt from aiResult rather
+    // than stored, so a correction-and-re-read starts the conversation over
+    // against the corrected reading instead of dragging the old one along.
+    const readText = [aiResult.item ? "Reading this as " + aiResult.item + "." : "", aiResult.headline, aiResult.detail, aiResult.suggestion].filter(Boolean).join(" ");
+    try{
+      const res = await Api.askStylist({
+        visitorId, authToken, photoBlob, question:q,
+        history: [{ role:"assistant", text: readText }].concat(aiThread),
+        kibbeTypeName, topStyleWords
+      });
+      setAiThread(aiThread.concat([{ role:"user", text:q }, { role:"assistant", text:res.answer }]));
+      setAiAskDraft("");
+    }catch(err){
+      if(err.code === "premium_required"){ if(onUpgrade) onUpgrade("checker"); }
+      else setAiAskError(err.message || "Couldn't ask the stylist right now — try again.");
+    }finally{
+      setAiAskBusy(false);
     }
   }
 
@@ -8220,7 +8284,45 @@ function CheckerScreen({ blend, styleWordBlend, kibbeTypeName, topStyleWords, vi
         ),
         e("div", { style:{ fontSize:15, fontWeight:600, marginBottom:6 } }, aiResult.headline),
         aiResult.detail ? e("p", { style:{ fontSize:13.5, color:"var(--ink-soft)", marginBottom: aiResult.suggestion ? 10 : 0 } }, aiResult.detail) : null,
-        aiResult.suggestion ? e("p", { style:{ fontSize:13.5, color:"var(--accent)", marginBottom:0, fontWeight:500 } }, "✦ " + aiResult.suggestion) : null
+        aiResult.suggestion ? e("p", { style:{ fontSize:13.5, color:"var(--accent)", marginBottom:0, fontWeight:500 } }, "✦ " + aiResult.suggestion) : null,
+
+        // Keep talking. A read is one opinion; the questions after it ("and
+        // the shoes?", "what if I tuck it?") are where a stylist earns their
+        // keep, and the answer is worthless if it cannot see the outfit —
+        // so the photo goes back up with each one, and is still never kept.
+        e("div", { style:{ marginTop:14, paddingTop:12, borderTop:"1px dashed var(--line-soft)" } },
+          aiThread.length
+            ? e("div", { style:{ display:"flex", flexDirection:"column", gap:9, marginBottom:11 } },
+                aiThread.map((t, i) => e("p", {
+                  key:i,
+                  style: t.role === "user"
+                    ? { fontSize:13.5, fontWeight:600, margin:0 }
+                    : { fontSize:13.5, lineHeight:1.5, color:"var(--ink-soft)", margin:0 }
+                }, t.role === "user" ? "You: " + t.text : t.text))
+              )
+            : null,
+          isPremium
+            ? e("div", null,
+                e("div", { className:"field", style:{ marginBottom:0 } },
+                  e("input", {
+                    type:"text", value:aiAskDraft, maxLength:400,
+                    placeholder: aiThread.length ? "Ask another…" : "Ask the stylist about this photo…",
+                    "aria-label":"Ask the stylist about this photo",
+                    onChange: ev => setAiAskDraft(ev.target.value),
+                    onKeyDown: ev => { if(ev.key === "Enter"){ ev.preventDefault(); askStylist(); } }
+                  })
+                ),
+                e("div", { style:{ display:"flex", alignItems:"center", gap:10, marginTop:8 } },
+                  e("button", { className:"btn btn-ghost btn-sm", disabled: aiAskBusy || !aiAskDraft.trim(), onClick: askStylist }, aiAskBusy ? "Asking…" : "Ask"),
+                  e("span", { className:"footnote" }, "Your photo is sent again to answer it, and still never stored.")
+                ),
+                aiAskError ? e("div", { style:{ marginTop:9 } }, e(Banner, { kind:"error" }, aiAskError)) : null
+              )
+            : e("button", {
+                className:"btn-text", style:{ padding:0, fontSize:12.5 },
+                onClick: () => (onUpgrade ? onUpgrade("checker") : null)
+              }, "Premium lets you ask the stylist about this photo")
+        )
       ) : null
     ),
 
