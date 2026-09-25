@@ -67,6 +67,16 @@
                     padding-left:10px; margin-top:8px; }
   .hidden-badge{ font-size:11px; text-transform:uppercase; letter-spacing:.08em;
                  color:var(--danger); margin-left:8px; }
+  .findbar{ display:flex; gap:8px; margin-bottom:18px; }
+  .findbar input{ flex:1 1 auto; padding:10px 12px; border-radius:8px; border:1px solid var(--line);
+                  background:var(--paper-raised); color:var(--ink); font-size:14px; }
+  .pill{ display:inline-block; font-size:11px; text-transform:uppercase; letter-spacing:.06em;
+         font-weight:600; border-radius:999px; padding:3px 9px; margin-left:6px;
+         border:1px solid var(--line); color:var(--ink-soft); }
+  .pill.on{ background:var(--accent); border-color:var(--accent); color:#fff; }
+  .pill.off{ background:var(--danger); border-color:var(--danger); color:#fff; }
+  .kv{ font-size:13px; color:var(--ink-soft); line-height:1.7; }
+  .kv b{ color:var(--ink); font-weight:600; }
 </style>
 </head>
 <body>
@@ -87,6 +97,7 @@
         <button id="tab-posts" class="tab is-on" data-kind="posts">Posts</button>
         <button id="tab-comments" class="tab" data-kind="comments">Comments</button>
         <button id="tab-funnel" class="tab" data-kind="funnel">Funnel</button>
+        <button id="tab-find" class="tab" data-kind="find">Find a person</button>
       </div>
       <button id="logout">Lock this page</button>
     </div>
@@ -106,6 +117,11 @@
   // Which queue is showing. Posts and comments are two separate GETs (see
   // api/admin_moderation.php for why the response stayed a bare array).
   var kind = "posts";
+  // The Find tab's last query, kept so switching away and back does not lose
+  // it. Empty means "show the search box and nothing else" — this tab never
+  // lists everyone, because a wildcard dump of every account is not a thing
+  // an admin page should do casually.
+  var findQuery = "";
 
   function secret(){ return localStorage.getItem(SECRET_KEY) || ""; }
 
@@ -208,10 +224,69 @@
     return head + t1 + t2 + t3 + '<p class="fnote">' + esc(d.note || "") + '</p>';
   }
 
+  /* The Find tab. Answers "is this person in here, and how far did they
+     get?" — the thing neither the funnel (aggregates) nor the broadcast
+     endpoint (counts) could tell you. Accounts and beta sign-ups are listed
+     separately on purpose: asking for a beta invite is not having an
+     account, and showing them in one list is how you end up telling someone
+     they signed up when they did not. */
+  function renderFind(d){
+    var box = '<div class="findbar">' +
+      '<input id="find-q" type="search" placeholder="Name, or any part of an email" value="' + esc(findQuery) + '" autocomplete="off">' +
+      '<button class="btn-accent" id="find-go">Search</button></div>';
+    if(!d) return box + '<div class="empty">Search accounts, profiles and beta sign-ups by name or email.</div>';
+
+    function when(ms){ return ms ? (new Date(Number(ms)).toLocaleDateString() + " \u00b7 " + timeAgo(Number(ms))) : "\u2014"; }
+
+    var accounts = d.accounts || [], betas = d.betaSignups || [];
+    var acc = '<div class="fsec"><h2>Accounts (' + accounts.length + ')</h2>' +
+      (accounts.length ? accounts.map(function(a){
+        return '<div class="card">' +
+          '<div class="card-head"><b>' + esc(a.name || "(no profile name)") + '</b>' +
+            '<span>' + (a.verified ? '<span class="pill on">Verified</span>' : '<span class="pill off">Unverified</span>') +
+            (a.isPremium ? '<span class="pill on">Premium</span>' : '') + '</span></div>' +
+          '<div class="kv">' +
+            '<b>' + esc(a.email) + '</b><br>' +
+            'Signed up ' + esc(when(a.createdAt)) + ' on <b>' + esc(a.signupDevice) + '</b><br>' +
+            'Kibbe type: <b>' + esc(a.kibbeType || "not taken") + '</b> \u00b7 ' +
+            'Posts: <b>' + a.posts + '</b> \u00b7 Closet items: <b>' + a.closetItems + '</b><br>' +
+            'Emails: ' + (a.emailOptOut ? '<b>opted out</b>' : 'opted in') +
+              ' \u00b7 digest ' + esc(when(a.digestSentAt)) + ' \u00b7 survey ' + esc(when(a.surveySentAt)) +
+            (a.productId ? '<br>Subscription: <b>' + esc(a.productId) + '</b> until ' + esc(when(a.expiresAt)) : '') +
+          '</div></div>';
+      }).join("") : '<div class="empty">No account matches that.</div>') + '</div>';
+
+    var bet = '<div class="fsec"><h2>Beta sign-ups (' + betas.length + ')</h2>' +
+      (betas.length ? '<table class="f"><tr><th>Name</th><th>Email</th><th>Status</th><th>Signed up</th></tr>' +
+        betas.map(function(b){
+          return '<tr><td>' + esc(b.name || "\u2014") + '</td><td>' + esc(b.email) +
+                 '</td><td>' + esc(b.status) + '</td><td>' + esc(when(b.createdAt)) + '</td></tr>';
+        }).join("") + '</table>'
+       : '<div class="empty">No beta sign-up matches that.</div>') + '</div>';
+
+    return box + acc + bet + '<p class="fnote">' + esc(d.note || "") +
+      ' There are ' + Number(d.totalAccounts || 0).toLocaleString() + ' accounts in total.</p>';
+  }
+
   async function load(){
     actionError.textContent = "";
     list.innerHTML = '<div class="empty">Loading…</div>';
     var wanted = kind;
+    if(wanted === "find"){
+      if(!findQuery){ list.innerHTML = renderFind(null); return; }
+      try{
+        var lr = await fetch("/api/admin/lookup?q=" + encodeURIComponent(findQuery), { headers:{ "X-Admin-Secret": secret() } });
+        if(lr.status === 401){ lock("That secret didn't work."); return; }
+        if(!lr.ok) throw new Error("Server said " + lr.status);
+        var ld = await lr.json();
+        if(wanted !== kind) return;
+        list.innerHTML = renderFind(ld);
+      }catch(err){
+        list.innerHTML = renderFind(null).replace("Search accounts, profiles and beta sign-ups by name or email.",
+          "Couldn't search \u2014 " + esc(err.message));
+      }
+      return;
+    }
     if(wanted === "funnel"){
       try{
         var fr = await fetch("/api/admin/funnel", { headers:{ "X-Admin-Secret": secret() } });
@@ -265,11 +340,21 @@
     }
   }
 
+  function runFind(){
+    var input = document.getElementById("find-q");
+    findQuery = input ? input.value.trim() : "";
+    load();
+  }
   list.addEventListener("click", function(ev){
+    if(ev.target.id === "find-go"){ runFind(); return; }
     var btn = ev.target.closest("button[data-action]");
     if(!btn) return;
     var card = ev.target.closest(".card");
     act(card.getAttribute("data-id"), btn.getAttribute("data-action"), btn);
+  });
+
+  list.addEventListener("keydown", function(ev){
+    if(ev.target.id === "find-q" && ev.key === "Enter"){ ev.preventDefault(); runFind(); }
   });
 
   Array.prototype.forEach.call(document.querySelectorAll(".tab"), function(tab){

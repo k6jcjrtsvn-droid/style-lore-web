@@ -84,6 +84,7 @@ RewriteRule ^api/auth/resend-verification/?$ api/auth_resend_verification.php [L
 RewriteRule ^api/admin/moderation/?$ api/admin_moderation.php [L,QSA]
 RewriteRule ^api/admin/funnel/?$ api/admin_funnel.php [L,QSA]
 RewriteRule ^api/admin/broadcast/?$ api/admin_broadcast.php [L,QSA]
+RewriteRule ^api/admin/lookup/?$ api/admin_lookup.php [L,QSA]
 
 RewriteRule ^api/checker/photo/?$ api/checker_photo.php [L,QSA]
 RewriteRule ^api/checker/ask/?$ api/checker_ask.php [L,QSA]
