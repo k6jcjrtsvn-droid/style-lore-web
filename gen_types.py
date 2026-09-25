@@ -225,7 +225,7 @@ ul{{padding-left:20px}}li{{margin:6px 0}}
 <div class="wrap">
 <header class="top"><a class="brand" href="/">Style-LORE</a><a href="/">Take the free quiz →</a></header>
 {body}
-<p class="foot">Style-LORE is a style quiz, closet and community built around the Kibbe body types. Results are a starting read, not a fixed label. <a href="/privacy.html">Privacy</a> · <a href="/terms.html">Terms</a> · <a href="/types/">All 13 types</a></p>
+<p class="foot">Style-LORE is a style quiz, closet and community built around the Kibbe body types. Results are a starting read, not a fixed label. <a href="/privacy.html">Privacy</a> · <a href="/terms.html">Terms</a> · <a href="/types/">All 13 types</a> · <a href="/colors/">All 12 color seasons</a></p>
 </div>
 </body>
 </html>'''

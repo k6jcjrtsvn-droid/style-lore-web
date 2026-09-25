@@ -1200,9 +1200,11 @@
 <main class="seo-static" style="max-width:720px;margin:0 auto;padding:40px 20px;font-family:-apple-system,Segoe UI,Roboto,sans-serif;color:#2E1620">
 <h1>Dress for the body you actually have.</h1>
 <p>Style-LORE is a free style quiz that works out your <strong>Kibbe body type</strong>, your style words and your best <strong>color season</strong> in about two minutes — then helps you use them: check any outfit or garment before you buy it, log your closet and see what's missing, and get a stylist's read on a photo.</p>
-<p><a href="/">Take the free quiz</a> · <a href="/types/">The 13 Kibbe body types explained</a></p>
+<p><a href="/">Take the free quiz</a> · <a href="/types/">The 13 Kibbe body types explained</a> · <a href="/colors/">The 12 color seasons explained</a></p>
 <h2>Kibbe body type guides</h2>
 <p><a href="/types/dramatic.html">Dramatic</a> · <a href="/types/soft-dramatic.html">Soft Dramatic</a> · <a href="/types/flamboyant-natural.html">Flamboyant Natural</a> · <a href="/types/natural.html">Natural</a> · <a href="/types/soft-natural.html">Soft Natural</a> · <a href="/types/dramatic-classic.html">Dramatic Classic</a> · <a href="/types/classic.html">Classic</a> · <a href="/types/soft-classic.html">Soft Classic</a> · <a href="/types/flamboyant-gamine.html">Flamboyant Gamine</a> · <a href="/types/gamine.html">Gamine</a> · <a href="/types/soft-gamine.html">Soft Gamine</a> · <a href="/types/theatrical-romantic.html">Theatrical Romantic</a> · <a href="/types/romantic.html">Romantic</a></p>
+<h2>Color season guides</h2>
+<p><a href="/colors/light-spring.html">Light Spring</a> · <a href="/colors/true-spring.html">True Spring</a> · <a href="/colors/bright-spring.html">Bright Spring</a> · <a href="/colors/light-summer.html">Light Summer</a> · <a href="/colors/true-summer.html">True Summer</a> · <a href="/colors/soft-summer.html">Soft Summer</a> · <a href="/colors/soft-autumn.html">Soft Autumn</a> · <a href="/colors/true-autumn.html">True Autumn</a> · <a href="/colors/deep-autumn.html">Deep Autumn</a> · <a href="/colors/deep-winter.html">Deep Winter</a> · <a href="/colors/true-winter.html">True Winter</a> · <a href="/colors/bright-winter.html">Bright Winter</a></p>
 <h2>What you get</h2>
 <ul>
 <li><strong>Your type and your words</strong> — a Kibbe read from your bone structure, flesh and scale, plus the four style words that describe how you like to dress.</li>
@@ -5692,7 +5694,7 @@ function LandingBelowFold({ onQuiz }){
       e("details", null, e("summary", null, "Is there an app?"), e("p", null, "Yes — Style-LORE is on Google Play (beta) with iPhone coming. The website is the same app, so you can start here and pick up on your phone."))
     ),
     e("p", { className:"landing-foot" },
-      e("a", { href:"/types/" }, "Body type guides"), " · ", e("a", { href:"/beta.html" }, "Android beta"), " · ",
+      e("a", { href:"/types/" }, "Body type guides"), " · ", e("a", { href:"/colors/" }, "Color season guides"), " · ", e("a", { href:"/beta.html" }, "Android beta"), " · ",
       e("a", { href:"/terms.html" }, "Terms"), " · ", e("a", { href:"/privacy.html" }, "Privacy"), e("br"),
       "© " + new Date().getFullYear() + " Style-LORE · support@style-lore.com")
   );
@@ -6744,6 +6746,15 @@ function StyleQuizScreen({ kibbeResult, styleLanguageResult, onSaveKibbe, onSave
       e("p", null, hasKibbe ? kibbeType.tag : "The words that fit how you dress."),
       (hasKibbe && hasStyle) ? e("div", { className:"result-words" }, words.slice(0, 4).map(w => e("span", { key:w.id }, w.name))) : null,
       e("div", { className:"hero-actions" },
+        // The guide is the most useful thing on this screen and it used to sit
+        // below the description, the blend bar, the blend list and a footnote
+        // — far enough down that most people never saw it existed. It is the
+        // first action now.
+        hasKibbe ? e("a", {
+          className:"btn btn-sm", style:{ textDecoration:"none" },
+          href:"https://style-lore.com/types/" + kibbeType.id + ".html",
+          target:"_blank", rel:"noopener"
+        }, "Read my " + kibbeType.name + " guide") : null,
         e("button", { className:"btn btn-sm", onClick: () => shareResultCard({
             typeName: hasKibbe ? kibbeType.name : null, typeId: hasKibbe ? kibbeType.id : null, tag: hasKibbe ? kibbeType.tag : null, color: hasKibbe ? kibbeType.color : "var(--accent)",
             words: words.map(w => w.name), seasonName: colorSeasonForShare ? colorSeasonForShare.name : null, swatches: colorSeasonForShare ? colorSeasonForShare.swatches : null,
@@ -6771,7 +6782,6 @@ function StyleQuizScreen({ kibbeResult, styleLanguageResult, onSaveKibbe, onSave
         e("p", { className:"footnote", style:{ marginTop:14, marginBottom:10 } },
           "This is a starting read, not a fixed label — treat it as a v1 to refine as you log your closet and try the checker."),
         e("div", { style:{ display:"flex", gap:16, flexWrap:"wrap" } },
-          e("a", { className:"btn-text", style:{ textDecoration:"none" }, href:"https://style-lore.com/types/" + kibbeType.id + ".html", target:"_blank", rel:"noopener" }, "Read the full " + kibbeType.name + " guide →"),
           e("button", { className:"btn-text", onClick:retakeKibbe }, "Retake this part")
         )
       ) : e(React.Fragment, null,
@@ -7060,6 +7070,14 @@ function ColorScreen({ colorResult, onSaveColor }){
       e("h1", null, season.name),
       e("p", null, season.blurb),
       e("div", { className:"hero-actions" },
+        // Every season has a full written guide at /colors/<id>.html, exactly
+        // as every Kibbe type has one at /types/<id>.html. They existed for a
+        // day with nothing in the app pointing at them.
+        e("a", {
+          className:"btn btn-sm", style:{ color:"var(--ink)", borderColor:"rgba(0,0,0,.25)", background:"rgba(255,255,255,.45)", textDecoration:"none" },
+          href:"https://style-lore.com/colors/" + season.id + ".html",
+          target:"_blank", rel:"noopener"
+        }, "Read my " + season.name + " guide"),
         e("button", { className:"btn btn-sm", style:{ color:"var(--ink)", borderColor:"rgba(0,0,0,.25)", background:"rgba(255,255,255,.45)" }, onClick: () => shareResultCard({ typeName:null, tag:null, color: season.swatches[0], words:[season.name], seasonName: season.name, swatches: season.swatches }, "I'm a " + season.name + " on Style-LORE. Find your best colors: https://style-lore.com") }, "Share")
       )
     ),
@@ -7075,6 +7093,19 @@ function ColorScreen({ colorResult, onSaveColor }){
       finalResult.source === "quiz+photo"
         ? "Based on your quiz answers and a photo sample — an approximate read, not a substitute for in-person draping."
         : "Based on your quiz answers alone — add a photo any time for a more precise read."),
+    // Six swatches are a palette, not an explanation. The guide is where the
+    // reasoning lives, and it is the same offer the Kibbe result makes.
+    e("a", {
+      className:"card",
+      href:"https://style-lore.com/colors/" + season.id + ".html",
+      target:"_blank", rel:"noopener",
+      style:{ display:"block", textDecoration:"none", color:"inherit", marginBottom:16, borderColor:"var(--accent)" }
+    },
+      e("div", { className:"eyebrow", style:{ marginBottom:4 } }, "Your color guide"),
+      e("div", { style:{ fontSize:15, fontWeight:600, marginBottom:5 } }, "The full " + season.name + " guide →"),
+      e("p", { style:{ fontSize:13.5, color:"var(--ink-soft)", margin:0, lineHeight:1.5 } },
+        "The shades that lift you and the ones that fight you, your neutrals, which metals suit you, and how " + season.name + " is told apart from the seasons it gets mistaken for.")
+    ),
     e("button", { className:"btn btn-ghost btn-block", onClick:restart }, "Retake the quiz")
   );
 }
