@@ -4376,7 +4376,11 @@ async function apiError(r, fallback){
   if(r.status >= 500 && window.loreReport){
     try{ window.loreReport("api_5xx", "HTTP " + r.status + " " + (new URL(r.url, location.href).pathname) + ": " + (body.error || fallback)); }catch(e){}
   }
-  if(r.status === 401) err.code = "unauthenticated";
+  // The server's own code wins where it sent one — that is how the caller
+  // knows a 403 is "verify your email" and can offer the fix on the spot
+  // rather than printing a sentence telling you to go and find it.
+  if(body.code) err.code = body.code;
+  else if(r.status === 401) err.code = "unauthenticated";
   return err;
 }
 
@@ -8946,6 +8950,17 @@ function CommunityScreen({ profile, blend, onOpenProfile }){
 function ComposeSheet({ profile, defaults, onPosted, onClose }){
   const dialogRef = useDialog(onClose);
   useBackClose(onClose);
+  // Set when the server refuses a post because the address is unverified.
+  const [needsVerify, setNeedsVerify] = useState(false);
+  const [verifyBusy, setVerifyBusy] = useState(false);
+  const [verifySent, setVerifySent] = useState(false);
+  async function resendVerifyFromCompose(){
+    if(!profile || !profile.email) return;
+    setVerifyBusy(true);
+    try{ await Api.resendVerification(profile.email); setVerifySent(true); }
+    catch(err){ /* the endpoint answers the same either way; nothing to add */ setVerifySent(true); }
+    finally{ setVerifyBusy(false); }
+  }
   const [caption, setCaption] = useState("");
   const [photoFile, setPhotoFile] = useState(null);
   const [photoPreview, setPhotoPreview] = useState(null);
@@ -9059,6 +9074,11 @@ function ComposeSheet({ profile, defaults, onPosted, onClose }){
       onPosted(created);
       onClose();
     }catch(err){
+      // "Verify your email first" used to be a dead end: the message told you
+      // to go to Home and find a button, and the link in your inbox had very
+      // likely expired anyway. Now the fix is one tap, here, at the moment
+      // you are blocked and still want to post.
+      setNeedsVerify(err.code === "verify_required");
       setError(err.message || "Couldn't post right now — try again in a moment.");
     }finally{
       setPosting(false);
@@ -9147,6 +9167,16 @@ function ComposeSheet({ profile, defaults, onPosted, onClose }){
             : "Only Style-LORE members can see this. That's the default for everything you post.")
       ),
       error ? e(Banner, { kind:"error" }, error) : null,
+      // The fix, where the wall is. Not a sentence pointing at another screen.
+      needsVerify ? e("div", { style:{ marginBottom:12 } },
+        verifySent
+          ? e("p", { className:"footnote", style:{ margin:0 } },
+              "Sent — check " + ((profile && profile.email) || "your inbox") +
+              ". The link works for 14 days. Open it, then tap Post again; your draft is still here.")
+          : e("button", {
+              className:"btn btn-accent btn-block", disabled:verifyBusy, onClick:resendVerifyFromCompose
+            }, verifyBusy ? "Sending…" : "Send me a new verification link")
+      ) : null,
       e("button", {
         className:"btn btn-accent btn-block",
         disabled: posting || (isPoll

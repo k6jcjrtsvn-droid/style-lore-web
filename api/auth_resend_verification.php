@@ -20,7 +20,7 @@ if (is_valid_email($email)) {
 
         if ($account) {
             $verifyToken = new_auth_token();
-            $expires = current_time_ms() + (48 * 60 * 60 * 1000);
+            $expires = current_time_ms() + (14 * 24 * 60 * 60 * 1000); // 14 days — see auth_signup.php
             $pdo->prepare('UPDATE accounts SET verify_token_hash = ?, verify_token_expires = ? WHERE id = ?')
                 ->execute([hash_token($verifyToken), $expires, $account['id']]);
 
@@ -31,13 +31,13 @@ if (is_valid_email($email)) {
                 "<p style=\"margin:0 0 16px;\">Hi $safeName,</p><p style=\"margin:0;\">Here's your new verification link for Style-LORE.</p>",
                 'Verify my email',
                 $verifyUrl,
-                'This link works for 48 hours.'
+                'This link works for 14 days.'
             );
             send_app_html_email(
                 $account['email'],
                 'Verify your Style-LORE email',
                 $verifyHtml,
-                "Hi {$account['name']},\n\nOne click to verify your email on Style-LORE:\n\n$verifyUrl\n\nThis link works for 48 hours.\n"
+                "Hi {$account['name']},\n\nOne click to verify your email on Style-LORE:\n\n$verifyUrl\n\nThis link works for 14 days.\n"
             );
         }
     } catch (Throwable $e) {

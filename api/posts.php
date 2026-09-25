@@ -90,11 +90,36 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if (!$memberCheck->fetch()) error_response('Join the group before posting in it.', 403);
     }
 
+    /* THE FIRST POST GOES THROUGH UNVERIFIED. Everything after it does not.
+     *
+     * This gate was costing far more than the spam it prevented. On
+     * 2026-09-25: 17 accounts, 7 verified, 11 who finished the quiz, 3 who
+     * ever posted. Five of the people who got furthest and stopped were
+     * unverified — so the app invited them to post and then refused, and
+     * their verification link had expired days earlier. The door was locked
+     * and the sign said come in.
+     *
+     * One post is a small blast radius: sign-up is rate limited per IP, every
+     * post is reportable, and enough reports auto-hide it. A spammer gets one
+     * post per fabricated account instead of none, which is a price worth
+     * paying to stop losing real people at the only moment they were willing
+     * to contribute something.
+     *
+     * The second post still needs a verified address, and the 403 now carries
+     * a code so the app can offer a one-tap resend at the wall instead of
+     * telling someone to go and find it. */
     $verifiedStmt = $pdo->prepare('SELECT email_verified FROM accounts WHERE id = ?');
     $verifiedStmt->execute([$authorId]);
     $verifiedRow = $verifiedStmt->fetch();
     if (!$verifiedRow || !$verifiedRow['email_verified']) {
-        error_response('Verify your email before posting in Community — check your inbox, or resend the link from Home.', 403);
+        $already = $pdo->prepare('SELECT COUNT(*) c FROM posts WHERE author_id = ?');
+        $already->execute([$authorId]);
+        if ((int)$already->fetch()['c'] > 0) {
+            json_response([
+                'error' => 'Your first post is up. Verify your email to keep posting — we can send you a fresh link right now.',
+                'code'  => 'verify_required',
+            ], 403);
+        }
     }
 
     $isPoll = !empty($_POST['isPoll']);

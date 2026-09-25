@@ -84,7 +84,7 @@ if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST') {
             $pdo->prepare('UPDATE accounts SET verify_token_hash = ?, verify_token_expires = ? WHERE id = ?')
                 ->execute([hash_token($verifyToken), $expires, $a['id']]);
             $verifyUrl = SITE_BASE_URL . '/?verify=' . $verifyToken;
-            $body .= "\n\nOne more thing: you haven't verified your email yet, so you can't post in Community until you do. Verify here (link works for 48 hours):\n$verifyUrl\n";
+            $body .= "\n\nOne more thing: you haven't verified your email yet, so you can't post in Community until you do. Verify here (link works for 14 days):\n$verifyUrl\n";
         }
 
         // A commercial email has to carry a way out of it. Same one-click

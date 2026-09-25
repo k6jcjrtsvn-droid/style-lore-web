@@ -30,7 +30,12 @@ try {
 
     $authToken = new_auth_token();
     $verifyToken = new_auth_token();
-    $verifyExpires = $now + (48 * 60 * 60 * 1000); // 48 hours
+    // 14 days, not 48 hours. The old window assumed people open their email
+    // the same day; in practice accounts sat unverified for a week and the
+    // link was dead long before anyone went looking for it. A verification
+    // link is not a password reset — it proves an address is reachable, and
+    // that claim does not go stale in two days.
+    $verifyExpires = $now + (14 * 24 * 60 * 60 * 1000); // 14 days
 
     // MUST stay OUTSIDE the transaction. It runs CREATE TABLE IF NOT EXISTS,
     // and DDL forces an implicit COMMIT in MySQL -- so called from inside the
@@ -82,13 +87,13 @@ try {
         "<p style=\"margin:0 0 16px;\">Hi $safeName,</p><p style=\"margin:0;\">Thanks for joining Style-LORE! Confirm your email address to finish setting up your account.</p>",
         'Verify my email',
         $verifyUrl,
-        "This link works for 48 hours. If you didn't create this account, you can safely ignore this email."
+        "This link works for 14 days. If you didn't create this account, you can safely ignore this email."
     );
     send_app_html_email(
         $email,
         'Verify your Style-LORE email',
         $verifyHtml,
-        "Hi $name,\n\nOne click to verify your email on Style-LORE:\n\n$verifyUrl\n\nThis link works for 48 hours. If you didn't create this account, you can ignore this email.\n"
+        "Hi $name,\n\nOne click to verify your email on Style-LORE:\n\n$verifyUrl\n\nThis link works for 14 days. If you didn't create this account, you can ignore this email.\n"
     );
 
     json_response(['id' => $id, 'name' => $name, 'email' => $email, 'token' => $authToken, 'emailVerified' => false, 'referralUntil' => $referralUntil], 201);
