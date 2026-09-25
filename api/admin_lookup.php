@@ -27,6 +27,13 @@
  * profile name, and the beta sign-up list — "bev", "henegar" and a full
  * address all work. A query under 2 characters is refused rather than
  * returning the whole table by accident.
+ *
+ * ?segment=quiz-no-post returns a NAMED list instead of a search: everyone
+ * who finished the quiz and has never posted. That is the single most
+ * actionable list in the product — they wanted a result enough to answer
+ * every question, then found nothing worth staying for — and it is the
+ * people you would write to by hand. It is a defined segment, deliberately,
+ * not a wildcard: there is still no way to ask this endpoint for "everyone".
  */
 require_once __DIR__ . '/../includes/helpers.php';
 
@@ -42,6 +49,44 @@ function require_admin_secret_lookup(): void {
 
 require_method('GET');
 require_admin_secret_lookup();
+
+/* The named segment. Handled before the search so it needs no query. */
+$segment = (string)($_GET['segment'] ?? '');
+if ($segment !== '') {
+    if ($segment !== 'quiz-no-post') {
+        error_response('Unknown segment.', 400);
+    }
+    $pdo = db();
+    $rows = $pdo->query('
+      SELECT a.id, a.email, a.created_at, a.email_verified, a.signup_device,
+             p.name, p.kibbe_type_name,
+             (SELECT COUNT(*) FROM closet_items WHERE account_id = a.id) AS closet
+        FROM accounts a
+        JOIN profiles p ON p.id = a.id
+       WHERE COALESCE(p.kibbe_type_name, "") <> ""
+         AND NOT EXISTS (SELECT 1 FROM posts WHERE author_id = a.id)
+       ORDER BY p.kibbe_type_name ASC, a.created_at ASC
+       LIMIT 200')->fetchAll();
+    $out = [];
+    foreach ($rows as $r) {
+        $out[] = [
+            'id'           => $r['id'],
+            'email'        => $r['email'],
+            'name'         => (string)($r['name'] ?? ''),
+            'kibbeType'    => $r['kibbe_type_name'],
+            'createdAt'    => (int)$r['created_at'],
+            'verified'     => (int)$r['email_verified'] === 1,
+            'signupDevice' => $r['signup_device'] ?: '(unrecorded)',
+            'closetItems'  => (int)$r['closet'],
+        ];
+    }
+    json_response([
+        'ok'      => true,
+        'segment' => $segment,
+        'people'  => $out,
+        'note'    => 'Finished the quiz, never posted. Ordered by type, oldest account first.',
+    ]);
+}
 
 $q = trim((string)($_GET['q'] ?? ''));
 if (mb_strlen($q) < 2) {

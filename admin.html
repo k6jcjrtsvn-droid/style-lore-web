@@ -122,6 +122,8 @@
   // lists everyone, because a wildcard dump of every account is not a thing
   // an admin page should do casually.
   var findQuery = "";
+  // The named segment, when one is showing instead of a search.
+  var findSegment = "";
 
   function secret(){ return localStorage.getItem(SECRET_KEY) || ""; }
 
@@ -281,8 +283,29 @@
   function renderFind(d){
     var box = '<div class="findbar">' +
       '<input id="find-q" type="search" placeholder="Name, or any part of an email" value="' + esc(findQuery) + '" autocomplete="off">' +
-      '<button class="btn-accent" id="find-go">Search</button></div>';
+      '<button class="btn-accent" id="find-go">Search</button></div>' +
+      '<div style="margin:-8px 0 16px;"><button class="btn-ghost" id="find-seg-quiz" style="font-size:13px;">' +
+      'Finished the quiz, never posted</button></div>';
     if(!d) return box + '<div class="empty">Search accounts, profiles and beta sign-ups by name or email.</div>';
+
+    /* The named segment: the people worth writing to by hand. */
+    if(d.segment){
+      var ppl = d.people || [];
+      if(!ppl.length) return box + '<div class="empty">Nobody — everyone who finished the quiz has posted.</div>';
+      var byType = {};
+      ppl.forEach(function(x){ (byType[x.kibbeType] = byType[x.kibbeType] || []).push(x); });
+      return box + '<div class="fsec"><h2>Finished the quiz, never posted (' + ppl.length + ')</h2>' +
+        Object.keys(byType).sort().map(function(t){
+          return '<h3 style="font-size:13.5px;margin:16px 0 6px;">' + esc(t) + ' \u00b7 ' + byType[t].length + '</h3>' +
+            '<table class="f"><tr><th>Name</th><th>Email</th><th class="n">Closet</th><th>Signed up</th></tr>' +
+            byType[t].map(function(x){
+              return '<tr><td>' + esc(x.name || "\u2014") + (x.verified ? '' : ' <span class="pill off">Unverified</span>') +
+                     '</td><td>' + esc(x.email) + '</td><td class="n">' + x.closetItems +
+                     '</td><td>' + esc(new Date(Number(x.createdAt)).toLocaleDateString()) + '</td></tr>';
+            }).join("") + '</table>';
+        }).join("") +
+        '<p class="fnote">' + esc(d.note || "") + ' These are the people who answered every question and then found nothing worth staying for \u2014 the ones worth a personal message rather than a broadcast.</p></div>';
+    }
 
     function when(ms){ return ms ? (new Date(Number(ms)).toLocaleDateString() + " \u00b7 " + timeAgo(Number(ms))) : "\u2014"; }
 
@@ -321,9 +344,12 @@
     list.innerHTML = '<div class="empty">Loading…</div>';
     var wanted = kind;
     if(wanted === "find"){
-      if(!findQuery){ list.innerHTML = renderFind(null); return; }
+      if(!findQuery && !findSegment){ list.innerHTML = renderFind(null); return; }
       try{
-        var lr = await fetch("/api/admin/lookup?q=" + encodeURIComponent(findQuery), { headers:{ "X-Admin-Secret": secret() } });
+        var lurl = findSegment
+          ? "/api/admin/lookup?segment=" + encodeURIComponent(findSegment)
+          : "/api/admin/lookup?q=" + encodeURIComponent(findQuery);
+        var lr = await fetch(lurl, { headers:{ "X-Admin-Secret": secret() } });
         if(lr.status === 401){ lock("That secret didn't work."); return; }
         if(!lr.ok) throw new Error("Server said " + lr.status);
         var ld = await lr.json();
@@ -391,10 +417,12 @@
   function runFind(){
     var input = document.getElementById("find-q");
     findQuery = input ? input.value.trim() : "";
+    findSegment = "";
     load();
   }
   list.addEventListener("click", function(ev){
     if(ev.target.id === "find-go"){ runFind(); return; }
+    if(ev.target.id === "find-seg-quiz"){ findQuery = ""; findSegment = "quiz-no-post"; load(); return; }
     var btn = ev.target.closest("button[data-action]");
     if(!btn) return;
     var card = ev.target.closest(".card");
