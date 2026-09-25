@@ -4753,13 +4753,18 @@ const Api = {
   // the free on-device photo checker (edge/color heuristics only) can do.
   // A 402 here always means "show the paywall" (surfaced as err.code ===
   // "premium_required"); a 503 means the feature isn't configured yet.
-  async checkPhoto({ visitorId, authToken, photoBlob, kibbeTypeName, topStyleWords }){
+  // `correction` is the person's own words for what the garments are, sent
+  // after they disagreed with the reading the model came back with. The
+  // server treats it as the truth and overrides its own eyes with it — see
+  // the top of api/checker_photo.php.
+  async checkPhoto({ visitorId, authToken, photoBlob, kibbeTypeName, topStyleWords, correction }){
     const fd = new FormData();
     fd.append("visitorId", visitorId);
     fd.append("authToken", authToken || "");
     fd.append("photo", photoBlob, "photo.jpg");
     if(kibbeTypeName) fd.append("kibbeTypeName", kibbeTypeName);
     if(topStyleWords && topStyleWords.length) fd.append("topStyleWords", JSON.stringify(topStyleWords));
+    if(correction && correction.trim()) fd.append("correction", correction.trim().slice(0, 160));
     const wardrobe = getWardrobe(); if(wardrobe) fd.append("wardrobe", wardrobe);
     const r = await fetch("/api/checker/photo", { method:"POST", body:fd });
     const body = await r.json().catch(()=>({}));
@@ -7966,6 +7971,13 @@ function CheckerScreen({ blend, styleWordBlend, kibbeTypeName, topStyleWords, vi
   const [aiBusy, setAiBusy] = useState(false);
   const [aiResult, setAiResult] = useState(null);
   const [aiError, setAiError] = useState(null);
+  // The one thing the AI Stylist is genuinely bad at is not judgment, it is
+  // perception: dark-wash skinny jeans read as leggings, a blazer as a
+  // cardigan. So the read now says what it thinks it is looking at, and this
+  // is the draft of the person's correction — null while the editor is shut,
+  // a string once they have opened it. Their wording then overrides the
+  // model's eyes and the read is run again.
+  const [aiCorrectDraft, setAiCorrectDraft] = useState(null);
 
   const [historyVersion, setHistoryVersion] = useState(0);
   function remember(entry){ pushHistory(entry); setHistoryVersion(v => v + 1); }
@@ -7990,6 +8002,9 @@ function CheckerScreen({ blend, styleWordBlend, kibbeTypeName, topStyleWords, vi
     // Two sizes from the original: 900px for the on-device check and the
     // AI upload, and a sharper 1080px copy (encoded once, straight from the
     // source) that the saved-checks list shows when a check is reopened.
+    setAiResult(null);
+    setAiError(null);
+    setAiCorrectDraft(null);
     Promise.all([downscaleImage(file, 900, 0.8), downscaleImage(file, 1080, 0.85)]).then(([dataUrl, hiRes]) => {
       setPhotoPreview(dataUrl);
       setPhotoHiRes(hiRes);
@@ -8020,15 +8035,16 @@ function CheckerScreen({ blend, styleWordBlend, kibbeTypeName, topStyleWords, vi
     }
   }
 
-  async function runAiStylist(){
+  async function runAiStylist(correction){
     if(!photoBlob || aiBusy) return;
     if(!visitorId){ if(onSignIn) onSignIn(); return; }
     if(!isPremium && !hasFreeRead){ if(onUpgrade) onUpgrade("checker"); return; }
     setAiBusy(true);
     setAiResult(null);
     setAiError(null);
+    setAiCorrectDraft(null);
     try{
-      const result = await Api.checkPhoto({ visitorId, authToken, photoBlob, kibbeTypeName, topStyleWords });
+      const result = await Api.checkPhoto({ visitorId, authToken, photoBlob, kibbeTypeName, topStyleWords, correction });
       setAiResult(result);
       if(!isPremium && onFreeAiReadUsed) onFreeAiReadUsed();
       const source = photoHiRes || photoPreview;
@@ -8155,11 +8171,50 @@ function CheckerScreen({ blend, styleWordBlend, kibbeTypeName, topStyleWords, vi
         : e("button", {
             className:"btn btn-accent btn-block",
             disabled: aiBusy,
-            onClick: runAiStylist
+            onClick: () => runAiStylist()
           }, aiBusy ? "Reading your photo…" : !visitorId ? "Sign in for a free read" : isPremium ? "Get my stylist read" : hasFreeRead ? "Try it free — one read on us" : "Unlock the AI Stylist"),
       !photoBlob && !isPremium ? e("button", { className:"btn-text", style:{ marginTop:8, padding:0, fontSize:12.5 }, onClick:()=>onUpgrade("checker") }, "See what Premium includes") : null,
       aiError ? e("div", { style:{ marginTop:10 } }, e(Banner, { kind:"error" }, aiError)) : null,
       aiResult ? e("div", { style:{ marginTop:14, paddingTop:14, borderTop:"1px solid var(--line-soft)" } },
+        // What it thinks it is looking at, before any verdict — because the
+        // verdict is only worth as much as this line is right, and the
+        // person is the one who knows. Shown first for that reason.
+        aiResult.item ? e("div", { style:{ marginBottom:12, padding:"10px 12px", borderRadius:10, background:"var(--paper-raised)", border:"1px solid var(--line-soft)" } },
+          e("div", { className:"eyebrow", style:{ marginBottom:3 } },
+            aiResult.corrected ? "Reading this as (your words)"
+              : aiResult.confidence === "low" ? "Not certain, but I think this is"
+              : aiResult.confidence === "medium" ? "I'm reading this as" : "Reading this as"),
+          e("div", { style:{ fontSize:13.5, fontWeight:500, lineHeight:1.45 } }, aiResult.item),
+          aiCorrectDraft === null
+            ? e("button", {
+                className:"btn-text",
+                style:{ padding:0, marginTop:7, fontSize:12.5 },
+                onClick: () => setAiCorrectDraft(aiResult.item || "")
+              }, aiResult.corrected ? "Fix it again" : "Not right? Tell me what it is")
+            : e("div", { style:{ marginTop:9 } },
+                e("div", { className:"field", style:{ marginBottom:0 } },
+                  e("input", {
+                    type:"text", value:aiCorrectDraft, maxLength:160,
+                    placeholder:"dark-wash skinny jeans, cream ribbed knit",
+                    "aria-label":"What the garments actually are",
+                    onChange: ev => setAiCorrectDraft(ev.target.value),
+                    onKeyDown: ev => { if(ev.key === "Enter"){ ev.preventDefault(); if(aiCorrectDraft.trim()) runAiStylist(aiCorrectDraft); } }
+                  })
+                ),
+                e("div", { style:{ display:"flex", gap:8, marginTop:9 } },
+                  e("button", {
+                    className:"btn btn-accent btn-sm",
+                    disabled: aiBusy || !aiCorrectDraft.trim(),
+                    onClick: () => runAiStylist(aiCorrectDraft)
+                  }, aiBusy ? "Reading again…" : "Read it again"),
+                  e("button", { className:"btn btn-ghost btn-sm", disabled: aiBusy, onClick: () => setAiCorrectDraft(null) }, "Cancel")
+                ),
+                e("p", { className:"footnote", style:{ marginTop:7, marginBottom:0 } },
+                  isPremium
+                    ? "Your words win — the read runs again against those pieces."
+                    : "Your words win. Reading it again is another stylist read.")
+              )
+        ) : null,
         e("div", { style:{ display:"flex", alignItems:"center", gap:10, marginBottom:8 } },
           e(VerdictPill, { verdict: aiResult.verdict === "mismatch" ? "avoid" : aiResult.verdict === "match" ? "match" : "neutral" })
         ),
