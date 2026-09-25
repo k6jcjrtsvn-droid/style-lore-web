@@ -1207,7 +1207,7 @@
 <ul>
 <li><strong>Your type and your words</strong> — a Kibbe read from your bone structure, flesh and scale, plus the four style words that describe how you like to dress.</li>
 <li><strong>Your colors</strong> — a seasonal palette with swatches big enough to hold up to a garment in a store.</li>
-<li><strong>The Checker</strong> — describe a piece or snap a photo and get a verdict against your type before you buy it.</li>
+<li><strong>Style-ME</strong> — describe a piece or snap a photo and get a verdict against your type before you buy it.</li>
 <li><strong>Your closet</strong> — log what you own, see today's outfit, and find the gaps.</li>
 <li><strong>Premium</strong> — outfits built for you from your own closet with a stylist's note on why each works, an AI stylist's read on any photo, an unlimited closet with a gap list and capsule builder, and every check saved. $4.99 a month or $39.99 a year, with a 7-day free trial the first time.</li>
 </ul>
@@ -2559,7 +2559,7 @@ function buildOutfit(closet, profile, seed, weather){
 }
 
 /* Several distinct outfits in one go, best first — the engine behind the
-   Premium "Style me" button in the Outfits tab.
+   Premium "Build me an outfit" button in the Outfits tab.
 
    buildOutfit() is seeded, so running it across many seeds explores the
    closet rather than repeating one answer. Combinations are de-duplicated
@@ -2574,7 +2574,7 @@ function autoBuildOutfits(closet, profile, count, weather){
   for(let i = 0; i < 60 && out.length < (count || 5) * 3; i++){
     // Integer seeds, spread apart. seededRandom does `seed >>> 0 || 1`, so a
     // STRING seed coerces to NaN, then to 0, then to 1 — every iteration
-    // would return the identical outfit and "Style me" would offer one
+    // would return the identical outfit and "Build me an outfit" would offer one
     // suggestion no matter how big the closet was. (It did, until this
     // comment existed.) The multiplier keeps consecutive seeds from
     // producing correlated xorshift streams.
@@ -2643,14 +2643,14 @@ function AutoStyleCard({ closet, profile, viewer, isPremium, onSave, onUpgrade }
   const labels = { dress:"Dress", top:"Top", bottom:"Bottom", outerwear:"Layer", shoes:"Shoes", accessory:"Finish" };
 
   return e("div", { className:"card", style:{ padding:14, marginBottom:14 } },
-    e("div", { className:"eyebrow", style:{ marginBottom:4 } }, isPremium ? "Style me" : "Style me · Premium"),
+    e("div", { className:"eyebrow", style:{ marginBottom:4 } }, isPremium ? "Build me an outfit" : "Build me an outfit · Premium"),
     e("div", { style:{ fontSize:13.5, lineHeight:1.5, marginBottom:10 } },
       isPremium
         ? "Outfits put together from what you own, ranked by how well they sit with your lines — and today's weather."
         : "Let Style-LORE put outfits together from your closet, ranked against your lines and today's weather. Premium builds them for you; you can still build your own any time."),
 
     !built ? e("button", { className:"btn btn-ghost btn-block btn-sm", onClick: styleMe },
-      isPremium ? "Style me" : "See what it picks — Premium") : null,
+      isPremium ? "Build me an outfit" : "See what it picks — Premium") : null,
 
     built && !built.ready
       ? e("p", { className:"footnote", style:{ marginTop:8, marginBottom:0 } }, "Add " + built.need + " and this can build you something.")
@@ -3478,7 +3478,7 @@ const TERMS_TEXT = `Style-LORE is a styling web app. By creating an account you 
 
 1. What Style-LORE does. Style-LORE estimates your style through a short style quiz — covering shape/proportion and your style language — and, optionally, a photo you choose to upload.
 
-2. Your content. Anything you post — quiz answers, closet photos, checker items, Community posts, photos, videos, and comments — is stored on this app's server so it can show it back to you (and, for Community, to other members).
+2. Your content. Anything you post — quiz answers, closet photos, Style-ME items, Community posts, photos, videos, and comments — is stored on this app's server so it can show it back to you (and, for Community, to other members).
 
 3. No professional advice. Style-LORE does not provide medical, psychological, or professional styling advice.
 
@@ -5658,7 +5658,7 @@ function LandingBelowFold({ onQuiz }){
       e("details", null, e("summary", null, "Can I plan what to wear?"), e("p", null, "Yes. Put pieces from your closet together, save the combination, and drop it onto a day in the week ahead. Today's outfit also reads the weather, so a rainy Tuesday gets a layer.")),
       e("details", null, e("summary", null, "Does it work for menswear?"), e("p", null, "Yes. Choose menswear, womenswear or both, and the questions, outfit ideas and shopping links follow suit.")),
       e("details", null, e("summary", null, "Can I see what my clothes actually cost me?"), e("p", null, "If you want to. Adding what a piece cost is optional, and the closet then works out your cost per wear — the £15-a-wear boots you keep reaching for versus the coat that has cost you its full price once. The price is private to you and never appears anywhere other people can see.")),
-      e("details", null, e("summary", null, "What does Premium add?"), e("p", null, "Outfits built for you from your own closet and ranked against your lines, with a stylist's note on why each one works; a stylist's read on any photo; a closet with no limit plus a gap list and capsule; and every check saved. $4.99 a month or $39.99 a year, with a 7-day free trial the first time. Everything else — the quiz, your colors, the closet, the outfit builder, the checker and the community — stays free.")),
+      e("details", null, e("summary", null, "What does Premium add?"), e("p", null, "Outfits built for you from your own closet and ranked against your lines, with a stylist's note on why each one works; a stylist's read on any photo; a closet with no limit plus a gap list and capsule; and every check saved. $4.99 a month or $39.99 a year, with a 7-day free trial the first time. Everything else — the quiz, your colors, the closet, the outfit builder, Style-ME and the community — stays free.")),
       e("details", null, e("summary", null, "Is there an app?"), e("p", null, "Yes — Style-LORE is on Google Play (beta) with iPhone coming. The website is the same app, so you can start here and pick up on your phone."))
     ),
     e("p", { className:"landing-foot" },
@@ -6005,7 +6005,7 @@ const NAV_ITEMS = [
   { id:"quiz", label:"Style Quiz", icon:"kibbe" },
   { id:"color", label:"Color", icon:"palette" },
   { id:"closet", label:"Closet", icon:"closet" },
-  { id:"checker", label:"Checker", icon:"check" },
+  { id:"checker", label:"Style-ME", icon:"check" },
   { id:"community", label:"Community", icon:"community" },
 ];
 
@@ -6239,7 +6239,7 @@ function HomeScreen({ profile, blend, styleBlend, kibbeResult, colorResult, clos
     : !styleBlend ? { title:"Finish the style-words part", desc:"Two minutes more and your closet and checker get your own vocabulary.", screen:"quiz" }
     : !homeSeason ? { title:"Find your best colors", desc:"Six questions for a palette you can hold up to a garment.", screen:"color" }
     : (closetCount || 0) < 5 ? { title:"Log 5 pieces you wear most", desc:"That's enough for the closet to tell you what's missing.", screen:"closet" }
-    : { title:"Check something before you buy it", desc:"Describe it or snap it — the Checker gives a verdict against your type.", screen:"checker" };
+    : { title:"Check something before you buy it", desc:"Describe it or snap it — Style-ME gives a verdict against your type.", screen:"checker" };
   // Whether the getting-started checklist is showing, so the "Next step"
   // card below can stand down while it is.
   const [gsHidden, setGsHidden] = useState(() => !!loadLocal(GETTING_STARTED_DISMISSED, false));
@@ -6280,7 +6280,7 @@ function HomeScreen({ profile, blend, styleBlend, kibbeResult, colorResult, clos
       e("div", { className:"eyebrow" }, profile ? "Welcome back" : "Welcome"),
       e("h1", { className:"screen-title" }, profile ? (profile.name.split(" ")[0] + "’s Style-LORE") : "Your Style-LORE"),
       e("p", { className:"screen-lede", style:{ marginBottom:22 } },
-        "Start with the quiz. Everything else here — your colors, your closet, the Checker — is built on what it finds.")
+        "Start with the quiz. Everything else here — your colors, your closet, Style-ME — is built on what it finds.")
     ),
 
     e(UpdateBanner, { update: updateAvailable }),
@@ -6367,7 +6367,7 @@ function HomeScreen({ profile, blend, styleBlend, kibbeResult, colorResult, clos
       [
         { id:"color", title:"Colors", desc: homeSeason ? homeSeason.name : "Your season", icon:"palette" },
         { id:"closet", title:"Closet", desc: closetCount ? (closetCount + (closetCount === 1 ? " piece" : " pieces")) : "Log what you own", icon:"closet" },
-        { id:"checker", title:"Checker", desc:"Before you buy", icon:"check" },
+        { id:"checker", title:"Style-ME", desc:"Before you buy", icon:"check" },
         { id:"community", title:"Community", desc:"People like you", icon:"community" },
         profile
           ? { id:"profile", title:"Profile", desc:"Posts, picture, bio", icon:"user" }
@@ -7978,6 +7978,10 @@ function CheckerScreen({ blend, styleWordBlend, kibbeTypeName, topStyleWords, vi
 
   function pickCheckerPhoto(ev){
     const file = ev.target.files && ev.target.files[0];
+    // Clear the input's value straight away. A file input does not fire
+    // change when the same file is chosen twice, so without this, picking
+    // the photo you just picked looks like the app ignoring you.
+    ev.target.value = "";
     if(!file) return;
     setPhotoResult(null);
     setPhotoError(null);
@@ -8044,14 +8048,14 @@ function CheckerScreen({ blend, styleWordBlend, kibbeTypeName, topStyleWords, vi
 
   return e("div", null,
     e("div", { className:"eyebrow" }, "Does this match me?"),
-    e("h1", { className:"screen-title" }, kibbeTypeName ? "Checker · " + kibbeTypeName : "Checker"),
+    e("h1", { className:"screen-title" }, kibbeTypeName ? "Style-ME · " + kibbeTypeName : "Style-ME"),
     e("p", { className:"screen-lede", style:{ marginBottom:20 } },
       kibbeTypeName
         ? `Thinking about buying something? Describe it or snap it and get a verdict against your ${kibbeTypeName} lines${topStyleWords && topStyleWords.length ? " and your style words (" + topStyleWords.slice(0, 3).join(", ") + ")" : ""}.`
         : "Thinking about buying something? Describe it or snap it and get a verdict against your type."
     ),
     !blend ? e("div", { className:"card", style:{ marginBottom:16, padding:14, display:"flex", alignItems:"center", justifyContent:"space-between", gap:12 } },
-      e("span", { style:{ fontSize:13.5 } }, "The checker needs your type first — the quiz takes about two minutes."),
+      e("span", { style:{ fontSize:13.5 } }, "Style-ME needs your type first — the quiz takes about two minutes."),
       e("button", { className:"btn btn-accent btn-sm", onClick: () => (window.__loreGoTo ? window.__loreGoTo("quiz") : null) }, "Take it")
     ) : null,
 
@@ -8098,6 +8102,16 @@ function CheckerScreen({ blend, styleWordBlend, kibbeTypeName, topStyleWords, vi
     ),
     e("input", { id:"checker-photo-input", type:"file", accept:"image/*", className:"visually-hidden", onChange:pickCheckerPhoto }),
     e("p", { className:"trust-line", style:{ marginTop:-4, marginBottom:12 } }, Icon("lock"), "Your photo never leaves your phone."),
+
+    // Once a photo is in the frame the frame itself is an <img>, so the
+    // label that opens the picker is gone with it. Without this there is no
+    // way to a second photo except leaving the tab and coming back, which
+    // unmounts the screen and silently throws the result away.
+    photoPreview ? e("label", {
+      className:"btn btn-ghost btn-block", style:{ marginBottom:12, cursor:"pointer" },
+      htmlFor:"checker-photo-input",
+      onClick: ev => pickWithNativeCamera(ev, pickCheckerPhoto)
+    }, "Use a different photo") : null,
 
     e("button", {
       className:"btn btn-accent btn-block", style:{ marginBottom:16 },
