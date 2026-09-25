@@ -6,6 +6,7 @@ ensure_poll_schema($pdo);
 ensure_post_share_column($pdo);
 ensure_comment_threads_schema($pdo);
 ensure_block_schema($pdo);
+ensure_post_season_column($pdo);
 
 if ($_SERVER['REQUEST_METHOD'] === 'GET') {
     // Who is asking, so a poll can come back with their own vote on it. Not
@@ -36,6 +37,27 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
     $blocked = blocked_ids($pdo, $viewerId);
     $blockSql = blocked_filter_sql($blocked, 'author_id');
 
+    /* Room filters. Both id sets are closed — twelve seasons, thirteen
+       Kibbe types — so an unknown value is rejected outright rather than
+       reaching the query. The rooms are filtered client-side today; these
+       exist so that switching them to fetch server-side is a client change
+       only, before volume makes a 100-post page look like an empty room.
+       See claude/community-season-rooms-spec-2026-09-24.md. */
+    $filterSql = '';
+    $filterParams = [];
+    $season = trim((string)($_GET['season'] ?? ''));
+    if ($season !== '') {
+        if (!in_array($season, style_lore_season_ids(), true)) error_response('Unknown colour season.', 400);
+        $filterSql .= ' AND season_tag = ?';
+        $filterParams[] = $season;
+    }
+    $kibbe = trim((string)($_GET['kibbe'] ?? ''));
+    if ($kibbe !== '') {
+        if (!in_array($kibbe, style_lore_kibbe_ids(), true)) error_response('Unknown Kibbe type.', 400);
+        $filterSql .= ' AND kibbe_tag = ?';
+        $filterParams[] = $kibbe;
+    }
+
     $postId = isset($_GET['postId']) ? (string)$_GET['postId'] : null;
     if ($postId !== null && $postId !== '') {
         $stmt = $pdo->prepare('SELECT * FROM posts WHERE hidden = 0 AND id = ?' . $blockSql . ' LIMIT 1');
@@ -45,14 +67,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
     }
 
     if ($groupId !== null && $groupId !== '') {
-        $stmt = $pdo->prepare('SELECT * FROM posts WHERE hidden = 0 AND group_id = ?' . $blockSql . ' ORDER BY created_at DESC LIMIT ' . $limit);
-        $stmt->execute(array_merge([$groupId], $blocked));
+        $stmt = $pdo->prepare('SELECT * FROM posts WHERE hidden = 0 AND group_id = ?' . $blockSql . $filterSql . ' ORDER BY created_at DESC LIMIT ' . $limit);
+        $stmt->execute(array_merge([$groupId], $blocked, $filterParams));
     } elseif ($authorId !== null && $authorId !== '') {
-        $stmt = $pdo->prepare('SELECT * FROM posts WHERE hidden = 0 AND author_id = ? AND group_id IS NULL' . $blockSql . ' ORDER BY created_at DESC LIMIT ' . $limit);
-        $stmt->execute(array_merge([$authorId], $blocked));
+        $stmt = $pdo->prepare('SELECT * FROM posts WHERE hidden = 0 AND author_id = ? AND group_id IS NULL' . $blockSql . $filterSql . ' ORDER BY created_at DESC LIMIT ' . $limit);
+        $stmt->execute(array_merge([$authorId], $blocked, $filterParams));
     } else {
-        $stmt = $pdo->prepare('SELECT * FROM posts WHERE hidden = 0 AND group_id IS NULL' . $blockSql . ' ORDER BY created_at DESC LIMIT ' . $limit);
-        $stmt->execute($blocked);
+        $stmt = $pdo->prepare('SELECT * FROM posts WHERE hidden = 0 AND group_id IS NULL' . $blockSql . $filterSql . ' ORDER BY created_at DESC LIMIT ' . $limit);
+        $stmt->execute(array_merge($blocked, $filterParams));
     }
     $rows = $stmt->fetchAll();
     json_response(array_map(fn($r) => post_to_public($pdo, $r, $viewerId), $rows));
@@ -159,15 +181,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $authorProfile = $profileStmt->fetch();
     $authorAvatarUrl = $authorProfile ? $authorProfile['avatar_url'] : null;
 
+    /* Which colour-season room this post belongs in. Read from the author's
+       profile, never from the request — see post_season_for_author(). */
+    $seasonTag = post_season_for_author($pdo, $authorId);
+
     $id = uuidv4();
     $now = current_time_ms();
 
     $ins = $pdo->prepare(
-        'INSERT INTO posts (id, author_id, author_name, author_avatar_url, kibbe_tag, style_tags, caption, photo_url, photo_b_url, is_poll, shareable, video_file_url, video_url, created_at, hidden, report_count, group_id)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?)'
+        'INSERT INTO posts (id, author_id, author_name, author_avatar_url, kibbe_tag, season_tag, style_tags, caption, photo_url, photo_b_url, is_poll, shareable, video_file_url, video_url, created_at, hidden, report_count, group_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?)'
     );
     $ins->execute([
-        $id, $authorId, $authorName, $authorAvatarUrl, $kibbeTag,
+        $id, $authorId, $authorName, $authorAvatarUrl, $kibbeTag, $seasonTag,
         json_encode($styleTags), $caption, $photoUrl, $photoBUrl, $isPoll ? 1 : 0, $shareable ? 1 : 0,
         $videoFileUrl, $videoUrl, $now, $groupId,
     ]);

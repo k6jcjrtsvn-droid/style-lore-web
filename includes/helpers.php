@@ -1085,6 +1085,7 @@ function post_to_public(PDO $pdo, array $row, ?string $viewerId = null): array {
         'authorId' => $row['author_id'],
         'authorAvatarUrl' => $row['author_avatar_url'],
         'kibbeTag' => $row['kibbe_tag'],
+        'seasonTag' => $row['season_tag'] ?? null,
         'styleTags' => array_values($styleTags),
         'caption' => $row['caption'],
         'photoUrl' => $row['photo_url'],
@@ -1546,4 +1547,107 @@ function normalize_device(?string $raw): ?string {
     $raw = strtolower(trim((string)$raw));
     if ($raw === 'ios' || $raw === 'android' || $raw === 'web') return $raw;
     return null;
+}
+
+
+/* ---------------------------------------------------------------------
+ * Colour-season rooms.
+ *
+ * Community already has a room per Kibbe type. Colour season — half the
+ * product, and the half the twelve /colors/ landing pages point at — had
+ * nowhere to sit. These three functions are the server half: the column,
+ * the closed id lists that make filtering safe, and the lookup that tags
+ * a post from its author's own quiz result.
+ *
+ * The client half (the "Rooms by colour" strip) is deliberately NOT
+ * shipped with this. Tagging starts the moment this deploys, so by the
+ * time the UI arrives the rooms already have posts in them — and the
+ * Community screen is not altered under a reviewer who is looking at it
+ * this week.
+ * ------------------------------------------------------------------- */
+
+/** The twelve seasons, exactly as /colors/<id>.html names them. A closed set. */
+function style_lore_season_ids(): array {
+    return ['bright-spring', 'true-spring', 'light-spring',
+            'light-summer', 'true-summer', 'soft-summer',
+            'soft-autumn', 'true-autumn', 'deep-autumn',
+            'deep-winter', 'true-winter', 'bright-winter'];
+}
+
+/** The thirteen Kibbe types, exactly as /types/<id>.html names them. */
+function style_lore_kibbe_ids(): array {
+    return ['dramatic', 'soft-dramatic', 'flamboyant-natural', 'natural',
+            'soft-natural', 'dramatic-classic', 'classic', 'soft-classic',
+            'flamboyant-gamine', 'gamine', 'soft-gamine',
+            'theatrical-romantic', 'romantic'];
+}
+
+/**
+ * Adds posts.season_tag and the two room indexes, and backfills existing
+ * posts from their author's colour result — once, on the request that
+ * first finds the column missing.
+ *
+ * Two things here are deliberate and were both learned the hard way:
+ *
+ *   1. CREATE/ALTER forces an implicit COMMIT in MySQL, so this must never
+ *      run inside a transaction. That is exactly what produced the
+ *      intermittent signup 500 on 22-23 Sep; see the comment in
+ *      auth_signup.php. Callers invoke this at the top of the request,
+ *      before any transaction is opened.
+ *   2. The backfill is gated on the column having actually been absent,
+ *      not on "WHERE season_tag IS NULL". A NULL-scan on every request
+ *      would be free today at a few dozen posts and quietly expensive
+ *      later, and posts by people who never took the colour quiz stay
+ *      NULL forever, so the scan would never stop finding rows.
+ */
+function ensure_post_season_column(PDO $pdo): void {
+    static $done = false; if ($done) return; $done = true;
+    try {
+        $has = (int)$pdo->query(
+            "SELECT COUNT(*) FROM information_schema.COLUMNS
+             WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'posts' AND COLUMN_NAME = 'season_tag'"
+        )->fetchColumn();
+        if ($has) return;
+
+        $pdo->exec('ALTER TABLE posts ADD COLUMN season_tag VARCHAR(24) NULL');
+        try { $pdo->exec('ALTER TABLE posts ADD KEY idx_season (season_tag)'); } catch (Throwable $e) {}
+        try { $pdo->exec('ALTER TABLE posts ADD KEY idx_kibbe (kibbe_tag)'); } catch (Throwable $e) {}
+
+        /* Backfill from each author's own quiz result. Anyone who never took
+           the colour quiz stays NULL and simply appears in no season room —
+           no placeholder room, no "Unknown". */
+        $pdo->exec(
+            "UPDATE posts p JOIN profiles pr ON pr.id = p.author_id
+             SET p.season_tag = JSON_UNQUOTE(JSON_EXTRACT(pr.color_result_json, '$.seasonId'))
+             WHERE p.season_tag IS NULL AND pr.color_result_json IS NOT NULL"
+        );
+    } catch (Throwable $e) {
+        error_log('ensure_post_season_column: ' . $e->getMessage());
+    }
+}
+
+/**
+ * The season a new post belongs in, read from the AUTHOR'S PROFILE and
+ * never from the request.
+ *
+ * Both reasons matter. A build already in someone's hands cannot send a
+ * field it does not know exists, so a client-supplied tag would leave
+ * every post from every current install untagged. And a client-supplied
+ * tag can lie about which room a post lands in, which is a moderation
+ * problem rather than a cosmetic one.
+ */
+function post_season_for_author(PDO $pdo, ?string $authorId): ?string {
+    if (!$authorId) return null;
+    try {
+        $st = $pdo->prepare('SELECT color_result_json FROM profiles WHERE id = ?');
+        $st->execute([$authorId]);
+        $raw = $st->fetchColumn();
+        if (!$raw) return null;
+        $decoded = json_decode((string)$raw, true);
+        $id = is_array($decoded) ? (string)($decoded['seasonId'] ?? '') : '';
+        return in_array($id, style_lore_season_ids(), true) ? $id : null;
+    } catch (Throwable $e) {
+        error_log('post_season_for_author: ' . $e->getMessage());
+        return null;
+    }
 }
