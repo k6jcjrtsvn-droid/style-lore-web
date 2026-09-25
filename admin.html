@@ -77,6 +77,25 @@
   .pill.off{ background:var(--danger); border-color:var(--danger); color:#fff; }
   .kv{ font-size:13px; color:var(--ink-soft); line-height:1.7; }
   .kv b{ color:var(--ink); font-weight:600; }
+  .mrow{ display:flex; flex-wrap:wrap; gap:12px; margin-bottom:18px; }
+  .mtile{ flex:1 1 150px; background:var(--paper-raised); border:1px solid var(--line);
+          border-radius:14px; padding:14px 16px; }
+  .mtile h3{ font-size:11.5px; text-transform:uppercase; letter-spacing:.06em;
+             color:var(--ink-soft); margin:0 0 6px; font-weight:600; }
+  .mtile .v{ font-size:24px; font-weight:700; font-variant-numeric:tabular-nums; }
+  .mtile .s{ font-size:12px; color:var(--ink-soft); margin-top:3px; }
+  .neg{ color:var(--danger); }
+  .pos{ color:var(--good); }
+  .src{ display:inline-block; font-size:10px; text-transform:uppercase; letter-spacing:.06em;
+        border-radius:999px; padding:2px 7px; border:1px solid var(--line); color:var(--ink-soft); }
+  .src.live{ background:var(--good); border-color:var(--good); color:#fff; }
+  .src.manual{ background:transparent; }
+  .stale{ color:var(--danger); font-size:11px; }
+  .mform{ display:grid; grid-template-columns:1fr 110px; gap:8px 10px; align-items:center; }
+  .mform label{ font-size:13.5px; }
+  .mform input{ padding:7px 9px; border-radius:7px; border:1px solid var(--line);
+                background:var(--paper); color:var(--ink); font-size:13.5px; width:100%;
+                font-variant-numeric:tabular-nums; }
 </style>
 </head>
 <body>
@@ -98,6 +117,7 @@
         <button id="tab-comments" class="tab" data-kind="comments">Comments</button>
         <button id="tab-funnel" class="tab" data-kind="funnel">Funnel</button>
         <button id="tab-find" class="tab" data-kind="find">Find a person</button>
+        <button id="tab-money" class="tab" data-kind="money">Money</button>
       </div>
       <button id="logout">Lock this page</button>
     </div>
@@ -339,6 +359,121 @@
       ' There are ' + Number(d.totalAccounts || 0).toLocaleString() + ' accounts in total.</p>';
   }
 
+  /* ---------------------------------------------------------------- *
+   * Money. Every figure says where it came from, because the whole
+   * point is being able to trust the total: "live" is pulled from the
+   * provider this second, "manual" is something a human typed and may
+   * be out of date. A number with no provenance in a profit figure is
+   * worse than no number.
+   * ---------------------------------------------------------------- */
+  function usd(n){
+    if(n === null || n === undefined || isNaN(n)) return "\u2014";
+    var s = (n < 0 ? "-" : "") + "$" + Math.abs(Number(n)).toLocaleString(undefined,
+      { minimumFractionDigits:2, maximumFractionDigits:2 });
+    return s;
+  }
+  function money(n, colour){
+    if(n === null || n === undefined || isNaN(n)) return '<span>\u2014</span>';
+    var cls = colour ? (Number(n) < 0 ? " class=\"neg\"" : (Number(n) > 0 ? " class=\"pos\"" : "")) : "";
+    return "<span" + cls + ">" + esc(usd(n)) + "</span>";
+  }
+  function setWhen(ms){
+    if(!ms) return '<span class="stale">never set</span>';
+    return esc(new Date(Number(ms)).toLocaleDateString() + " \u00b7 " + timeAgo(Number(ms)));
+  }
+
+  function renderMoney(d){
+    var h = d.headline || {};
+    var tiles =
+      '<div class="mrow">' +
+made_tile("Net profit \u00b7 lifetime", money(h.lifetimeNetProfit, true),
+          usd(h.lifetimeNetRevenue) + " in, " + usd(h.lifetimeCosts) + " out") +
+made_tile("Net profit \u00b7 " + esc(d.month ? d.month.label : "this month"), money(h.monthNetProfit, true),
+          usd(h.monthNetRevenue) + " in, " + usd(h.monthCosts) + " out") +
+made_tile("Monthly run rate", money(h.runRateProfit, true),
+          usd(h.runRateRevenue) + "/mo from active subscriptions") +
+      '</div>';
+
+    var warn = (d.warnings && d.warnings.length)
+      ? '<div class="card" style="border-color:var(--danger);"><b style="font-size:13.5px;">Not everything could be read</b><div class="kv" style="margin-top:6px;">' +
+        d.warnings.map(function(w){ return "\u2022 " + esc(w); }).join("<br>") + '</div></div>'
+      : "";
+
+    var rev = '<div class="fsec"><h2>Revenue</h2><table class="f">' +
+      '<tr><th>Source</th><th></th><th class="n">Lifetime, net</th><th class="n">This month</th></tr>' +
+      (d.revenue || []).map(function(r){
+        var badge = '<span class="src ' + (r.source === "manual" ? "manual" : "live") + '">' + esc(r.source) + '</span>';
+        var line = '<tr><td><b>' + esc(r.label) + '</b>' +
+          (r.detail ? '<div class="meta" style="margin:2px 0 0;">' + esc(r.detail) + '</div>' : "") +
+          (r.ok === false ? '<div class="meta" style="margin:2px 0 0; color:var(--danger);">' + esc(r.error || "") + '</div>' : "") +
+          '</td><td>' + badge + '</td><td class="n">' + money(r.lifetimeNet) +
+          '</td><td class="n">' + money(r.monthNet) + '</td></tr>';
+        return line;
+      }).join("") +
+      '<tr><td colspan="2"><b>Total revenue</b></td><td class="n"><b>' + money(h.lifetimeNetRevenue) +
+      '</b></td><td class="n"><b>' + money(h.monthNetRevenue) + '</b></td></tr>' +
+      '</table><p class="fnote">' +
+      (d.revenue || []).map(function(r){ return "<b>" + esc(r.label) + ":</b> " + esc(r.note || ""); }).join("<br>") +
+      '</p></div>';
+
+    var cst = '<div class="fsec"><h2>Costs</h2><table class="f">' +
+      '<tr><th>Item</th><th>How often</th><th class="n">Amount</th><th class="n">Per month</th><th>Last set</th></tr>' +
+      (d.costs || []).map(function(c){
+        return '<tr><td>' + esc(c.label) + '</td><td>' + esc(c.unit) + '</td><td class="n">' + money(c.value) +
+               '</td><td class="n">' + money(c.monthly) + '</td><td>' + setWhen(c.updatedAt) + '</td></tr>';
+      }).join("") +
+      '<tr><td colspan="3"><b>Total per month</b></td><td class="n"><b>' + money(h.runRateCosts) +
+      '</b></td><td></td></tr></table></div>';
+
+    var editable = (d.inputs || []).filter(function(i){ return i.group !== "model"; });
+    var model    = (d.inputs || []).filter(function(i){ return i.group === "model"; });
+    function field(i){
+      return '<label for="mi-' + esc(i.key) + '">' + esc(i.label) +
+             (i.updatedAt ? "" : ' <span class="stale">(never set)</span>') + '</label>' +
+             '<input id="mi-' + esc(i.key) + '" data-mkey="' + esc(i.key) + '" value="' + esc(i.value) + '" ' +
+             (i.unit === "date" ? 'type="text" placeholder="YYYY-MM-DD"' : 'type="text" inputmode="decimal"') + '>';
+    }
+    var form = '<div class="fsec"><h2>Figures with no API</h2>' +
+      '<p class="fnote" style="margin:0 0 12px;">Amazon and the Anthropic bill cannot be fetched, and the fixed costs are ' +
+      'whatever you actually pay. Type the real numbers here once and the totals above become real too.</p>' +
+      '<div class="card"><div class="mform">' + editable.map(field).join("") + '</div></div>' +
+      '<div class="card"><b style="font-size:13.5px;">Model assumptions</b>' +
+      '<div class="mform" style="margin-top:10px;">' + model.map(field).join("") + '</div></div>' +
+      '<button class="btn-accent" id="money-save">Save these figures</button>' +
+      '<span id="money-saved" class="meta" style="margin-left:10px;"></span></div>';
+
+    var foot = '<p class="fnote">Read ' + esc(new Date(Number(d.asOf)).toLocaleString()) +
+      '. <button class="btn-ghost" id="money-refresh" style="font-size:12px; padding:4px 10px;">Refresh</button><br>' +
+      esc(d.note || "") + '</p>';
+
+    return tiles + warn + rev + cst + form + foot;
+  }
+
+  function made_tile(title, valueHtml, sub){
+    return '<div class="mtile"><h3>' + esc(title) + '</h3><div class="v">' + valueHtml +
+           '</div><div class="s">' + esc(sub) + '</div></div>';
+  }
+
+  async function saveMoney(btn){
+    btn.disabled = true;
+    var out = {};
+    Array.prototype.forEach.call(document.querySelectorAll("[data-mkey]"), function(el){
+      out[el.getAttribute("data-mkey")] = el.value.trim();
+    });
+    try{
+      var r = await fetch("/api/admin/money", {
+        method:"POST",
+        headers:{ "Content-Type":"application/json", "X-Admin-Secret": secret() },
+        body: JSON.stringify({ inputs: out }),
+      });
+      if(!r.ok) throw new Error("Server said " + r.status);
+      load();
+    }catch(err){
+      btn.disabled = false;
+      actionError.textContent = "Couldn't save those \u2014 " + err.message;
+    }
+  }
+
   async function load(){
     actionError.textContent = "";
     list.innerHTML = '<div class="empty">Loading…</div>';
@@ -358,6 +493,19 @@
       }catch(err){
         list.innerHTML = renderFind(null).replace("Search accounts, profiles and beta sign-ups by name or email.",
           "Couldn't search \u2014 " + esc(err.message));
+      }
+      return;
+    }
+    if(wanted === "money"){
+      try{
+        var mr = await fetch("/api/admin/money", { headers:{ "X-Admin-Secret": secret() } });
+        if(mr.status === 401){ lock("That secret didn't work."); return; }
+        if(!mr.ok) throw new Error("Server said " + mr.status);
+        var md = await mr.json();
+        if(wanted !== kind) return;
+        list.innerHTML = renderMoney(md);
+      }catch(err){
+        list.innerHTML = '<div class="empty">Couldn\'t load the money view \u2014 ' + esc(err.message) + '</div>';
       }
       return;
     }
@@ -423,6 +571,8 @@
   list.addEventListener("click", function(ev){
     if(ev.target.id === "find-go"){ runFind(); return; }
     if(ev.target.id === "find-seg-quiz"){ findQuery = ""; findSegment = "quiz-no-post"; load(); return; }
+    if(ev.target.id === "money-save"){ saveMoney(ev.target); return; }
+    if(ev.target.id === "money-refresh"){ load(); return; }
     var btn = ev.target.closest("button[data-action]");
     if(!btn) return;
     var card = ev.target.closest(".card");
