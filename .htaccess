@@ -87,6 +87,9 @@ RewriteRule ^api/admin/broadcast/?$ api/admin_broadcast.php [L,QSA]
 RewriteRule ^api/admin/lookup/?$ api/admin_lookup.php [L,QSA]
 RewriteRule ^api/admin/money/?$ api/admin_money.php [L,QSA]
 
+# /admin is what a person types on a phone. Only /admin.html existed, so it 404d.
+RewriteRule ^admin/?$ /admin.html [R=301,L]
+
 RewriteRule ^api/checker/photo/?$ api/checker_photo.php [L,QSA]
 RewriteRule ^api/checker/ask/?$ api/checker_ask.php [L,QSA]
 

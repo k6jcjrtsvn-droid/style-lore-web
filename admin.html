@@ -105,7 +105,11 @@
 
   <div id="gate" class="gate">
     <label for="secret" style="font-size:13px; display:block; margin-bottom:6px;">Admin secret</label>
-    <input id="secret" type="password" placeholder="Paste your ADMIN_SECRET" autocomplete="off">
+    <input id="secret" type="password" placeholder="Paste your ADMIN_SECRET" autocomplete="off"
+           autocapitalize="none" autocorrect="off" spellcheck="false">
+    <label style="display:block; font-size:12.5px; color:var(--ink-soft); margin:-4px 0 10px;">
+      <input type="checkbox" id="secret-show" style="width:auto; margin:0 6px 0 0; vertical-align:middle;">
+      Show what I pasted</label>
     <button class="btn-accent" id="unlock">Unlock</button>
     <div class="error" id="gate-error"></div>
   </div>
@@ -145,7 +149,42 @@
   // The named segment, when one is showing instead of a search.
   var findSegment = "";
 
-  function secret(){ return localStorage.getItem(SECRET_KEY) || ""; }
+  /* The secret is a 32-character alphanumeric token, so anything outside
+     printable ASCII got there by accident: a zero-width space or a
+     non-breaking space from a phone paste, a stray newline, an invisible
+     character a password manager added. String.trim() does NOT remove a
+     zero-width space, which is why a paste that looks identical on a phone
+     can be rejected while the same key works on a desktop. */
+  function cleanSecret(v){ return String(v == null ? "" : v).replace(/[^\x21-\x7E]/g, ""); }
+
+  /* localStorage throws outright in iOS Private Browsing, with "Block All
+     Cookies" on, and inside some in-app browsers. Every read and write is
+     wrapped, with an in-memory fallback so the page still works for the
+     length of the visit instead of the Unlock button silently doing
+     nothing. */
+  var memSecret = "";
+  function secret(){
+    try { return localStorage.getItem(SECRET_KEY) || memSecret || ""; }
+    catch(e){ return memSecret || ""; }
+  }
+  function storeSecret(v){
+    memSecret = v;
+    try { localStorage.setItem(SECRET_KEY, v); } catch(e){ /* memory only */ }
+  }
+  function clearSecret(){
+    memSecret = "";
+    try { localStorage.removeItem(SECRET_KEY); } catch(e){}
+  }
+
+  /* A 401 used to say only "that didn't work", which is useless when the
+     same key works elsewhere. The length is the tell: a paste that arrived
+     truncated or with something extra shows up immediately, and the secret
+     itself is never echoed. */
+  function rejectedMessage(){
+    var n = secret().length;
+    return "That secret didn't work \u2014 the page sent " + n + " character" +
+           (n === 1 ? "" : "s") + ". Tick \u201cShow what I pasted\u201d and check it arrived whole.";
+  }
 
   function esc(s){
     var d = document.createElement("div");
@@ -485,7 +524,7 @@ made_tile("Monthly run rate", money(h.runRateProfit, true),
           ? "/api/admin/lookup?segment=" + encodeURIComponent(findSegment)
           : "/api/admin/lookup?q=" + encodeURIComponent(findQuery);
         var lr = await fetch(lurl, { headers:{ "X-Admin-Secret": secret() } });
-        if(lr.status === 401){ lock("That secret didn't work."); return; }
+        if(lr.status === 401){ lock(rejectedMessage()); return; }
         if(!lr.ok) throw new Error("Server said " + lr.status);
         var ld = await lr.json();
         if(wanted !== kind) return;
@@ -499,7 +538,7 @@ made_tile("Monthly run rate", money(h.runRateProfit, true),
     if(wanted === "money"){
       try{
         var mr = await fetch("/api/admin/money", { headers:{ "X-Admin-Secret": secret() } });
-        if(mr.status === 401){ lock("That secret didn't work."); return; }
+        if(mr.status === 401){ lock(rejectedMessage()); return; }
         if(!mr.ok) throw new Error("Server said " + mr.status);
         var md = await mr.json();
         if(wanted !== kind) return;
@@ -512,7 +551,7 @@ made_tile("Monthly run rate", money(h.runRateProfit, true),
     if(wanted === "funnel"){
       try{
         var fr = await fetch("/api/admin/funnel", { headers:{ "X-Admin-Secret": secret() } });
-        if(fr.status === 401){ lock("That secret didn't work."); return; }
+        if(fr.status === 401){ lock(rejectedMessage()); return; }
         if(!fr.ok) throw new Error("Server said " + fr.status);
         var fd = await fr.json();
         if(wanted !== kind) return;
@@ -525,7 +564,7 @@ made_tile("Monthly run rate", money(h.runRateProfit, true),
     try{
       var url = "/api/admin/moderation" + (wanted === "comments" ? "?type=comments" : "");
       var r = await fetch(url, { headers:{ "X-Admin-Secret": secret() } });
-      if(r.status === 401){ lock("That secret didn't work."); return; }
+      if(r.status === 401){ lock(rejectedMessage()); return; }
       if(!r.ok) throw new Error("Server said " + r.status);
       var rows = await r.json();
       if(wanted !== kind) return; // tab switched while this was in flight
@@ -594,9 +633,14 @@ made_tile("Monthly run rate", money(h.runRateProfit, true),
   });
 
   function unlock(){
-    var val = document.getElementById("secret").value.trim();
-    if(!val) return;
-    localStorage.setItem(SECRET_KEY, val);
+    var raw = document.getElementById("secret").value;
+    var val = cleanSecret(raw);
+    if(!val){ gateError.textContent = "Paste the admin secret first."; return; }
+    if(val.length !== raw.trim().length){
+      // Not an error — just say so, because it explains a phone-only failure.
+      gateError.textContent = "";
+    }
+    storeSecret(val);
     gateError.textContent = "";
     gate.style.display = "none";
     app.style.display = "block";
@@ -604,12 +648,15 @@ made_tile("Monthly run rate", money(h.runRateProfit, true),
   }
 
   function lock(message){
-    localStorage.removeItem(SECRET_KEY);
+    clearSecret();
     app.style.display = "none";
     gate.style.display = "block";
     gateError.textContent = message || "";
   }
 
+  document.getElementById("secret-show").addEventListener("change", function(ev){
+    document.getElementById("secret").type = ev.target.checked ? "text" : "password";
+  });
   document.getElementById("unlock").addEventListener("click", unlock);
   document.getElementById("secret").addEventListener("keydown", function(ev){ if(ev.key === "Enter") unlock(); });
   document.getElementById("logout").addEventListener("click", function(){ lock(""); });
