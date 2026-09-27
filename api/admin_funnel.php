@@ -57,12 +57,42 @@ $bySource = rows($pdo,
     'SELECT slug, COALESCE(source, "(untagged)") AS source, COUNT(*) AS n
      FROM link_clicks GROUP BY slug, source ORDER BY n DESC LIMIT 50');
 
-$signups = rows($pdo,
-    'SELECT COALESCE(signup_device, "(unrecorded)") AS device,
-            COUNT(*) AS total,
-            SUM(created_at >= ?) AS last7,
-            SUM(email_verified = 1) AS verified
-     FROM accounts GROUP BY signup_device', [$weekAgo]);
+/* Signups by platform, and how far each platform then gets.
+ *
+ * The plain counts were already here; the three EXISTS columns are the
+ * point. "How many iOS accounts" on its own says nothing about whether
+ * iOS is working — a platform can be a third of signups and none of the
+ * posts, and that is a different problem from having few signups. Each
+ * EXISTS is 0 or 1 per account, so SUM() counts PEOPLE who reached a
+ * stage, never rows: someone with forty posts still counts once. */
+$signupsFellBack = false;
+try {
+    $signups = rows($pdo,
+        'SELECT COALESCE(a.signup_device, "(unrecorded)") AS device,
+                COUNT(*) AS total,
+                SUM(a.created_at >= ?) AS last7,
+                SUM(a.email_verified = 1) AS verified,
+                SUM(EXISTS(SELECT 1 FROM profiles p
+                            WHERE p.id = a.id AND COALESCE(p.kibbe_type_name, "") <> "")) AS tookQuiz,
+                SUM(EXISTS(SELECT 1 FROM posts po WHERE po.author_id = a.id)) AS posted,
+                SUM(EXISTS(SELECT 1 FROM subscriptions su
+                            WHERE su.account_id = a.id AND su.is_premium = 1)) AS premium
+         FROM accounts a GROUP BY a.signup_device', [$weekAgo]);
+} catch (Throwable $e) {
+    /* A correlated EXISTS in a SELECT list is standard, but this runs on
+       shared hosting whose MySQL version is not ours to choose. The whole
+       Funnel tab going blank because one column would not compute is a
+       worse outcome than losing the column, so fall back to the counts
+       that always worked and say so on the page. */
+    error_log('admin_funnel signups rich query: ' . $e->getMessage());
+    $signupsFellBack = true;
+    $signups = rows($pdo,
+        'SELECT COALESCE(signup_device, "(unrecorded)") AS device,
+                COUNT(*) AS total,
+                SUM(created_at >= ?) AS last7,
+                SUM(email_verified = 1) AS verified
+         FROM accounts GROUP BY signup_device', [$weekAgo]);
+}
 
 $daily = rows($pdo,
     'SELECT slug, FLOOR(created_at / 86400000) AS day, COUNT(*) AS n
@@ -97,6 +127,7 @@ json_response([
     'clicks' => $clicks,
     'clicksBySource' => $bySource,
     'signups' => $signups,
+    'signupsFellBack' => $signupsFellBack,
     'daily' => $daily,
-    'note' => 'Clicks and signups are separate populations. Nothing links a click to the account it may have become, so read the ratio as a trend, not as attribution. The stage counts cover accounts only — the quiz works signed out, so anyone who took it and left without signing up is invisible here.',
+    'note' => 'Clicks and signups are separate populations. Nothing links a click to the account it may have become, so read the ratio as a trend, not as attribution. Per-platform columns count people, not rows, so someone with many posts counts once. "iOS" means the account was created from the iOS app, recorded only from 23 Sep 2026 — anything older reads as (unrecorded), not as web, and TestFlight installs that never made an account appear nowhere here at all. The stage counts cover accounts only — the quiz works signed out, so anyone who took it and left without signing up is invisible here.',
 ]);

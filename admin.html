@@ -309,12 +309,24 @@
         ' <small>of ' + num(total) + ' accounts \u00b7 ' + num(ios && ios.last7) + ' in the last 7 days</small></p>' +
       '</div>';
 
-    var t1 = '<div class="fsec"><h2>Signups by platform</h2><table class="f">' +
-      '<tr><th>Platform</th><th class="n">Accounts</th><th class="n">Last 7 days</th><th class="n">Email verified</th></tr>' +
+    /* Platform crossed with how far people get. A platform that is a third
+       of signups and none of the posts is a different problem from a
+       platform with few signups, and the plain counts could not tell them
+       apart. */
+    var t1 = '<div class="fsec"><h2>Signups by platform, and how far they get</h2><table class="f">' +
+      '<tr><th>Platform</th><th class="n">Accounts</th><th class="n">Last 7 days</th>' +
+      '<th class="n">Verified</th><th class="n">Took quiz</th><th class="n">Posted</th><th class="n">Premium</th></tr>' +
       (signups.length ? signups.map(function(r){
         return '<tr><td>' + esc(LABEL[r.device] || r.device) + '</td><td class="n">' + num(r.total) +
-               '</td><td class="n">' + num(r.last7) + '</td><td class="n">' + num(r.verified) + '</td></tr>';
-      }).join("") : '<tr><td colspan="4">No accounts yet.</td></tr>') + '</table></div>';
+               '</td><td class="n">' + num(r.last7) + '</td><td class="n">' + num(r.verified) +
+               '</td><td class="n">' + num(r.tookQuiz) + '</td><td class="n">' + num(r.posted) +
+               '</td><td class="n">' + num(r.premium) + '</td></tr>';
+      }).join("") : '<tr><td colspan="7">No accounts yet.</td></tr>') +
+      '</table><p class="fnote">' +
+      (d.signupsFellBack ? '<b>Quiz, Posted and Premium could not be computed on this database, so those columns read zero.</b> ' : '') +
+      'Each column counts people, not rows \u2014 somebody with forty posts ' +
+      'counts once under Posted. TestFlight installs that never made an account are not here at all; ' +
+      'App Store Connect is the only place those show.</p></div>';
 
     var t2 = '<div class="fsec"><h2>Share-link clicks</h2><table class="f">' +
       '<tr><th>Link</th><th class="n">Clicks</th><th class="n">Distinct IPs</th><th class="n">Last 7 days</th><th class="n">On that platform</th></tr>' +
