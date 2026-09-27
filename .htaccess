@@ -46,6 +46,7 @@ RewriteCond %{REQUEST_METHOD} =OPTIONS
 RewriteRule ^api/ api/_cors.php [L]
 
 RewriteRule ^api/auth/signup/?$ api/auth_signup.php [L,QSA]
+RewriteRule ^api/lead/?$ api/lead_capture.php [L,QSA]
 RewriteRule ^api/auth/login/?$ api/auth_login.php [L,QSA]
 RewriteRule ^api/account/delete/?$ api/account_delete.php [L,QSA]
 

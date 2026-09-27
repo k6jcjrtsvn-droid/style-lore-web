@@ -54,14 +54,24 @@ try {
 
     $pdo->beginTransaction();
     $ins1 = $pdo->prepare(
-        'INSERT INTO accounts (id, email, password_hash, created_at, auth_token_hash, email_verified, verify_token_hash, verify_token_expires, signup_device)
-         VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?)'
+        'INSERT INTO accounts (id, email, password_hash, created_at, auth_token_hash, email_verified, verify_token_hash, verify_token_expires, signup_device, signup_source, signup_medium, signup_campaign, signup_referrer)
+         VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?)'
     );
     // Which platform this account was created on. The client has always sent
     // it; signup threw it away, so "how many of these came from the iOS
     // beta" had no answer. Labels the row and nothing more — never trusted.
     $signupDevice = normalize_device($body['device'] ?? null);
-    $ins1->execute([$id, $email, $passwordHash, $now, hash_token($authToken), hash_token($verifyToken), $verifyExpires, $signupDevice]);
+    // Where this person came from, as the client saw it on their FIRST visit
+    // -- not this one. Someone who lands on a Pinterest pin, wanders off and
+    // comes back a week later by typing the address is still a Pinterest
+    // signup; last-touch would credit that to nobody and make every paid
+    // channel look worse than it is. Sanitised hard: it arrives from a query
+    // string and is rendered in the admin Funnel tab.
+    $signupSource   = normalize_attribution($body['source'] ?? null);
+    $signupMedium   = normalize_attribution($body['medium'] ?? null);
+    $signupCampaign = normalize_attribution($body['campaign'] ?? null);
+    $signupReferrer = normalize_attribution($body['referrer'] ?? null, 255);
+    $ins1->execute([$id, $email, $passwordHash, $now, hash_token($authToken), hash_token($verifyToken), $verifyExpires, $signupDevice, $signupSource, $signupMedium, $signupCampaign, $signupReferrer]);
     // Multi-device sessions: record this first token so later logins on other devices don't sign this one out.
     try { $pdo->prepare('INSERT IGNORE INTO auth_tokens (token_hash, account_id, created_at, last_used_at, label) VALUES (?,?,?,?,?)')->execute([hash_token($authToken), $id, $now, $now, 'signup']); } catch (Throwable $e) { error_log('signup auth_tokens: ' . $e->getMessage()); }
     $ins2 = $pdo->prepare('INSERT INTO profiles (id, name, bio, avatar_url, updated_at) VALUES (?, ?, ?, NULL, ?)');
@@ -79,6 +89,14 @@ try {
             $referralUntil = referral_grant_days($pdo, $id, REFERRAL_DAYS);
         } catch (Throwable $e) { error_log('signup referral: ' . $e->getMessage()); }
     }
+
+    // If this address already asked us to email them their quiz result, that
+    // lead has now become an account. Stamping it is what makes "how many of
+    // the emailed results turned into signups" answerable -- the single number
+    // that says whether the signed-out capture is worth keeping.
+    try {
+        $pdo->prepare('UPDATE leads SET converted_at = ? WHERE email = ? AND converted_at IS NULL')->execute([$now, $email]);
+    } catch (Throwable $e) { /* leads table may not exist yet -- never block a signup for it */ }
 
     $verifyUrl = SITE_BASE_URL . '/?verify=' . $verifyToken;
     $safeName = htmlspecialchars($name);

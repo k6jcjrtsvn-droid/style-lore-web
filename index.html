@@ -3540,6 +3540,49 @@ function saveLocal(key, value){
   }catch(err){}
 })();
 function pendingReferral(){ try{ return localStorage.getItem("lore_ref") || ""; }catch(err){ return ""; } }
+// Where this visitor came from, captured on their FIRST landing and kept.
+//
+// First-touch, not last-touch, and the distinction is the whole point: someone
+// clicks a Pinterest pin, looks around, leaves, and comes back next week by
+// typing the address. Last-touch calls that a direct signup and Pinterest
+// looks worthless. First-touch gives the pin the credit it earned, which is
+// what a paid channel has to be judged on.
+//
+// The utm params are stripped from the address bar afterwards, the same way
+// ?ref= is, so a shared link is clean and a reload cannot double-count.
+(function captureAttribution(){
+  try{
+    const p = new URLSearchParams(window.location.search);
+    const keys = { utm_source:"source", utm_medium:"medium", utm_campaign:"campaign" };
+    const found = {};
+    let any = false;
+    Object.keys(keys).forEach(k => { const v = (p.get(k) || "").trim(); if(v){ found[keys[k]] = v.slice(0, 64); any = true; } });
+    if(any){
+      const already = localStorage.getItem("lore_attr");
+      // First one wins. A later campaign must not overwrite the one that
+      // actually brought them, or every channel steals from the first.
+      if(!already){
+        let ref = "";
+        try{ ref = (document.referrer || "").slice(0, 255); }catch(e){}
+        if(ref) found.referrer = ref;
+        found.at = Date.now();
+        localStorage.setItem("lore_attr", JSON.stringify(found));
+      }
+      const url = new URL(window.location.href);
+      Object.keys(keys).forEach(k => url.searchParams.delete(k));
+      window.history.replaceState({}, "", url.pathname + url.search + url.hash);
+    }
+  }catch(err){}
+})();
+// Always an object, never null, so callers can spread it without guarding.
+function pendingAttribution(){
+  try{
+    const raw = localStorage.getItem("lore_attr");
+    if(!raw) return {};
+    const v = JSON.parse(raw) || {};
+    return { source:v.source, medium:v.medium, campaign:v.campaign, referrer:v.referrer };
+  }catch(err){ return {}; }
+}
 function removeLocal(key){
   try{ localStorage.removeItem(key); }catch(err){ /* storage unavailable */ }
 }
@@ -4388,12 +4431,25 @@ const Api = {
   async signup({ name, email, password }){
     const r = await fetch("/api/auth/signup", {
       method:"POST", headers:{ "Content-Type":"application/json" },
-      body: JSON.stringify({ name, email, password, device: (window.STYLE_LORE_NATIVE && window.Capacitor && window.Capacitor.getPlatform ? window.Capacitor.getPlatform() : "web"), ref: pendingReferral() || undefined }),
+      body: JSON.stringify({ name, email, password, device: (window.STYLE_LORE_NATIVE && window.Capacitor && window.Capacitor.getPlatform ? window.Capacitor.getPlatform() : "web"), ref: pendingReferral() || undefined, ...pendingAttribution() }),
     });
     if(!r.ok){
       const body = await r.json().catch(()=>({}));
       throw new Error(body.error || ("Couldn't create your account — try again. (server said " + r.status + ")"));
     }
+    return r.json();
+  },
+  // Sends one result email. Creates nothing, unlocks nothing, returns
+  // { ok, sent } -- "sent:false" means the address was recorded but the mail
+  // provider refused, which is not the caller's problem to surface.
+  async emailResult({ email, kibbeId, seasonId }){
+    const r = await fetch("/api/lead", {
+      method:"POST", headers:{ "Content-Type":"application/json" },
+      body: JSON.stringify({ email, kibbeId: kibbeId || undefined, seasonId: seasonId || undefined,
+        device: (window.STYLE_LORE_NATIVE && window.Capacitor && window.Capacitor.getPlatform ? window.Capacitor.getPlatform() : "web"),
+        ...pendingAttribution() }),
+    });
+    if(!r.ok) throw await apiError(r, "Couldn't send that — try again.");
     return r.json();
   },
   async login({ email, password }){
@@ -6510,6 +6566,57 @@ function buildKibbeResult(bodyAnswers, modAnswers){
   return { familyBlend, modScore, kibbeBlend: match.blend, kibbeTypeId: match.typeId, confidence: match.confidence };
 }
 
+/* "Email it to me" — the signed-out capture on the result screen.
+ *
+ * The quiz works without an account, which is the right call, but it means a
+ * visitor can be told who they are and leave with nothing recorded. On organic
+ * traffic that is a missed opportunity; on a click we paid for it is the money
+ * gone. An address is a far smaller ask than an account at the one moment
+ * someone is most interested in themselves, so it is offered first and the
+ * account button stays underneath for anyone ready for it.
+ *
+ * Renders nothing at all if there is no result yet — an email field under
+ * "Keep this result" with nothing to keep is just a form for its own sake. */
+function EmailMyResult({ kibbeId, seasonId }){
+  const [email, setEmail] = useState("");
+  const [sending, setSending] = useState(false);
+  const [done, setDone] = useState(false);
+  const [error, setError] = useState(null);
+  if(!kibbeId && !seasonId) return null;
+  if(done){
+    return e("p", { style:{ fontSize:13.5, color:"var(--ink-soft)", marginBottom:12 } },
+      "Sent — it's on its way to " + email + ".");
+  }
+  async function send(ev){
+    if(ev) ev.preventDefault();
+    if(!isValidEmail(email)){ setError("Enter a valid email address."); return; }
+    setSending(true); setError(null);
+    try{
+      await Api.emailResult({ email: email.trim(), kibbeId, seasonId });
+      setDone(true);
+    }catch(err){
+      setError((err && err.message) || "Couldn't send that — try again.");
+    }finally{ setSending(false); }
+  }
+  return e("form", { onSubmit:send, style:{ marginBottom:12 } },
+    e("div", { className:"field", style:{ marginBottom:8 } },
+      e("label", { htmlFor:"result-email" }, "Email it to me"),
+      e("div", { style:{ display:"flex", gap:8, alignItems:"flex-start" } },
+        e("input", { id:"result-email", type:"email", value:email,
+          placeholder:"you@example.com", inputMode:"email", autoComplete:"email",
+          autoCapitalize:"off", autoCorrect:"off", spellCheck:false,
+          style:{ flex:"1 1 auto", minWidth:0 },
+          onChange: ev => { setEmail(ev.target.value); if(error) setError(null); } }),
+        e("button", { className:"btn btn-sm", type:"submit", disabled:sending, style:{ flex:"0 0 auto" } },
+          sending ? "Sending\u2026" : "Send")
+      ),
+      error ? e("div", { className:"field-error" }, error) : null
+    ),
+    e("p", { className:"footnote", style:{ marginTop:0, marginBottom:0 } },
+      "One email with your result. We don't create an account and you're not joining a mailing list.")
+  );
+}
+
 function StyleQuizScreen({ kibbeResult, styleLanguageResult, onSaveKibbe, onSaveStyle, onSignIn, colorResult }){
   const colorSeasonForShare = (colorResult && colorResult.seasonId && COLOR_SEASON_BY_ID[colorResult.seasonId]) || null;
   const initialStage = (kibbeResult && kibbeResult.kibbeTypeId) || (styleLanguageResult) ? "result" : "intro";
@@ -6782,6 +6889,7 @@ function StyleQuizScreen({ kibbeResult, styleLanguageResult, onSaveKibbe, onSave
     onSignIn ? e("div", { className:"card", style:{ marginBottom:16, padding:14, borderColor:"var(--accent)" } },
       e("div", { style:{ fontSize:14.5, fontWeight:600, marginBottom:4 } }, "Keep this result"),
       e("p", { style:{ fontSize:13.5, color:"var(--ink-soft)", marginBottom:10 } }, "It's saved on this phone for now. A free account keeps it across devices and unlocks Community, messages and closet sync."),
+      e(EmailMyResult, { kibbeId: hasKibbe ? kibbeType.id : null, seasonId: (colorResult && colorResult.seasonId) || null }),
       e("button", { className:"btn btn-accent btn-sm", onClick:onSignIn }, "Create a free account")
     ) : null,
     e("div", { style:{ marginBottom:28 } },

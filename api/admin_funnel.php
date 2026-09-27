@@ -94,6 +94,59 @@ try {
          FROM accounts GROUP BY signup_device', [$weekAgo]);
 }
 
+/* Signups by where they came from — the table a paid campaign is judged on.
+ *
+ * signup_source is first-touch, captured by the client from utm_source on the
+ * visitor's first landing and carried until they create an account, so a pin
+ * that gets clicked today and converts next week still gets the credit.
+ *
+ * Read it as cost-per-signup: spend on a channel divided by its `total`. The
+ * `premium` column is the one that decides whether to spend again, but it
+ * lags by at least the seven-day trial, so an honest early read is `total`
+ * and `tookQuiz` — a channel sending people who do not finish the quiz is
+ * sending the wrong people, whatever it cost.
+ *
+ * "(direct)" is everyone with no source recorded: word of mouth, typed-in
+ * addresses, and every account created before this shipped. It is not a
+ * channel and must never be read as one. */
+$acquisitionFellBack = false;
+try {
+    $acquisition = rows($pdo,
+        'SELECT COALESCE(NULLIF(a.signup_source, ""), "(direct)") AS source,
+                COALESCE(NULLIF(a.signup_medium, ""), "") AS medium,
+                COUNT(*) AS total,
+                SUM(a.created_at >= ?) AS last7,
+                SUM(a.email_verified = 1) AS verified,
+                SUM(EXISTS(SELECT 1 FROM profiles p
+                            WHERE p.id = a.id AND COALESCE(p.kibbe_type_name, "") <> "")) AS tookQuiz,
+                SUM(EXISTS(SELECT 1 FROM posts po WHERE po.author_id = a.id)) AS posted,
+                SUM(EXISTS(SELECT 1 FROM subscriptions su
+                            WHERE su.account_id = a.id AND su.is_premium = 1)) AS premium
+         FROM accounts a GROUP BY a.signup_source, a.signup_medium
+         ORDER BY total DESC', [$weekAgo]);
+} catch (Throwable $e) {
+    /* Same reasoning as the platform table above: a missing column beats a
+       blank tab. This also catches the first request after deploy, before
+       ensure_funnel_schema has run on this worker. */
+    error_log('admin_funnel acquisition query: ' . $e->getMessage());
+    $acquisitionFellBack = true;
+    $acquisition = [];
+}
+
+/* The signed-out capture. These people never made an account, so they appear
+ * nowhere else on this page — which was the whole blind spot. `converted` is
+ * how many later signed up with the same address, and is the number that says
+ * whether asking for an email instead of an account was worth doing. */
+$leads = [];
+try {
+    $leads = rows($pdo,
+        'SELECT COALESCE(NULLIF(source, ""), "(direct)") AS source,
+                COUNT(*) AS total,
+                SUM(created_at >= ?) AS last7,
+                SUM(converted_at IS NOT NULL) AS converted
+         FROM leads GROUP BY source ORDER BY total DESC', [$weekAgo]);
+} catch (Throwable $e) { /* table not created until the first capture */ }
+
 $daily = rows($pdo,
     'SELECT slug, FLOOR(created_at / 86400000) AS day, COUNT(*) AS n
      FROM link_clicks WHERE created_at >= ? GROUP BY slug, day ORDER BY day ASC', [$weekAgo]);
@@ -128,6 +181,9 @@ json_response([
     'clicksBySource' => $bySource,
     'signups' => $signups,
     'signupsFellBack' => $signupsFellBack,
+    'acquisition' => $acquisition,
+    'acquisitionFellBack' => $acquisitionFellBack,
+    'leads' => $leads,
     'daily' => $daily,
-    'note' => 'Clicks and signups are separate populations. Nothing links a click to the account it may have become, so read the ratio as a trend, not as attribution. Per-platform columns count people, not rows, so someone with many posts counts once. "iOS" means the account was created from the iOS app, recorded only from 23 Sep 2026 — anything older reads as (unrecorded), not as web, and TestFlight installs that never made an account appear nowhere here at all. The stage counts cover accounts only — the quiz works signed out, so anyone who took it and left without signing up is invisible here.',
+    'note' => 'Clicks and signups are separate populations. Nothing links a click to the account it may have become, so read the ratio as a trend, not as attribution. Per-platform columns count people, not rows, so someone with many posts counts once. "iOS" means the account was created from the iOS app, recorded only from 23 Sep 2026 — anything older reads as (unrecorded), not as web, and TestFlight installs that never made an account appear nowhere here at all. The stage counts cover accounts only — the quiz works signed out, so anyone who took it and left without signing up is invisible here. The acquisition table is first-touch: the source is whatever brought someone here the FIRST time, kept until they sign up, so a channel gets credit for a conversion that happens weeks later. \"(direct)\" is not a channel — it is everyone with nothing recorded, including every account made before 27 Sep 2026. Leads are people who asked us to email their quiz result without making an account; \"converted\" counts those who later signed up with the same address.',
 ]);

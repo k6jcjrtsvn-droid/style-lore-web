@@ -1538,6 +1538,17 @@ function ensure_funnel_schema(PDO $pdo): void {
         // sent this on login; signup threw it away, so there was no way to
         // ask "how many of these came from the iOS beta".
         $pdo->exec('ALTER TABLE accounts ADD COLUMN IF NOT EXISTS signup_device VARCHAR(16) NULL');
+        // Where an account came from. signup_device answers "which platform";
+        // these answer "which advert, which pin, which channel" -- the question
+        // a paid campaign has to be able to answer, or the money buys traffic
+        // and teaches nothing. First-touch, captured by the client on landing.
+        $pdo->exec('ALTER TABLE accounts ADD COLUMN IF NOT EXISTS signup_source VARCHAR(64) NULL');
+        $pdo->exec('ALTER TABLE accounts ADD COLUMN IF NOT EXISTS signup_medium VARCHAR(64) NULL');
+        $pdo->exec('ALTER TABLE accounts ADD COLUMN IF NOT EXISTS signup_campaign VARCHAR(64) NULL');
+        $pdo->exec('ALTER TABLE accounts ADD COLUMN IF NOT EXISTS signup_referrer VARCHAR(255) NULL');
+        // No IF NOT EXISTS for keys on this MySQL -- a duplicate throws and is
+        // exactly what we want to ignore, same as the season columns above.
+        try { $pdo->exec('ALTER TABLE accounts ADD KEY idx_signup_source (signup_source)'); } catch (Throwable $e) {}
     } catch (Throwable $e) { error_log('ensure_funnel_schema: ' . $e->getMessage()); }
 }
 
@@ -1547,6 +1558,55 @@ function normalize_device(?string $raw): ?string {
     $raw = strtolower(trim((string)$raw));
     if ($raw === 'ios' || $raw === 'android' || $raw === 'web') return $raw;
     return null;
+}
+
+/** One attribution value as it arrived from a query string.
+ *
+ *  These come from a URL a stranger controls and end up rendered in the
+ *  admin Funnel tab, so they are lower-cased, stripped to a closed character
+ *  set and capped before they go anywhere near the database. Like
+ *  signup_device, the value labels a row and is never trusted for anything
+ *  that matters -- nobody gets premium by editing a utm_source. */
+function normalize_attribution(?string $raw, int $max = 64): ?string {
+    $v = strtolower(trim((string)$raw));
+    if ($v === '') return null;
+    $v = (string)preg_replace('/[^a-z0-9._\-\/: ]+/', '', $v);
+    $v = trim((string)preg_replace('/\s+/', ' ', $v));
+    if ($v === '') return null;
+    return mb_substr($v, 0, $max);
+}
+
+/** Quiz results emailed to people who never made an account.
+ *
+ *  The quiz works signed out by design. That is right for organic traffic and
+ *  fatal for paid: a visitor can arrive on a bought click, take the quiz, read
+ *  their type and leave without ever touching the database, and the money is
+ *  spent with nothing to show for it. This table is that missing trace.
+ *
+ *  converted_at is filled in later if the same address ever does sign up, so
+ *  "how many of these emails turned into accounts" is answerable. */
+function ensure_leads_table(PDO $pdo): void {
+    static $done = false; if ($done) return; $done = true;
+    try {
+        $pdo->exec(
+            'CREATE TABLE IF NOT EXISTS leads (
+                id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+                email VARCHAR(190) NOT NULL,
+                created_at BIGINT NOT NULL,
+                kibbe_id VARCHAR(32) DEFAULT NULL,
+                season_id VARCHAR(24) DEFAULT NULL,
+                source VARCHAR(64) DEFAULT NULL,
+                medium VARCHAR(64) DEFAULT NULL,
+                campaign VARCHAR(64) DEFAULT NULL,
+                referrer VARCHAR(255) DEFAULT NULL,
+                device VARCHAR(16) DEFAULT NULL,
+                converted_at BIGINT DEFAULT NULL,
+                UNIQUE KEY uniq_email (email),
+                KEY idx_created (created_at),
+                KEY idx_source (source)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4'
+        );
+    } catch (Throwable $e) { error_log('ensure_leads_table: ' . $e->getMessage()); }
 }
 
 

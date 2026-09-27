@@ -250,6 +250,7 @@
      older reads as (unrecorded) rather than as web. */
   function renderFunnel(d){
     var signups = d.signups || [], clicks = d.clicks || [], bySource = d.clicksBySource || [];
+    var acq = d.acquisition || [], leads = d.leads || [];
     var LABEL = { ios:"iOS app", android:"Android app", web:"Web", "(unrecorded)":"Before 23 Sep (not recorded)" };
     function num(x){ return Number(x || 0).toLocaleString(); }
 
@@ -328,6 +329,41 @@
       'counts once under Posted. TestFlight installs that never made an account are not here at all; ' +
       'App Store Connect is the only place those show.</p></div>';
 
+    /* Where accounts came from. This is the table a paid campaign is judged
+       on: spend on a channel divided by its Accounts column is the real
+       cost per signup. Premium is the column that decides whether to spend
+       again, but it lags by at least the 7-day trial, so early on read
+       Accounts and Took quiz - a channel sending people who never finish
+       the quiz is sending the wrong people however cheap the clicks were. */
+    var tAcq = '<div class="fsec"><h2>Where accounts came from</h2><table class="f">' +
+      '<tr><th>Source</th><th>Medium</th><th class="n">Accounts</th><th class="n">Last 7 days</th>' +
+      '<th class="n">Verified</th><th class="n">Took quiz</th><th class="n">Posted</th><th class="n">Premium</th></tr>' +
+      (acq.length ? acq.map(function(r){
+        return '<tr><td>' + esc(r.source) + '</td><td>' + esc(r.medium || "\u2014") +
+               '</td><td class="n">' + num(r.total) + '</td><td class="n">' + num(r.last7) +
+               '</td><td class="n">' + num(r.verified) + '</td><td class="n">' + num(r.tookQuiz) +
+               '</td><td class="n">' + num(r.posted) + '</td><td class="n">' + num(r.premium) + '</td></tr>';
+      }).join("") : '<tr><td colspan="8">Nothing recorded yet.</td></tr>') +
+      '</table><p class="fnote">' +
+      (d.acquisitionFellBack ? '<b>This table could not be computed on this database.</b> ' : '') +
+      'First-touch: the source is whatever brought somebody here the <em>first</em> time, kept until they sign up, ' +
+      'so a pin clicked today still gets the credit if they join next week. ' +
+      '<b>"(direct)" is not a channel</b> \u2014 it is everyone with nothing recorded, including every account made before 27 Sep 2026. ' +
+      'Tag your links with ?utm_source=pinterest&amp;utm_medium=paid to make them appear here.</p></div>';
+
+    /* People who asked for their result by email and never made an account.
+       They appear nowhere else on this page, which was the blind spot: the
+       quiz works signed out, so a bought click could be spent with no trace
+       at all. Converted is how many later signed up with the same address. */
+    var tLeads = leads.length ? '<div class="fsec"><h2>Emailed results (no account)</h2><table class="f">' +
+      '<tr><th>Source</th><th class="n">Emails</th><th class="n">Last 7 days</th><th class="n">Later signed up</th></tr>' +
+      leads.map(function(r){
+        return '<tr><td>' + esc(r.source) + '</td><td class="n">' + num(r.total) +
+               '</td><td class="n">' + num(r.last7) + '</td><td class="n">' + num(r.converted) + '</td></tr>';
+      }).join("") +
+      '</table><p class="fnote">Asked us to email their quiz result from the signed-out result screen. ' +
+      'They are not accounts and are not counted anywhere else here.</p></div>' : "";
+
     var t2 = '<div class="fsec"><h2>Share-link clicks</h2><table class="f">' +
       '<tr><th>Link</th><th class="n">Clicks</th><th class="n">Distinct IPs</th><th class="n">Last 7 days</th><th class="n">On that platform</th></tr>' +
       (clicks.length ? clicks.map(function(r){
@@ -342,7 +378,7 @@
         return '<tr><td>/' + esc(r.slug) + '</td><td>' + esc(r.source) + '</td><td class="n">' + num(r.n) + '</td></tr>';
       }).join("") + '</table></div>' : "";
 
-    return head + t1 + t2 + t3 + '<p class="fnote">' + esc(d.note || "") + '</p>';
+    return head + t1 + tAcq + tLeads + t2 + t3 + '<p class="fnote">' + esc(d.note || "") + '</p>';
   }
 
   /* The Find tab. Answers "is this person in here, and how far did they
