@@ -1576,6 +1576,65 @@ function normalize_attribution(?string $raw, int $max = 64): ?string {
     return mb_substr($v, 0, $max);
 }
 
+/* ---------------------------------------------------------------------
+ * Consent before a photo goes to a third-party AI.
+ *
+ * App Store Review Guideline 5.1.2(i), added 13 Nov 2025:
+ *
+ *   "You must clearly disclose where personal data will be shared with third
+ *    parties, including with third-party AI, and obtain explicit permission
+ *    before doing so."
+ *
+ * Google Play's User Data policy reaches the same place from the other
+ * direction -- since 15 Jul 2026 it expressly covers third-party AI
+ * integrations, and its prominent-disclosure rule requires the disclosure to
+ * be INSIDE the app (not only in the listing or the privacy policy) and to
+ * "require affirmative user action (for example, tap to accept, tick a
+ * check-box)".
+ *
+ * A photograph of somebody's body is personal data by any reading, and the
+ * Style-ME read, the follow-up questions and auto-describe all send one to
+ * api.anthropic.com. Honest copy next to the button ("sent once, never
+ * stored") is disclosure but it is not permission, and a Terms checkbox at
+ * sign-up is not explicit permission for this specific sharing.
+ *
+ * So consent is recorded per account, server-side, and the three endpoints
+ * that send a photo REFUSE without it. Client-side gating alone would be a
+ * promise; this is a control -- and a reviewer who asks "what stops a photo
+ * being sent before the user agrees?" has a one-line answer.
+ * ------------------------------------------------------------------- */
+
+function ensure_ai_consent_column(PDO $pdo): void {
+    static $done = false; if ($done) return; $done = true;
+    try {
+        $pdo->exec('ALTER TABLE accounts ADD COLUMN IF NOT EXISTS ai_consent_at BIGINT NULL');
+    } catch (Throwable $e) { error_log('ensure_ai_consent_column: ' . $e->getMessage()); }
+}
+
+/** Epoch ms when this account agreed, or null. Null means never agreed OR
+ *  agreed and later withdrew -- deliberately the same state, because a
+ *  withdrawal that left a weaker trace than a grant would be the wrong way
+ *  round. */
+function ai_consent_at(PDO $pdo, string $accountId): ?int {
+    ensure_ai_consent_column($pdo);
+    try {
+        $st = $pdo->prepare('SELECT ai_consent_at FROM accounts WHERE id = ?');
+        $st->execute([$accountId]);
+        $v = $st->fetchColumn();
+        return ($v === false || $v === null) ? null : (int)$v;
+    } catch (Throwable $e) { error_log('ai_consent_at: ' . $e->getMessage()); return null; }
+}
+
+/** Refuse the request unless this account has agreed. The `code` is what the
+ *  client keys on to open the consent sheet rather than print an error. */
+function require_ai_consent(PDO $pdo, string $accountId): void {
+    if (ai_consent_at($pdo, $accountId) !== null) return;
+    json_response([
+        'error' => 'Before a photo can be read by the AI stylist, we need your permission to send it to our AI provider.',
+        'code'  => 'ai_consent_required',
+    ], 403);
+}
+
 /** Quiz results emailed to people who never made an account.
  *
  *  The quiz works signed out by design. That is right for organic traffic and

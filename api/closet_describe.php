@@ -31,6 +31,10 @@ if (!$visitorId || !$authToken) {
 
 $pdo = db();
 require_owner($pdo, $visitorId, $authToken);
+// Explicit permission before this photo leaves for a third-party AI
+// (Apple 5.1.2(i), Google Play User Data policy). Enforced here rather than
+// only in the UI, so the guarantee holds against any client.
+require_ai_consent($pdo, $visitorId);
 rate_limit($pdo, 'closet_describe:' . $visitorId, 60, 86400, "That's a lot of items for one day — type this one in and try again tomorrow.");
 
 $apiKey = defined('ANTHROPIC_API_KEY') ? trim((string)ANTHROPIC_API_KEY) : '';

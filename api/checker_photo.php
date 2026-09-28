@@ -88,6 +88,10 @@ if (!$visitorId || !$authToken) {
 
 $pdo = db();
 require_owner($pdo, $visitorId, $authToken);
+// Explicit permission before this photo leaves for a third-party AI
+// (Apple 5.1.2(i), Google Play User Data policy). Enforced here rather than
+// only in the UI, so the guarantee holds against any client.
+require_ai_consent($pdo, $visitorId);
 
 // One free read per account, ever: the best paywall is a taste of the
 // real thing. After that it's Premium. Premium reads are rate-limited

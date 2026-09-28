@@ -4369,6 +4369,11 @@ const IS_NATIVE_APP = !!window.STYLE_LORE_NATIVE;
 // the paywall. Apple and Google both want their own name used.
 const STORE_ACCOUNT_NAME = (window.Capacitor && window.Capacitor.getPlatform && window.Capacitor.getPlatform() === "ios")
   ? "Apple ID" : "Google Play account";
+// Same question, asked where the answer has to be a store name rather than an
+// account name: the deletion sheet has to point at the right subscription
+// page, and sending an iPhone owner to Google Play would be worse than saying
+// nothing at all.
+const IS_APPLE_PLATFORM = !!(window.Capacitor && window.Capacitor.getPlatform && window.Capacitor.getPlatform() === "ios");
 const API_BASE = window.STYLE_LORE_API_BASE || "";
 function mediaUrl(u){
   if(!u || typeof u !== "string") return u;
@@ -4875,6 +4880,23 @@ const Api = {
   // "Describe it for me" in Add-to-closet (api/closet_describe.php): one
   // small vision call that returns a closet-ready one-liner. Free for
   // signed-in accounts; the photo is sent once and not stored.
+  // Explicit permission to send a photo to a third-party AI. Read and written
+  // server-side rather than kept in localStorage: a permission that a reinstall
+  // silently resets is not a permission, and the three photo endpoints check
+  // this same column on every request.
+  async getAiConsent(visitorId, authToken){
+    const r = await fetch("/api/ai/consent?visitorId=" + encodeURIComponent(visitorId) + "&authToken=" + encodeURIComponent(authToken));
+    if(!r.ok) throw await apiError(r, "Couldn't check your AI photo permission.");
+    return r.json();
+  },
+  async setAiConsent(visitorId, authToken, granted){
+    const r = await fetch("/api/ai/consent", {
+      method:"POST", headers:{ "Content-Type":"application/json" },
+      body: JSON.stringify({ visitorId, authToken, granted: !!granted }),
+    });
+    if(!r.ok) throw await apiError(r, "Couldn't save that — try again.");
+    return r.json();
+  },
   async describeClosetPhoto({ visitorId, authToken, photoBlob }){
     const fd = new FormData();
     fd.append("visitorId", visitorId);
@@ -6363,6 +6385,7 @@ function HomeScreen({ profile, blend, styleBlend, kibbeResult, colorResult, clos
   const [confirmingSignOut, setConfirmingSignOut] = useState(false);
   const [showDeleteAccount, setShowDeleteAccount] = useState(false);
   const [showBlocked, setShowBlocked] = useState(false);
+  const [showAiConsent, setShowAiConsent] = useState(false);
   const [verifyBannerDismissed, setVerifyBannerDismissed] = useState(false);
   const [resendBusy, setResendBusy] = useState(false);
   const [resendSent, setResendSent] = useState(false);
@@ -6532,12 +6555,18 @@ function HomeScreen({ profile, blend, styleBlend, kibbeResult, colorResult, clos
       ) : null,
       e("div", { style:{ marginTop:10, display:"flex", gap:14, flexWrap:"wrap", alignItems:"center" } },
         e("button", { className:"btn-text", style:{ padding:0, fontSize:12, color:"var(--ink-soft)" }, onClick:()=>setShowBlocked(true) }, "Blocked accounts"),
+        // Withdrawing has to be as findable as granting was, or the grant is
+        // not really a choice. Sits with the other account controls.
+        e("button", { className:"btn-text", style:{ padding:0, fontSize:12, color:"var(--ink-soft)" }, onClick:()=>setShowAiConsent(true) }, "AI photo permission"),
         e("button", { className:"btn-text", style:{ padding:0, fontSize:12, color:"var(--ink-soft)" }, onClick:()=>setShowDeleteAccount(true) }, "Delete my account"),
         e(LegalLinks, null)
       )
     ),
     (profile && showBlocked) ? e(BlockedAccountsSheet, {
       viewer:profile, onClose:()=>setShowBlocked(false)
+    }) : null,
+    (profile && showAiConsent) ? e(AiConsentSheet, {
+      viewer:profile, manage:true, onClose:()=>setShowAiConsent(false)
     }) : null,
     (profile && showDeleteAccount) ? e(DeleteAccountSheet, {
       viewer:profile, onDeleted:onAccountDeleted, onClose:()=>setShowDeleteAccount(false)
@@ -7585,6 +7614,85 @@ function ClosetScreen({ closet, setCloset, blend, styleWordBlend, kibbeTypeName,
   );
 }
 
+/* Permission before a photo goes to a third-party AI.
+ *
+ * App Store Guideline 5.1.2(i) (Nov 2025) requires explicit permission before
+ * personal data is shared with third-party AI, and Google Play's User Data
+ * policy has covered third-party AI integrations since July 2026 — with the
+ * stricter requirement that the disclosure lives INSIDE the app and takes an
+ * affirmative action, not a pre-ticked box and not a line in the privacy
+ * policy.
+ *
+ * A photograph of somebody's body is personal data by any reading. The copy
+ * below names the company, says what is sent and what is not, and separates
+ * the two features that send a photo from the several that never do — because
+ * the honest distinction is the reason someone would say yes.
+ *
+ * `manage` renders the same sheet as a settings screen, which is where the
+ * permission is withdrawn. Withdrawal has to be as easy to find as the grant. */
+function AiConsentSheet({ viewer, manage, onGranted, onClose }){
+  const [state, setState] = useState("loading"); // loading | need | granted
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+
+  useEffect(() => {
+    let dead = false;
+    if(!viewer || !viewer.visitorId){ setState("need"); return; }
+    Api.getAiConsent(viewer.visitorId, viewer.token)
+      .then(r => { if(!dead) setState(r && r.granted ? "granted" : "need"); })
+      .catch(() => { if(!dead) setState("need"); });
+    return () => { dead = true; };
+  }, [viewer && viewer.visitorId]);
+
+  async function decide(granted){
+    if(busy) return;
+    setBusy(true); setError(null);
+    try{
+      await Api.setAiConsent(viewer.visitorId, viewer.token, granted);
+      setState(granted ? "granted" : "need");
+      if(granted && onGranted) onGranted();
+    }catch(err){
+      setError((err && err.message) || "Couldn't save that — try again.");
+    }finally{ setBusy(false); }
+  }
+
+  const body = state === "loading"
+    ? e("p", { style:{ fontSize:13.5, color:"var(--ink-soft)" } }, "Checking\u2026")
+    : e(React.Fragment, null,
+        e("p", { style:{ fontSize:14, lineHeight:1.6, marginBottom:12 } },
+          "Two things in Style-LORE send one photo off your device when you tap them: the ",
+          e("b", null, "AI Stylist read"), " and ", e("b", null, "\u201cDescribe it for me\u201d"),
+          " on a closet item. The photo goes to ", e("b", null, "Anthropic"),
+          ", a third-party AI company, is used to answer that one request, and is not stored \u2014 by them or by us."),
+        e("p", { style:{ fontSize:14, lineHeight:1.6, marginBottom:12 } },
+          "Everything else stays on your phone: the quiz photo step, the instant fit check and the closet background clean-up all run on your own device, and those pictures never leave it."),
+        e("p", { className:"footnote", style:{ marginBottom:14 } },
+          "You can withdraw this at any time under Home \u2192 AI photo permission. Withdrawing stops any further photos being sent. ",
+          e(LegalLinks, null)),
+        error ? e("div", { className:"field-error", style:{ marginBottom:10 } }, error) : null,
+        state === "granted"
+          ? e(React.Fragment, null,
+              e("p", { style:{ fontSize:13.5, color:"var(--ink-soft)", marginBottom:10 } }, "You've given permission for this."),
+              e("button", { className:"btn btn-ghost btn-block", disabled:busy, onClick:()=>decide(false) },
+                busy ? "Saving\u2026" : "Withdraw permission"))
+          : e(React.Fragment, null,
+              e("button", { className:"btn btn-accent btn-block", disabled:busy, onClick:()=>decide(true) },
+                busy ? "Saving\u2026" : "I agree \u2014 send my photo for AI reads"),
+              e("button", { className:"btn btn-ghost btn-block", style:{ marginTop:8 }, disabled:busy, onClick:onClose },
+                manage ? "Close" : "Not now"))
+      );
+
+  return e("div", { className:"sheet-backdrop", onClick:onClose },
+    e("div", { className:"sheet", role:"dialog", "aria-modal":"true", onClick: ev=>ev.stopPropagation() },
+      e("h2", { className:"display", style:{ fontSize:20, fontWeight:700, marginBottom:10 } }, "Sending a photo to our AI"),
+      body,
+      state === "granted" && manage
+        ? e("button", { className:"btn-text", style:{ marginTop:12, fontSize:13 }, onClick:onClose }, "Close")
+        : null
+    )
+  );
+}
+
 function AddItemSheet({ onAdd, onClose, viewer }){
   const dialogRef = useDialog(onClose);
   useBackClose(onClose);
@@ -7595,6 +7703,10 @@ function AddItemSheet({ onAdd, onClose, viewer }){
   const [price, setPrice] = useState("");
   // "Describe it for me": idle | busy | done | off (feature not set up)
   const [describe, setDescribe] = useState("idle");
+  // null = not checked yet. Checked lazily on first use rather than on mount,
+  // so opening this sheet to type a description costs no request.
+  const [aiConsent, setAiConsent] = useState(null);
+  const [showAiConsent, setShowAiConsent] = useState(false);
   const describedRef = useRef(false);
   // Background removal: idle | busy | done. `originalPhoto` holds what the
   // photo looked like before, so "Use original" is always one tap away — the
@@ -7638,6 +7750,10 @@ function AddItemSheet({ onAdd, onClose, viewer }){
 
   async function describeForMe(){
     if(!photoPreview || !viewer || describe === "busy") return;
+    // Ask first. The server refuses without consent anyway, but stopping here
+    // means the photo is never even uploaded to us, which is the promise the
+    // consent sheet makes.
+    if(aiConsent !== true){ setShowAiConsent(true); return; }
     setDescribe("busy"); setPhotoError(null);
     try{
       const res = await Api.describeClosetPhoto({ visitorId: viewer.visitorId, authToken: viewer.token, photoBlob: dataUrlToBlob(photoPreview) });
@@ -7646,6 +7762,7 @@ function AddItemSheet({ onAdd, onClose, viewer }){
       setDescription(text); describedRef.current = true; setDescribe("done");
     }catch(err){
       if(err && err.code === "ai_unavailable"){ setDescribe("off"); return; }
+      if(err && err.code === "ai_consent_required"){ setAiConsent(false); setShowAiConsent(true); setDescribe("idle"); return; }
       setPhotoError((err && err.message) || "Couldn't describe that photo — type a description instead.");
       setDescribe("idle");
     }
@@ -7656,7 +7773,13 @@ function AddItemSheet({ onAdd, onClose, viewer }){
     onAdd({ description: description.trim(), photo: photoPreview || null, visibility, price: parsePrice(price) });
   }
 
-  return e("div", { className:"sheet-backdrop", onClick:onClose },
+  return e(React.Fragment, null,
+    showAiConsent ? e(AiConsentSheet, {
+      viewer,
+      onGranted: () => { setAiConsent(true); setShowAiConsent(false); describeForMe(); },
+      onClose: () => setShowAiConsent(false),
+    }) : null,
+    e("div", { className:"sheet-backdrop", onClick:onClose },
     e("div", { className:"sheet", ref:dialogRef, role:"dialog", "aria-modal":"true", onClick: ev=>ev.stopPropagation() },
       e("div", { className:"sheet-handle" }),
       e("div", { className:"sheet-head" },
@@ -7714,7 +7837,7 @@ function AddItemSheet({ onAdd, onClose, viewer }){
       ),
       e("button", { className:"btn btn-accent btn-block", disabled:!description.trim(), onClick:submit }, "Add item")
     )
-  );
+  ));
 }
 
 /* ---- Outfits: builder, saved list, planner ---------------------------
@@ -8236,6 +8359,11 @@ function PaywallSheet({ reason, onClose, onPurchased, profile, webCheckout: webC
 ===================================================================== */
 
 function CheckerScreen({ blend, styleWordBlend, kibbeTypeName, topStyleWords, visitorId, authToken, isPremium, freeAiReadsLeft, onFreeAiReadUsed, onSignIn, onUpgrade }){
+  // Third-party AI photo permission (Apple 5.1.2(i) / Play User Data policy).
+  // null until checked; checked only when a read is actually attempted.
+  const [aiConsent, setAiConsent] = useState(null);
+  const [showAiConsent, setShowAiConsent] = useState(false);
+  const [afterConsent, setAfterConsent] = useState(null); // "read" | "ask"
   const hasFreeRead = !isPremium && (freeAiReadsLeft || 0) > 0;
   const [description, setDescription] = useState("");
   const [checked, setChecked] = useState(null);
@@ -8352,6 +8480,9 @@ function CheckerScreen({ blend, styleWordBlend, kibbeTypeName, topStyleWords, vi
     setAiResult(null);
     setAiError(null);
     setAiCorrectDraft(null);
+    // Permission first. The server refuses without it, but returning here
+    // means the photo never leaves the phone at all.
+    if(aiConsent !== true){ setAfterConsent("read"); setShowAiConsent(true); return; }
     setAiThread([]);
     setAiAskDraft("");
     setAiAskError(null);
@@ -8364,7 +8495,9 @@ function CheckerScreen({ blend, styleWordBlend, kibbeTypeName, topStyleWords, vi
       const photo = await historyPhotoFromDataUrl(source);
       remember({ kind:"ai", thumb, photo, headline: result.headline, input: result.suggestion || result.detail, detail: result.detail || "", suggestion: result.suggestion || "", verdictPill: result.verdict === "mismatch" ? "avoid" : result.verdict === "match" ? "match" : "neutral" });
     }catch(err){
-      if(err.code === "premium_required"){
+      if(err.code === "ai_consent_required"){
+        setAiConsent(false); setAfterConsent("read"); setShowAiConsent(true);
+      } else if(err.code === "premium_required"){
         if(onUpgrade) onUpgrade("checker");
       } else {
         setAiError(err.message || "Couldn't run the AI Stylist right now — try again.");
@@ -8377,6 +8510,7 @@ function CheckerScreen({ blend, styleWordBlend, kibbeTypeName, topStyleWords, vi
   async function askStylist(){
     const q = aiAskDraft.trim();
     if(!q || aiAskBusy || !photoBlob || !aiResult) return;
+    if(aiConsent !== true){ setAfterConsent("ask"); setShowAiConsent(true); return; }
     setAiAskBusy(true);
     setAiAskError(null);
     // The read is the assistant's opening turn. Rebuilt from aiResult rather
@@ -8392,7 +8526,8 @@ function CheckerScreen({ blend, styleWordBlend, kibbeTypeName, topStyleWords, vi
       setAiThread(aiThread.concat([{ role:"user", text:q }, { role:"assistant", text:res.answer }]));
       setAiAskDraft("");
     }catch(err){
-      if(err.code === "premium_required"){ if(onUpgrade) onUpgrade("checker"); }
+      if(err.code === "ai_consent_required"){ setAiConsent(false); setAfterConsent("ask"); setShowAiConsent(true); }
+      else if(err.code === "premium_required"){ if(onUpgrade) onUpgrade("checker"); }
       else setAiAskError(err.message || "Couldn't ask the stylist right now — try again.");
     }finally{
       setAiAskBusy(false);
@@ -8400,6 +8535,17 @@ function CheckerScreen({ blend, styleWordBlend, kibbeTypeName, topStyleWords, vi
   }
 
   return e("div", null,
+    showAiConsent ? e(AiConsentSheet, {
+      viewer: { visitorId, token: authToken },
+      onGranted: () => {
+        setAiConsent(true); setShowAiConsent(false);
+        // Carry on with whatever they were trying to do, so agreeing does not
+        // cost them a second tap on a button they already pressed.
+        const next = afterConsent; setAfterConsent(null);
+        if(next === "read") runAi(); else if(next === "ask") askStylist();
+      },
+      onClose: () => { setShowAiConsent(false); setAfterConsent(null); },
+    }) : null,
     e("div", { className:"eyebrow" }, "Does this match me?"),
     e("h1", { className:"screen-title" }, kibbeTypeName ? "Style-ME · " + kibbeTypeName : "Style-ME"),
     e("p", { className:"screen-lede", style:{ marginBottom:20 } },
@@ -10211,6 +10357,24 @@ function DeleteAccountSheet({ viewer, onDeleted, onClose }){
         "This permanently deletes your account, profile, and Community posts, and removes your likes and follows. This can't be undone."),
       e("p", { style:{ fontSize:12.5, color:"var(--ink-soft)", marginBottom:14 } },
         "One known limitation: comments you've left on other people's posts stay visible under your display name, since comments aren't linked to accounts in a way that lets us safely remove only yours."),
+      // Apple's account-deletion guidance is explicit: where the app sells an
+      // auto-renewing subscription, deleting the account must tell the user
+      // that billing does NOT stop with it and point them at where to cancel.
+      // Deleting our record cannot cancel an Apple or Google subscription --
+      // we do not hold that contract -- so someone who deletes and assumes
+      // otherwise keeps being charged for an account that no longer exists.
+      e("div", { style:{ padding:"10px 12px", border:"1px solid var(--line-soft)", borderRadius:10, marginBottom:14 } },
+        e("p", { style:{ fontSize:12.5, marginBottom:6 } },
+          e("b", null, "If you subscribe, cancel first."),
+          " Deleting your Style-LORE account does not cancel a Premium subscription \u2014 that is billed by ",
+          IS_NATIVE_APP ? (IS_APPLE_PLATFORM ? "Apple" : "Google Play") : "the App Store, Google Play or Stripe",
+          ", not by us, and it will keep renewing until you cancel it there."),
+        e("a", {
+          href: IS_APPLE_PLATFORM
+            ? "https://apps.apple.com/account/subscriptions"
+            : "https://play.google.com/store/account/subscriptions",
+          target:"_blank", rel:"noopener", style:{ fontSize:12.5 }
+        }, "Manage my subscription")),
 
       e("div", { className:"field" },
         e("label", { htmlFor:"delete-password" }, "Confirm your password"),
@@ -10612,6 +10776,13 @@ function InboxScreen({ profile, onBack, onOpenConversation }){
 }
 
 function ConversationScreen({ profile, conversationId, otherName, otherId, otherAvatarUrl, onBack, onOpenProfile }){
+  // Blocking has to be reachable from the conversation itself, not only from
+  // the other person's profile. Google Play's UGC policy asks for blocking
+  // wherever there is 1:1 interaction, and somebody who wants out of a thread
+  // should not have to work out that the route is two taps away through a
+  // profile they may not want to open.
+  const [confirmBlock, setConfirmBlock] = useState(false);
+  const [blockBusy, setBlockBusy] = useState(false);
   const [messages, setMessages] = useState(null);
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
@@ -10671,13 +10842,36 @@ function ConversationScreen({ profile, conversationId, otherName, otherId, other
     });
   }
 
+  async function blockFromThread(){
+    if(blockBusy || !otherId) return;
+    setBlockBusy(true);
+    try{
+      await Api.blockUser(profile.visitorId, profile.token, otherId, "block");
+      setConfirmBlock(false);
+      // The thread is gone from both sides now, so staying on it would be
+      // showing a screen that no longer means anything.
+      if(onBack) onBack();
+    }catch(err){
+      setError((err && err.message) || "Couldn't block that person — try again.");
+      setConfirmBlock(false);
+    }finally{ setBlockBusy(false); }
+  }
+
   return e("div", { className:"convo" },
     e("div", { className:"convo-head" },
       e("button", { type:"button", className:"back", "aria-label":"Back to messages", onClick:onBack }, Icon("back")),
       e(Avatar, { url:otherAvatarUrl || null, name:otherName || "?", size:40 }),
       e("div", { className:"who" }, e("b", null, otherName || "Conversation"), e("span", null, messages && messages.length ? "Direct message" : "Start of your conversation")),
-      onOpenProfile && otherId ? e("button", { className:"btn-text", style:{ fontSize:12.5, padding:"6px 8px" }, onClick:()=>onOpenProfile(otherId) }, "Profile") : null
+      onOpenProfile && otherId ? e("button", { className:"btn-text", style:{ fontSize:12.5, padding:"6px 8px" }, onClick:()=>onOpenProfile(otherId) }, "Profile") : null,
+      otherId ? e("button", { className:"btn-text", style:{ fontSize:12.5, padding:"6px 8px" }, onClick:()=>setConfirmBlock(true) }, "Block") : null
     ),
+    confirmBlock ? e("div", { style:{ margin:"10px 12px 0", padding:"12px 14px", border:"1px solid var(--line-soft)", borderRadius:12 } },
+      e("p", { style:{ fontSize:13.5, marginBottom:10 } },
+        "Block ", e("b", null, otherName || "this person"), "? They won't be able to message you again, you won't see each other's posts, comments or stories, and this conversation goes away for both of you. They are not told."),
+      e("div", { style:{ display:"flex", gap:16 } },
+        e("button", { className:"btn-text", style:{ padding:0, fontSize:13, color:"var(--danger)" }, disabled:blockBusy, onClick:blockFromThread }, blockBusy ? "Blocking\u2026" : "Block"),
+        e("button", { className:"btn-text", style:{ padding:0, fontSize:13 }, onClick:()=>setConfirmBlock(false) }, "Cancel"))
+    ) : null,
     error ? e(Banner, { kind:"error" }, error) : null,
     e("div", { ref:listRef, className:"conversation-list" },
       messages === null ? e(Thinking, { label:"Loading…" })
