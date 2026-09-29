@@ -1625,12 +1625,51 @@ function ai_consent_at(PDO $pdo, string $accountId): ?int {
     } catch (Throwable $e) { error_log('ai_consent_at: ' . $e->getMessage()); return null; }
 }
 
+/** True when the calling client says it can PRESENT the consent sheet.
+ *
+ *  This exists because of a regression shipped on 28 Sep 2026. The consent
+ *  gate was added server-side and applied to every client at once -- but the
+ *  builds already in people's hands (iOS 1.0 (3), Android 1.8) have no consent
+ *  sheet and no way to reach one. They took the 403, printed its message as a
+ *  dead-end error, and the AI Stylist simply stopped working for everybody who
+ *  was not on the build released the same day. Android 1.8 was in Play review
+ *  at the time, so a reviewer testing the flagship paid feature would have hit
+ *  it too.
+ *
+ *  A permission prompt nobody can answer is not a permission prompt, it is an
+ *  outage. So the gate now applies to clients that can actually ask: they send
+ *  `consentUi=1`. Clients that do not send it fall back to the behaviour that
+ *  was live and under review before 28 Sep -- disclosure at the point of use
+ *  ("sent once, never stored") plus a deliberate tap to send.
+ *
+ *  This is a bridge, not a design. Remove it once iOS build 3 and Android 1.8
+ *  are no longer installed anywhere: the legacy passes are logged so that is a
+ *  question with an answer rather than a guess. The flag is trivially forgeable
+ *  and that is fine -- forging it buys you the OLD behaviour, not a bypass. */
+function client_can_show_ai_consent(): bool {
+    $v = $_POST['consentUi'] ?? ($_GET['consentUi'] ?? null);
+    if ($v === null) {
+        $body = request_json();
+        $v = $body['consentUi'] ?? null;
+    }
+    return $v === '1' || $v === 1 || $v === true || $v === 'true';
+}
+
 /** Refuse the request unless this account has agreed. The `code` is what the
- *  client keys on to open the consent sheet rather than print an error. */
+ *  client keys on to open the consent sheet rather than print an error.
+ *
+ *  Only enforced against clients that can show the sheet -- see
+ *  client_can_show_ai_consent() for why, and for when to delete this. */
 function require_ai_consent(PDO $pdo, string $accountId): void {
     if (ai_consent_at($pdo, $accountId) !== null) return;
+    if (!client_can_show_ai_consent()) {
+        // Old build: let it through on the pre-28-Sep terms, and record it so
+        // we can tell when the last one has gone.
+        error_log('ai_consent legacy client allowed: ' . substr($accountId, 0, 8));
+        return;
+    }
     json_response([
-        'error' => 'Before a photo can be read by the AI stylist, we need your permission to send it to our AI provider.',
+        'error' => 'Update Style-LORE to use the AI Stylist — the new version asks your permission before your photo is sent to our AI provider.',
         'code'  => 'ai_consent_required',
     ], 403);
 }

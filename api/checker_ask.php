@@ -37,17 +37,15 @@ if (!$visitorId || !$authToken) {
 
 $pdo = db();
 require_owner($pdo, $visitorId, $authToken);
-// Explicit permission before this photo leaves for a third-party AI
-// (Apple 5.1.2(i), Google Play User Data policy). Enforced here rather than
-// only in the UI, so the guarantee holds against any client.
-require_ai_consent($pdo, $visitorId);
-
 $isPremium = has_premium($pdo, $visitorId);
 if (!$isPremium) {
     json_response(['error' => 'Asking the stylist follow-up questions is a Style-LORE Premium feature.', 'code' => 'premium_required'], 402);
 }
 // Purely an abuse cap on a per-call-cost feature, not a product limit.
 rate_limit($pdo, 'ai_ask:' . $visitorId, 120, 86400, "That's a lot of questions for one day — try again tomorrow.");
+
+// Same ordering as checker_photo: entitlement first, then permission.
+require_ai_consent($pdo, $visitorId);
 
 $apiKey = defined('ANTHROPIC_API_KEY') ? trim((string)ANTHROPIC_API_KEY) : '';
 if ($apiKey === '') {

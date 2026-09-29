@@ -4839,6 +4839,11 @@ const Api = {
     fd.append("visitorId", visitorId);
     fd.append("authToken", authToken || "");
     fd.append("photo", photoBlob, "photo.jpg");
+    // Tells the server this build can actually SHOW the consent sheet, so it
+    // is safe to refuse us with ai_consent_required. Builds that predate the
+    // sheet omit it and the server lets them through on the old terms —
+    // see client_can_show_ai_consent() in helpers.php.
+    fd.append("consentUi", "1");
     if(kibbeTypeName) fd.append("kibbeTypeName", kibbeTypeName);
     if(topStyleWords && topStyleWords.length) fd.append("topStyleWords", JSON.stringify(topStyleWords));
     if(correction && correction.trim()) fd.append("correction", correction.trim().slice(0, 160));
@@ -4860,6 +4865,7 @@ const Api = {
   // read itself as the assistant's turn.
   async askStylist({ visitorId, authToken, photoBlob, question, history, kibbeTypeName, topStyleWords }){
     const fd = new FormData();
+    fd.append("consentUi", "1"); // see checkPhoto
     fd.append("visitorId", visitorId);
     fd.append("authToken", authToken || "");
     fd.append("photo", photoBlob, "photo.jpg");
@@ -4899,6 +4905,7 @@ const Api = {
   },
   async describeClosetPhoto({ visitorId, authToken, photoBlob }){
     const fd = new FormData();
+    fd.append("consentUi", "1"); // see checkPhoto
     fd.append("visitorId", visitorId);
     fd.append("authToken", authToken || "");
     fd.append("photo", photoBlob, "item.jpg");
