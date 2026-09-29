@@ -7642,11 +7642,29 @@ function AiConsentSheet({ viewer, manage, onGranted, onClose }){
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
 
+  // Fired at most once, so an already-granted account is waved straight
+  // through instead of being shown a sheet it has nothing to answer.
+  const firedRef = useRef(false);
+
   useEffect(() => {
     let dead = false;
     if(!viewer || !viewer.visitorId){ setState("need"); return; }
     Api.getAiConsent(viewer.visitorId, viewer.token)
-      .then(r => { if(!dead) setState(r && r.granted ? "granted" : "need"); })
+      .then(r => {
+        if(dead) return;
+        const granted = !!(r && r.granted);
+        setState(granted ? "granted" : "need");
+        // THE BUG THIS FIXES: consent is stored per ACCOUNT, but the screens
+        // that use it hold it in per-mount state. So somebody who agreed once
+        // came back, the parent's state was null again, and this sheet opened
+        // on a decision they had already made — showing only "Withdraw
+        // permission" and no way onward. The stylist became unusable from the
+        // second use onwards. If they have already agreed, just continue.
+        if(granted && !manage && !firedRef.current && onGranted){
+          firedRef.current = true;
+          onGranted();
+        }
+      })
       .catch(() => { if(!dead) setState("need"); });
     return () => { dead = true; };
   }, [viewer && viewer.visitorId]);
@@ -7657,7 +7675,7 @@ function AiConsentSheet({ viewer, manage, onGranted, onClose }){
     try{
       await Api.setAiConsent(viewer.visitorId, viewer.token, granted);
       setState(granted ? "granted" : "need");
-      if(granted && onGranted) onGranted();
+      if(granted && onGranted){ firedRef.current = true; onGranted(); }
     }catch(err){
       setError((err && err.message) || "Couldn't save that — try again.");
     }finally{ setBusy(false); }
@@ -7681,7 +7699,11 @@ function AiConsentSheet({ viewer, manage, onGranted, onClose }){
           ? e(React.Fragment, null,
               e("p", { style:{ fontSize:13.5, color:"var(--ink-soft)", marginBottom:10 } }, "You've given permission for this."),
               e("button", { className:"btn btn-ghost btn-block", disabled:busy, onClick:()=>decide(false) },
-                busy ? "Saving\u2026" : "Withdraw permission"))
+                busy ? "Saving\u2026" : "Withdraw permission"),
+              // A sheet with only a destructive button and no way back is a
+              // trap. This branch should be unreachable outside manage mode
+              // now, but it costs one line to make sure.
+              e("button", { className:"btn-text", style:{ marginTop:10, fontSize:13 }, onClick:onClose }, "Close"))
           : e(React.Fragment, null,
               e("button", { className:"btn btn-accent btn-block", disabled:busy, onClick:()=>decide(true) },
                 busy ? "Saving\u2026" : "I agree \u2014 send my photo for AI reads"),
@@ -7711,7 +7733,9 @@ function AddItemSheet({ onAdd, onClose, viewer }){
   // "Describe it for me": idle | busy | done | off (feature not set up)
   const [describe, setDescribe] = useState("idle");
   // null = not checked yet. Checked lazily on first use rather than on mount,
-  // so opening this sheet to type a description costs no request.
+  // so opening this sheet to type a description costs no request. The ref is
+  // what the guard reads — see the note in CheckerScreen for why.
+  const aiConsentRef = useRef(false);
   const [aiConsent, setAiConsent] = useState(null);
   const [showAiConsent, setShowAiConsent] = useState(false);
   const describedRef = useRef(false);
@@ -7760,7 +7784,7 @@ function AddItemSheet({ onAdd, onClose, viewer }){
     // Ask first. The server refuses without consent anyway, but stopping here
     // means the photo is never even uploaded to us, which is the promise the
     // consent sheet makes.
-    if(aiConsent !== true){ setShowAiConsent(true); return; }
+    if(!aiConsentRef.current){ setShowAiConsent(true); return; }
     setDescribe("busy"); setPhotoError(null);
     try{
       const res = await Api.describeClosetPhoto({ visitorId: viewer.visitorId, authToken: viewer.token, photoBlob: dataUrlToBlob(photoPreview) });
@@ -7769,7 +7793,7 @@ function AddItemSheet({ onAdd, onClose, viewer }){
       setDescription(text); describedRef.current = true; setDescribe("done");
     }catch(err){
       if(err && err.code === "ai_unavailable"){ setDescribe("off"); return; }
-      if(err && err.code === "ai_consent_required"){ setAiConsent(false); setShowAiConsent(true); setDescribe("idle"); return; }
+      if(err && err.code === "ai_consent_required"){ aiConsentRef.current = false; setAiConsent(false); setShowAiConsent(true); setDescribe("idle"); return; }
       setPhotoError((err && err.message) || "Couldn't describe that photo — type a description instead.");
       setDescribe("idle");
     }
@@ -7783,7 +7807,7 @@ function AddItemSheet({ onAdd, onClose, viewer }){
   return e(React.Fragment, null,
     showAiConsent ? e(AiConsentSheet, {
       viewer,
-      onGranted: () => { setAiConsent(true); setShowAiConsent(false); describeForMe(); },
+      onGranted: () => { aiConsentRef.current = true; setAiConsent(true); setShowAiConsent(false); describeForMe(); },
       onClose: () => setShowAiConsent(false),
     }) : null,
     e("div", { className:"sheet-backdrop", onClick:onClose },
@@ -8367,7 +8391,12 @@ function PaywallSheet({ reason, onClose, onPurchased, profile, webCheckout: webC
 
 function CheckerScreen({ blend, styleWordBlend, kibbeTypeName, topStyleWords, visitorId, authToken, isPremium, freeAiReadsLeft, onFreeAiReadUsed, onSignIn, onUpgrade }){
   // Third-party AI photo permission (Apple 5.1.2(i) / Play User Data policy).
-  // null until checked; checked only when a read is actually attempted.
+  // The REF is what the guards read, not the state. setState is async, so
+  // calling runAi() straight after setAiConsent(true) in onGranted re-read the
+  // old value, bounced back into the sheet and never ran the read — the
+  // stylist was unusable even on the first attempt. The ref updates
+  // synchronously; the state is only there to re-render.
+  const aiConsentRef = useRef(false);
   const [aiConsent, setAiConsent] = useState(null);
   const [showAiConsent, setShowAiConsent] = useState(false);
   const [afterConsent, setAfterConsent] = useState(null); // "read" | "ask"
@@ -8489,7 +8518,7 @@ function CheckerScreen({ blend, styleWordBlend, kibbeTypeName, topStyleWords, vi
     setAiCorrectDraft(null);
     // Permission first. The server refuses without it, but returning here
     // means the photo never leaves the phone at all.
-    if(aiConsent !== true){ setAfterConsent("read"); setShowAiConsent(true); return; }
+    if(!aiConsentRef.current){ setAfterConsent("read"); setShowAiConsent(true); return; }
     setAiThread([]);
     setAiAskDraft("");
     setAiAskError(null);
@@ -8503,6 +8532,7 @@ function CheckerScreen({ blend, styleWordBlend, kibbeTypeName, topStyleWords, vi
       remember({ kind:"ai", thumb, photo, headline: result.headline, input: result.suggestion || result.detail, detail: result.detail || "", suggestion: result.suggestion || "", verdictPill: result.verdict === "mismatch" ? "avoid" : result.verdict === "match" ? "match" : "neutral" });
     }catch(err){
       if(err.code === "ai_consent_required"){
+        aiConsentRef.current = false;
         setAiConsent(false); setAfterConsent("read"); setShowAiConsent(true);
       } else if(err.code === "premium_required"){
         if(onUpgrade) onUpgrade("checker");
@@ -8517,7 +8547,7 @@ function CheckerScreen({ blend, styleWordBlend, kibbeTypeName, topStyleWords, vi
   async function askStylist(){
     const q = aiAskDraft.trim();
     if(!q || aiAskBusy || !photoBlob || !aiResult) return;
-    if(aiConsent !== true){ setAfterConsent("ask"); setShowAiConsent(true); return; }
+    if(!aiConsentRef.current){ setAfterConsent("ask"); setShowAiConsent(true); return; }
     setAiAskBusy(true);
     setAiAskError(null);
     // The read is the assistant's opening turn. Rebuilt from aiResult rather
@@ -8533,7 +8563,7 @@ function CheckerScreen({ blend, styleWordBlend, kibbeTypeName, topStyleWords, vi
       setAiThread(aiThread.concat([{ role:"user", text:q }, { role:"assistant", text:res.answer }]));
       setAiAskDraft("");
     }catch(err){
-      if(err.code === "ai_consent_required"){ setAiConsent(false); setAfterConsent("ask"); setShowAiConsent(true); }
+      if(err.code === "ai_consent_required"){ aiConsentRef.current = false; setAiConsent(false); setAfterConsent("ask"); setShowAiConsent(true); }
       else if(err.code === "premium_required"){ if(onUpgrade) onUpgrade("checker"); }
       else setAiAskError(err.message || "Couldn't ask the stylist right now — try again.");
     }finally{
@@ -8545,6 +8575,7 @@ function CheckerScreen({ blend, styleWordBlend, kibbeTypeName, topStyleWords, vi
     showAiConsent ? e(AiConsentSheet, {
       viewer: { visitorId, token: authToken },
       onGranted: () => {
+        aiConsentRef.current = true;
         setAiConsent(true); setShowAiConsent(false);
         // Carry on with whatever they were trying to do, so agreeing does not
         // cost them a second tap on a button they already pressed.
