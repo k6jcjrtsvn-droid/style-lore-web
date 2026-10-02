@@ -3,9 +3,9 @@
   "androidStoreUrl": "https://play.google.com/store/apps/details?id=com.stylelore.app",
   "iosStoreUrl": "https://apps.apple.com/app/id6813713328",
   "android": {
-    "version": "1.8",
-    "versionCode": 10,
-    "notes": "Style quiz, colour season, closet and Community. Live on Google Play.",
+    "version": "1.9",
+    "versionCode": 12,
+    "notes": "Style-ME replaces the Checker, the AI Stylist says how sure it is and takes follow-up questions, you choose whether a photo is sent to our AI, and you can reply to a comment.",
     "url": "https://play.google.com/store/apps/details?id=com.stylelore.app"
   },
   "ios": {
