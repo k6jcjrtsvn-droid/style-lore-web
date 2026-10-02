@@ -37,6 +37,8 @@ deployment:
     - /bin/cp -f MIGRATE-2026-09-2.sql $DEPLOYPATH
     - /bin/cp -f MIGRATE-2026-09-30.sql $DEPLOYPATH
     - /bin/cp -f MIGRATE-2026-10-02.sql $DEPLOYPATH
+    - /bin/mkdir -p $DEPLOYPATH/compare
+    - /bin/cp -rf compare/. $DEPLOYPATH/compare/
     - /bin/mkdir -p $DEPLOYPATH/api
     - /bin/cp -rf api/. $DEPLOYPATH/api/
     - /bin/mkdir -p $DEPLOYPATH/includes
