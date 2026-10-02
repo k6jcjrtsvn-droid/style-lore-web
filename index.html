@@ -2703,8 +2703,31 @@ function AutoStyleCard({ closet, profile, viewer, isPremium, onSave, onUpgrade }
   );
 }
 
-function OutfitCard({ closet, profile, compact, onNavigate }){
+/* The pieces of an outfit side by side on one canvas, for a Community post.
+   Closet photos live on the phone as data URLs (and, for a signed-in
+   account, in the closet sync) — there is no server URL to hand over, and
+   the composer takes one photo, so up to four pieces become one image.
+   Resolves null when no piece has a photo or the canvas is unavailable. */
+function outfitCompositePhoto(dataUrls){
+  const srcs = (dataUrls || []).filter(Boolean).slice(0, 4);
+  if(!srcs.length) return Promise.resolve(null);
+  return Promise.all(srcs.map(loadImage)).then(imgs => {
+    const tile = 360, H = 480;
+    const c = document.createElement("canvas"); c.width = tile * imgs.length; c.height = H;
+    const ctx = c.getContext("2d");
+    ctx.fillStyle = "#F6F1EC"; ctx.fillRect(0, 0, c.width, H);
+    imgs.forEach((im, i) => {
+      const s = Math.max(tile / im.width, H / im.height);
+      const w = im.width * s, h = im.height * s;
+      ctx.drawImage(im, i * tile + (tile - w) / 2, (H - h) / 2, w, h);
+    });
+    return c.toDataURL("image/jpeg", 0.82);
+  }).catch(() => null);
+}
+
+function OutfitCard({ closet, profile, compact, onNavigate, canPost }){
   const [seed, setSeed] = useState(() => dateSeed());
+  const [postBusy, setPostBusy] = useState(false);
   const wx = useWeather(!!closet && closet.length > 0);
   const outfit = useMemo(() => buildOutfit(closet, profile, seed, wx.weather), [closet, profile, seed, wx.weather]);
   const labels = { dress:"Dress", top:"Top", bottom:"Bottom", outerwear:"Layer", shoes:"Shoes", accessory:"Finish" };
@@ -2715,6 +2738,24 @@ function OutfitCard({ closet, profile, compact, onNavigate }){
     haptic("light");
     if (wornThis){ unlogWear(); setWornToday(null); }
     else { logWear(pieceIds); setWornToday(pieceIds); }
+  }
+  // Into the Community composer with the pieces named in the caption and,
+  // when any of them has a photo, a side-by-side image of them. Nothing is
+  // uploaded here — the composer's Post button does that.
+  function postOutfit(){
+    if(!outfit.ready || postBusy) return;
+    setPostBusy(true);
+    track("outfit_share_tap", { pieces: pieceIds.length });
+    const names = outfit.pieces.map(p => (p.item.description || "").trim()).filter(Boolean).join(", ");
+    const caption = ("Today's outfit: " + names + (outfit.why ? " — " + outfit.why : "")).slice(0, 280);
+    outfitCompositePhoto(outfit.pieces.map(p => p.item.photo)).then(photo => {
+      setPostBusy(false);
+      openComposerWith({
+        source:"outfit", caption, photo,
+        kibbe: (profile && profile.kibbeBlend) ? sortedBlend(profile.kibbeBlend, KIBBE_TYPES)[0].id : null,
+        styles: ((profile && profile.topStyleWords) || []).slice(0, MAX_STYLE_TAGS),
+      });
+    });
   }
   const weatherLine = wx.on
     ? (wx.weather ? e("button", { className:"btn-text", style:{ padding:0, fontSize:12.5, color:"var(--ink-soft)" }, onClick: wx.refresh, title:"Refresh weather" },
@@ -2750,6 +2791,7 @@ function OutfitCard({ closet, profile, compact, onNavigate }){
     e("p", { style:{ fontSize:13, color:"var(--ink-soft)", margin:"10px 0 0" } }, outfit.why),
     e("div", { style:{ display:"flex", gap:10, alignItems:"center", marginTop:10, flexWrap:"wrap" } },
       e("button", { type:"button", className: "btn btn-sm " + (wornThis ? "btn-accent" : "btn-ghost"), "aria-pressed": wornThis, onClick: toggleWore }, wornThis ? "Wore this ✓" : "Wore this"),
+      canPost ? e("button", { type:"button", className:"btn btn-sm btn-ghost", disabled: postBusy, onClick: postOutfit }, postBusy ? "Getting it ready…" : "Post today's outfit") : null,
       e("span", { style:{ fontSize:12, color:"var(--ink-soft)" } }, wornThis ? "Logged for today — each piece's wear count is in your closet." : "Tap when you wear it — builds wear counts over time.")
     )
   );
@@ -3540,6 +3582,34 @@ function saveLocal(key, value){
   }catch(err){}
 })();
 function pendingReferral(){ try{ return localStorage.getItem("lore_ref") || ""; }catch(err){ return ""; } }
+// A poll page (/p/<id>) sends someone here with ?pendingPost=<id> when they
+// tap "Vote". Voting needs an account, so the id is kept, the address is
+// cleaned the same way ?ref= is, and App() opens that post — scrolled to the
+// vote — once they are signed in. Kept a week: someone who explores first and
+// signs up on Thursday still lands on the poll they came for.
+const PENDING_POST_KEY = "lore_pending_post";
+let pendingPostFromUrl = false;
+(function capturePendingPost(){
+  try{
+    const p = new URLSearchParams(window.location.search);
+    const id = (p.get("pendingPost") || "").replace(/[^A-Za-z0-9_-]/g, "").slice(0, 64);
+    if(id){
+      localStorage.setItem(PENDING_POST_KEY, JSON.stringify({ id, at: Date.now() }));
+      pendingPostFromUrl = true;
+      const url = new URL(window.location.href); url.searchParams.delete("pendingPost");
+      window.history.replaceState({}, "", url.pathname + url.search + url.hash);
+    }
+  }catch(err){}
+})();
+function pendingPostId(){
+  try{
+    const v = JSON.parse(localStorage.getItem(PENDING_POST_KEY) || "null");
+    if(!v || !v.id) return null;
+    if(Date.now() - (v.at || 0) > 7 * 86400000){ localStorage.removeItem(PENDING_POST_KEY); return null; }
+    return String(v.id);
+  }catch(err){ return null; }
+}
+function clearPendingPost(){ try{ localStorage.removeItem(PENDING_POST_KEY); }catch(err){} }
 // Where this visitor came from, captured on their FIRST landing and kept.
 //
 // First-touch, not last-touch, and the distinction is the whole point: someone
@@ -4408,6 +4478,34 @@ window.fetch = function(input, init){
     throw err;
   });
 };
+
+/* Product events (api/events.php) — the moments that leave no other trace:
+   a quiz finished signed out, a share button tapped, a post started from a
+   result. Fire-and-forget: never awaited, never surfaced, never allowed to
+   throw. Goes through the raw fetch so a missing or slow endpoint can not
+   trip the "having trouble connecting" notice over a metric. The anonymous
+   id ties a signed-out quiz to the account it later becomes. */
+function anonVisitorId(){
+  try{
+    let v = localStorage.getItem("lore_anon");
+    if(!v){ v = uid(); localStorage.setItem("lore_anon", v); }
+    return v;
+  }catch(err){ return ""; }
+}
+function track(event, meta){
+  try{
+    const body = { event };
+    const anon = anonVisitorId();
+    if(anon) body.visitorId = anon;
+    if(meta) body.meta = meta;
+    const acct = loadLocal("lore_profile", null);
+    if(acct && acct.visitorId && acct.token){ body.accountId = acct.visitorId; body.authToken = acct.token; }
+    const raw = window.__loreRawFetch || window.fetch;
+    Promise.resolve(raw(API_BASE + "/api/events.php", {
+      method:"POST", headers:{ "Content-Type":"application/json" }, body: JSON.stringify(body), keepalive:true,
+    })).catch(() => {});
+  }catch(err){ /* a metric must never become an error */ }
+}
 
 // A dead auth token can surface from anywhere in the tree, so App()
 // registers one handler here rather than threading a callback through
@@ -5926,6 +6024,11 @@ function AccountGate({ onComplete, onExplore, startWithForm }){
         e(LogoMark, { size:"0.85em" }), "Style-LORE"),
     e("div", { className:"eyebrow", style:{ marginBottom:20 } }, mode === "login" ? "Welcome back" : "Save your results and join the community"),
     onExplore ? e("button", { type:"button", className:"btn-text", style:{ padding:0, marginBottom:16 }, onClick: () => setShowForm(false) }, "← Back") : null,
+    // Sent here by a poll's "Vote" link — say so, or the form looks like a wall.
+    pendingPostId() ? e("div", { className:"card", style:{ marginBottom:16, padding:"12px 14px", borderColor:"var(--accent)" } },
+      e("div", { className:"eyebrow", style:{ marginBottom:2 } }, "One vote per account"),
+      e("div", { style:{ fontSize:14 } }, "Create a free account or log in and you land straight back on the poll, ready to vote.")
+    ) : null,
 
     e("div", { className:"tabs", style:{ marginBottom:22 } },
       e("button", { type:"button", className:"tab-chip", "aria-pressed": mode==="signup" ? "true" : "false", onClick:()=>switchMode("signup") }, "Create account"),
@@ -6370,7 +6473,60 @@ function WardrobeSheet({ onDone }){
   );
 }
 
-function HomeScreen({ profile, blend, styleBlend, kibbeResult, colorResult, closetCount, closet, outfitCount, digestOptOut, onToggleDigest, morningPushOptOut, onToggleMorningPush, isPremium, billing, giftNotice, referral, onManageBilling, onUpgrade, onNavigate, onSignOut, onOpenProfile, onAccountDeleted, onSignIn }){
+/* "This week" on Home — one tip, one featured post, the season guide
+   (api/featured.php). Fetched when Home first mounts and kept for the
+   session; a failed fetch is retried on the next mount, an empty answer is
+   not. Renders nothing at all unless there is something to show: an empty
+   card under the grid would be worse than no card. Sits BELOW the 2×2 grid
+   so Style-ME and Community stay above the fold on a 390px phone. */
+const featuredCache = {}; // per viewer ("anon" signed out): undefined = not fetched, null = nothing to show
+function ThisWeekCard({ profile, seasonName, onOpenPost }){
+  const signedIn = !!(profile && profile.visitorId && profile.token);
+  const key = signedIn ? profile.visitorId : "anon";
+  const [data, setData] = useState(() => featuredCache[key] === undefined ? null : featuredCache[key]);
+  useEffect(() => {
+    if(featuredCache[key] !== undefined){ setData(featuredCache[key]); return; }
+    let live = true;
+    const q = signedIn ? "?visitorId=" + encodeURIComponent(profile.visitorId) : "";
+    fetch(API_BASE + "/api/featured.php" + q, { headers: authHeader(signedIn ? profile.token : null) }).then(r => r.ok ? r.json() : null).then(j => {
+      const tip = j && j.ok && j.tip && j.tip.title ? j.tip : null;
+      // Community posts are members-only; a guest's Home never shows one, whatever the server sent.
+      const post = signedIn && j && j.ok && j.post && j.post.id ? j.post : null;
+      const guide = j && j.ok && j.seasonGuide && j.seasonGuide.url ? j.seasonGuide : null;
+      featuredCache[key] = (tip || post || guide) ? { tip, post, guide } : null;
+      if(live) setData(featuredCache[key]);
+    }).catch(() => { /* left undefined: try again on the next Home visit */ });
+    return () => { live = false; };
+  }, [key]);
+  if(!data) return null;
+  const { tip, post, guide } = data;
+  const tagName = post && ((KIBBE_BY_ID[post.kibbe_tag] || {}).name || (COLOR_SEASON_BY_ID[post.season_tag] || {}).name || "");
+  return e("div", { className:"card", style:{ marginTop:16, marginBottom:16 } },
+    e("div", { className:"eyebrow", style:{ marginBottom:4 } }, "This week"),
+    tip ? e("div", { style:{ marginBottom: (post || guide) ? 12 : 0 } },
+      e("div", { style:{ fontSize:15, fontWeight:600, marginBottom:4 } }, tip.title),
+      tip.body ? e("p", { style:{ fontSize:13.5, color:"var(--ink-soft)", margin:0, lineHeight:1.5 } }, tip.body) : null
+    ) : null,
+    post ? e("button", {
+      type:"button", className:"row-list-item", style:{ width:"100%", textAlign:"left", background:"none", border:0, borderBottom: guide ? "1px solid var(--line-soft)" : 0, alignItems:"center", cursor:"pointer" },
+      onClick: () => onOpenPost && onOpenPost(post.id),
+    },
+      post.photo_url ? e("img", { src: mediaUrl(post.photo_url), alt:"", loading:"lazy", style:{ width:48, height:48, borderRadius:8, objectFit:"cover", flexShrink:0 } })
+        : e("span", { style:{ width:48, height:48, borderRadius:8, background:"var(--paper-raised)", border:"1px solid var(--line)", display:"flex", alignItems:"center", justifyContent:"center", color:"var(--accent)", flexShrink:0 } }, Icon("community")),
+      e("span", { style:{ flex:1, minWidth:0 } },
+        e("span", { style:{ display:"block", fontSize:12, color:"var(--ink-soft)", marginBottom:2 } },
+          (post.is_poll ? "Help me choose · " : "Featured post · ") + (post.author_name || "a member") + (tagName ? " · " + tagName : "")),
+        e("span", { style:{ display:"block", fontSize:14, fontWeight:500, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" } },
+          post.caption || (post.is_poll ? "Which one?" : "See the post"))
+      ),
+      e("span", { style:{ color:"var(--accent)", flexShrink:0 } }, "→")
+    ) : null,
+    guide ? e("a", { className:"btn-text", style:{ padding:0, display:"inline-block", marginTop:8, textDecoration:"none" }, href: "https://style-lore.com" + guide.url, target:"_blank", rel:"noopener" },
+      guide.label || (seasonName ? "Your " + seasonName + " guide" : "Your color guide")) : null
+  );
+}
+
+function HomeScreen({ profile, blend, styleBlend, kibbeResult, colorResult, closetCount, closet, outfitCount, digestOptOut, onToggleDigest, morningPushOptOut, onToggleMorningPush, isPremium, billing, giftNotice, referral, onManageBilling, onUpgrade, onNavigate, onSignOut, onOpenProfile, onAccountDeleted, onSignIn, onOpenPost }){
   const updateAvailable = useUpdateAvailable();
   const homeType = (kibbeResult && kibbeResult.kibbeTypeId && KIBBE_BY_ID[kibbeResult.kibbeTypeId]) || null;
   const homeWords = styleBlend ? topWords(styleBlend, STYLE_WORDS, 4) : [];
@@ -6415,7 +6571,7 @@ function HomeScreen({ profile, blend, styleBlend, kibbeResult, colorResult, clos
       ) : null,
       e("div", { className:"hero-actions" },
         e("button", { className:"btn btn-sm", onClick:()=>onNavigate("quiz") }, "See full result"),
-        e("button", { className:"btn btn-sm", onClick: () => shareResultCard({ typeName: homeType.name, typeId: homeType.id, tag: homeType.tag, color: homeType.color, words: homeWords.map(w => w.name), seasonName: homeSeason ? homeSeason.name : null, swatches: homeSeason ? homeSeason.swatches : null }, "I'm a " + homeType.name + " on Style-LORE. " + shareTail()) }, "Share"),
+        e("button", { className:"btn btn-sm", onClick: () => { track("result_share_tap", { from:"home", type: homeType.id }); shareResultCard({ typeName: homeType.name, typeId: homeType.id, tag: homeType.tag, color: homeType.color, words: homeWords.map(w => w.name), seasonName: homeSeason ? homeSeason.name : null, swatches: homeSeason ? homeSeason.swatches : null }, "I'm a " + homeType.name + " on Style-LORE. " + shareTail()); } }, "Share"),
         !homeSeason ? e("button", { className:"btn btn-sm", onClick:()=>onNavigate("color") }, "Find my colors") : null
       )
     ) : e(React.Fragment, null,
@@ -6481,7 +6637,7 @@ function HomeScreen({ profile, blend, styleBlend, kibbeResult, colorResult, clos
       e("p", { className:"screen-lede", style:{ marginTop:6, fontSize:13.5, marginBottom:0 } }, "About two minutes on your shape and how you like to dress.")
     ),
 
-    blend ? e(OutfitCard, { closet: closet || [], profile: { kibbeBlend: blend, styleWordBlend: styleBlend, kibbeTypeName: homeType ? homeType.name : null, topStyleWords: homeWords.map(w => w.id) }, compact:true, onNavigate }) : null,
+    blend ? e(OutfitCard, { closet: closet || [], profile: { kibbeBlend: blend, styleWordBlend: styleBlend, kibbeTypeName: homeType ? homeType.name : null, topStyleWords: homeWords.map(w => w.id) }, compact:true, onNavigate, canPost: !!profile }) : null,
 
     !isPremium ? e("div", { className:"card premium-card", style:{ marginBottom:16 } },
       e("div", { style:{ display:"flex", alignItems:"center", justifyContent:"space-between", gap:10, flexWrap:"wrap" } },
@@ -6523,6 +6679,8 @@ function HomeScreen({ profile, blend, styleBlend, kibbeResult, colorResult, clos
         e("span", { style:{ fontSize:12, color:"var(--ink-soft)" } }, x.desc)
       ))
     ),
+
+    e(ThisWeekCard, { profile, seasonName: homeSeason ? homeSeason.name : null, onOpenPost }),
 
     !profile ? e("div", { style:{ marginTop:30, paddingTop:18, borderTop:"1px solid var(--line-soft)" } },
       e("div", { style:{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:12 } },
@@ -6701,10 +6859,18 @@ function StyleQuizScreen({ kibbeResult, styleLanguageResult, onSaveKibbe, onSave
     }).catch(()=>setPhotoError("Couldn't read that photo — try another."));
   }
 
+  // The moment a run of the quiz finishes — both halves done, result on
+  // screen. Not "See my last result", which only re-opens one. Signed-out
+  // completions are the ones the funnel could never see before.
+  function finishQuiz(kibbe, retake){
+    setStage("result"); maybeAskForReview("result");
+    track(onSignIn ? "quiz_complete_signed_out" : "quiz_complete", { type: (kibbe && kibbe.kibbeTypeId) || null, retake: !!retake });
+  }
+
   function afterKibbePart(result){
     haptic("success");
     onSaveKibbe(result);
-    if(styleQuizBlend) (setStage("result"), maybeAskForReview("result"));
+    if(styleQuizBlend) finishQuiz(result, !!(kibbeResult && kibbeResult.kibbeTypeId));
     else setStage("style-intro");
   }
 
@@ -6747,7 +6913,7 @@ function StyleQuizScreen({ kibbeResult, styleLanguageResult, onSaveKibbe, onSave
       const b = computeBlend(next, STYLE_LANGUAGE_QUESTIONS, STYLE_WORDS, genderLean);
       setStyleQuizBlend(b);
       onSaveStyle(b);
-      (setStage("result"), maybeAskForReview("result"));
+      finishQuiz(kibbeQuizResult, !!styleLanguageResult);
     }
   }
 
@@ -6912,13 +7078,23 @@ function StyleQuizScreen({ kibbeResult, styleLanguageResult, onSaveKibbe, onSave
           href:"https://style-lore.com/types/" + kibbeType.id + ".html",
           target:"_blank", rel:"noopener"
         }, "Read my " + kibbeType.name + " guide") : null,
-        e("button", { className:"btn btn-sm", onClick: () => shareResultCard({
+        e("button", { className:"btn btn-sm", onClick: () => { track("result_share_tap", { from:"result", type: hasKibbe ? kibbeType.id : null }); shareResultCard({
             typeName: hasKibbe ? kibbeType.name : null, typeId: hasKibbe ? kibbeType.id : null, tag: hasKibbe ? kibbeType.tag : null, color: hasKibbe ? kibbeType.color : "var(--accent)",
             words: words.map(w => w.name), seasonName: colorSeasonForShare ? colorSeasonForShare.name : null, swatches: colorSeasonForShare ? colorSeasonForShare.swatches : null,
           },
           (hasKibbe ? ("I'm a " + kibbeType.name + " on Style-LORE") : "I took the Style-LORE style quiz") +
           (styleQuizBlend ? (" — my style language is " + topWords(styleQuizBlend, STYLE_WORDS, 3).map(w => w.name || w.id).join(", ")) : "") +
-          ". " + shareTail()) }, "Share my result")
+          ". " + shareTail()); } }, "Share my result"),
+        // Into Community with the result already written, tagged with the
+        // type (and season, when known). Signed-in only: the "Keep this
+        // result" card below is the path for everyone else, and it says why.
+        (hasKibbe && !onSignIn) ? e("button", { className:"btn btn-sm", onClick: () => openComposerWith({
+            source:"result",
+            caption: "Just found out I'm a " + kibbeType.name + (colorSeasonForShare ? " · " + colorSeasonForShare.name : ""),
+            kibbe: kibbeType.id,
+            styles: words.slice(0, MAX_STYLE_TAGS).map(w => w.id),
+            seasonTag: colorSeasonForShare ? colorSeasonForShare.id : null,
+          }) }, "Post my result") : null
       )
     ),
 
@@ -7276,6 +7452,7 @@ function ColorScreen({ colorResult, onSaveColor }){
     setFinalResult(result);
     onSaveColor(result);
     (setStage("result"), maybeAskForReview("result"));
+    track("color_quiz_complete", { season: season.id, source, signedIn: !!window.STYLE_LORE_ACCOUNT_ID, retake: !!colorResult });
   }
 
   function finishWithQuizOnly(){ saveResult(quizFeatures, "quiz"); }
@@ -7346,7 +7523,7 @@ function ColorScreen({ colorResult, onSaveColor }){
           href:"https://style-lore.com/colors/" + season.id + ".html",
           target:"_blank", rel:"noopener"
         }, "Read my " + season.name + " guide"),
-        e("button", { className:"btn btn-sm", style:{ color:"var(--ink)", borderColor:"rgba(0,0,0,.25)", background:"rgba(255,255,255,.45)" }, onClick: () => shareResultCard({ typeName:null, tag:null, color: season.swatches[0], words:[season.name], seasonName: season.name, swatches: season.swatches }, "I'm a " + season.name + " on Style-LORE. Find your best colors: https://style-lore.com") }, "Share")
+        e("button", { className:"btn btn-sm", style:{ color:"var(--ink)", borderColor:"rgba(0,0,0,.25)", background:"rgba(255,255,255,.45)" }, onClick: () => { track("result_share_tap", { from:"color", season: season.id }); shareResultCard({ typeName:null, tag:null, color: season.swatches[0], words:[season.name], seasonName: season.name, swatches: season.swatches }, "I'm a " + season.name + " on Style-LORE. Find your best colors: https://style-lore.com"); } }, "Share")
       )
     ),
     e("div", { className:"eyebrow", style:{ marginBottom:4 } }, "Your best colors — hold one up to a garment"),
@@ -7582,7 +7759,7 @@ function ClosetScreen({ closet, setCloset, blend, styleWordBlend, kibbeTypeName,
       ) : null,
       capBanner,
       valueBanner,
-      (blend || styleWordBlend) ? e(OutfitCard, { closet, profile }) : null,
+      (blend || styleWordBlend) ? e(OutfitCard, { closet, profile, canPost: !!viewer }) : null,
       (blend || styleWordBlend) ? e(CapsuleCard, { closet, profile, isPremium, onUpgrade }) : null,
       storageFull ? e(Banner, { kind:"error" },
         "This device is out of storage for closet photos, so the newest changes aren't being saved here. They're still synced to your account — but remove a few items with photos to save changes on this device again."
@@ -7591,7 +7768,7 @@ function ClosetScreen({ closet, setCloset, blend, styleWordBlend, kibbeTypeName,
 
       closet.length === 0
         ? e(EmptyState, { icon:"closet", action:"+ Add your first piece", onAction:handleAddClick },
-            "Nothing logged yet. Add a few things you actually wear and the closet starts telling you what suits your lines — and what's missing.")
+            "Log 3 pieces and Today's Outfit starts working. A top, a bottom and shoes you actually wear is enough — the closet starts saying what suits your lines and what's missing.")
         : e("div", { className:"row-list" },
             closet.map(item => e(ClosetRow, {
               key:item.id, item, profile, onRemove:()=>removeItem(item.id), wornCount: worn[item.id] || 0,
@@ -8421,6 +8598,10 @@ function CheckerScreen({ blend, styleWordBlend, kibbeTypeName, topStyleWords, vi
   const [photoBusy, setPhotoBusy] = useState(false);
   const [photoResult, setPhotoResult] = useState(null);
   const [photoError, setPhotoError] = useState(null);
+  // "Ask the community" on a verdict: true while the consent line is open.
+  // Style-ME photos never leave the phone, so the hand-over to Community is
+  // never silent — the person reads what happens and taps Continue first.
+  const [shareAsk, setShareAsk] = useState(false);
 
   // AI Stylist — Style-LORE Premium. Reuses whatever photo was just
   // uploaded for the free on-device photo checker above (same photoBlob),
@@ -8469,6 +8650,7 @@ function CheckerScreen({ blend, styleWordBlend, kibbeTypeName, topStyleWords, vi
     setPhotoError(null);
     setAiResult(null);
     setAiError(null);
+    setShareAsk(false);
     // Two sizes from the original: 900px for the on-device check and the
     // AI upload, and a sharper 1080px copy (encoded once, straight from the
     // source) that the saved-checks list shows when a check is reopened.
@@ -8571,6 +8753,35 @@ function CheckerScreen({ blend, styleWordBlend, kibbeTypeName, topStyleWords, vi
     }
   }
 
+  /* Hand the photo(s) to the Community composer. Style-ME holds one photo
+     today; with two it would open as a "Help me choose" poll instead. The
+     consent line is the whole point: this is the first time a Style-ME photo
+     goes anywhere, and the screen has promised repeatedly that it does not. */
+  const sharePhotos = [photoPreview].filter(Boolean);
+  function shareToCommunity(){
+    setShareAsk(false);
+    const two = sharePhotos.length >= 2;
+    openComposerWith({
+      source:"styleme",
+      photo: sharePhotos[0] || null, photoB: two ? sharePhotos[1] : null, isPoll: two,
+      caption: two ? "Which one?" : "",
+      kibbe: blend ? sortedBlend(blend, KIBBE_TYPES)[0].id : null,
+    });
+  }
+  const askCommunityBlock = (visitorId && sharePhotos.length) ? e("div", { style:{ marginTop:12, paddingTop:12, borderTop:"1px solid var(--line-soft)" } },
+    !shareAsk
+      ? e("button", { type:"button", className:"btn btn-ghost btn-sm", onClick: () => { track("styleme_share_tap", { photos: sharePhotos.length }); setShareAsk(true); } },
+          sharePhotos.length >= 2 ? "Ask the community: which one?" : "Ask the community what they think")
+      : e("div", null,
+          e("p", { style:{ fontSize:13, lineHeight:1.5, margin:"0 0 10px" } },
+            "This uploads your photo(s) to Community. Members (and anyone with the link, if you tick Shareable) can see them."),
+          e("div", { style:{ display:"flex", gap:8 } },
+            e("button", { type:"button", className:"btn btn-accent btn-sm", onClick: shareToCommunity }, "Continue"),
+            e("button", { type:"button", className:"btn btn-ghost btn-sm", onClick: () => setShareAsk(false) }, "Cancel")
+          )
+        )
+  ) : null;
+
   return e("div", null,
     showAiConsent ? e(AiConsentSheet, {
       viewer: { visitorId, token: authToken },
@@ -8580,7 +8791,7 @@ function CheckerScreen({ blend, styleWordBlend, kibbeTypeName, topStyleWords, vi
         // Carry on with whatever they were trying to do, so agreeing does not
         // cost them a second tap on a button they already pressed.
         const next = afterConsent; setAfterConsent(null);
-        if(next === "read") runAi(); else if(next === "ask") askStylist();
+        if(next === "read") runAiStylist(); else if(next === "ask") askStylist();
       },
       onClose: () => { setShowAiConsent(false); setAfterConsent(null); },
     }) : null,
@@ -8669,7 +8880,8 @@ function CheckerScreen({ blend, styleWordBlend, kibbeTypeName, topStyleWords, vi
         photoResult.axisNotes.map(n => e("div", { key:n.axis, style:{ fontSize:13, color: n.aligned ? "var(--ink-soft)" : "var(--ink)" } },
           (n.aligned ? "Match — " : "Note — ") + "reads " + n.itemReads + (n.typeWants ? "; your type leans toward " + n.typeWants : "") + "."
         ))
-      ) : null
+      ) : null,
+      askCommunityBlock
     ) : null,
 
     photoResult && photoResult.axisNotes ? e(ShopTheGap, { labels: photoResult.axisNotes.filter(n => !n.aligned && n.typeWants).map(n => n.typeWants) }) : null,
@@ -8742,6 +8954,9 @@ function CheckerScreen({ blend, styleWordBlend, kibbeTypeName, topStyleWords, vi
         e("div", { style:{ fontSize:15, fontWeight:600, marginBottom:6 } }, aiResult.headline),
         aiResult.detail ? e("p", { style:{ fontSize:13.5, color:"var(--ink-soft)", marginBottom: aiResult.suggestion ? 10 : 0 } }, aiResult.detail) : null,
         aiResult.suggestion ? e("p", { style:{ fontSize:13.5, color:"var(--accent)", marginBottom:0, fontWeight:500 } }, "✦ " + aiResult.suggestion) : null,
+        // Same offer as on the free verdict, but only once — someone who ran
+        // both reads should not see the block twice on one screen.
+        photoResult ? null : askCommunityBlock,
 
         // Keep talking. A read is one opinion; the questions after it ("and
         // the shoes?", "what if I tuck it?") are where a stylist earns their
@@ -8869,6 +9084,19 @@ function WeeklyPrompt({ onPost }){
    mount, so a later visit to Community still opens the directory. */
 let pendingCommunityRoom = null;
 
+/* A post started somewhere else — "Post my result" on the quiz, "Ask the
+   community" on a Style-ME verdict, "Post today's outfit". The draft is
+   handed to CommunityScreen in memory, which opens the ONE composer with
+   it pre-filled; there is no second composer. Photos travel as data URLs
+   and are uploaded only when the person taps Post. Read and cleared once,
+   on mount, the same as pendingCommunityRoom. Shape: { source, caption,
+   photo, photoB, isPoll, kibbe, styles, seasonTag }. */
+let pendingComposeDraft = null;
+function openComposerWith(draft){
+  pendingComposeDraft = draft || null;
+  if(window.__loreGoTo) window.__loreGoTo("community");
+}
+
 function CommunityScreen({ profile, blend, onOpenProfile }){
   const [posts, setPosts] = useState(null);
   const [loadError, setLoadError] = useState(null);
@@ -8877,7 +9105,16 @@ function CommunityScreen({ profile, blend, onOpenProfile }){
     const room = pendingCommunityRoom; pendingCommunityRoom = null;
     return room ? { kind:"kibbe", id:room } : null;
   }); // null = directory home, else {kind, id}
+  // A draft handed over from another screen (see openComposerWith) opens
+  // the composer straight away; closing the sheet drops the draft.
+  const [composeDraft, setComposeDraft] = useState(() => { const d = pendingComposeDraft; pendingComposeDraft = null; return d; });
   const [showCompose, setShowCompose] = useState(false);
+  // Opened from an effect, not in the mount render: the sheet pushes its own
+  // history entry (useBackClose) and App() pushes one for the screen change
+  // in the same commit, child first — so the sheet's entry would land UNDER
+  // the screen's and the back button would close the wrong thing. One
+  // commit later, the order is screen, then sheet, as it is everywhere else.
+  useEffect(() => { if(composeDraft) setShowCompose(true); }, []);
   // Home feed tab. "For you" only makes sense with a quiz result.
   const [homeTab, setHomeTab] = useState(blend ? "foryou" : "all");
   const [showStyleWords, setShowStyleWords] = useState(false);
@@ -9010,11 +9247,17 @@ function CommunityScreen({ profile, blend, onOpenProfile }){
   });
 
   function openCompose(){ setShowCompose(true); }
+  function closeCompose(){ setShowCompose(false); setComposeDraft(null); }
   function composeDefaults(){
-    if(space && space.kind === "group") return { kibbe: myTop ? myTop.id : null, styles: [], groupId: space.id };
-    if(space && space.kind === "kibbe") return { kibbe: space.id, styles: [] };
-    if(space && space.kind === "style") return { kibbe: myTop ? myTop.id : null, styles: [space.id] };
-    return { kibbe: myTop ? myTop.id : null, styles: [] };
+    let base;
+    if(space && space.kind === "group") base = { kibbe: myTop ? myTop.id : null, styles: [], groupId: space.id, room:true };
+    else if(space && space.kind === "kibbe") base = { kibbe: space.id, styles: [], room:true };
+    else if(space && space.kind === "style") base = { kibbe: myTop ? myTop.id : null, styles: [space.id], room:true };
+    else base = { kibbe: myTop ? myTop.id : null, styles: [] };
+    // A handed-over draft wins on anything it names; a null kibbe in the
+    // draft must not blank the room's own tag.
+    if(composeDraft){ Object.keys(composeDraft).forEach(k => { if(composeDraft[k] !== null && composeDraft[k] !== undefined) base[k] = composeDraft[k]; }); }
+    return base;
   }
   function handlePosted(newPost){
     if(newPost.groupId) setGroupFeed(prev => prev ? [newPost, ...prev] : [newPost]);
@@ -9124,7 +9367,7 @@ function CommunityScreen({ profile, blend, onOpenProfile }){
         )
       ) : null,
 
-      showCompose ? e(ComposeSheet, { profile, defaults:composeDefaults(), onPosted:handlePosted, onClose:()=>setShowCompose(false) }) : null,
+      showCompose ? e(ComposeSheet, { profile, defaults:composeDefaults(), onPosted:handlePosted, onClose:closeCompose }) : null,
       showCreateGroup ? e(CreateGroupSheet, {
         profile,
         onCreated: g => { setGroups(prev => prev ? [g, ...prev] : [g]); setShowCreateGroup(false); setSpace({kind:"group", id:g.id}); },
@@ -9235,7 +9478,7 @@ function CommunityScreen({ profile, blend, onOpenProfile }){
 
     e("p", { className:"footnote", style:{ marginTop:16 } }, "Keep it kind — no abusive language, photos or videos. Every post has a Report option."),
 
-    showCompose ? e(ComposeSheet, { profile, defaults:composeDefaults(), onPosted:handlePosted, onClose:()=>setShowCompose(false) }) : null
+    showCompose ? e(ComposeSheet, { profile, defaults:composeDefaults(), onPosted:handlePosted, onClose:closeCompose }) : null
   );
 }
 
@@ -9253,19 +9496,26 @@ function ComposeSheet({ profile, defaults, onPosted, onClose }){
     catch(err){ /* the endpoint answers the same either way; nothing to add */ setVerifySent(true); }
     finally{ setVerifyBusy(false); }
   }
-  const [caption, setCaption] = useState("");
-  const [photoFile, setPhotoFile] = useState(null);
-  const [photoPreview, setPhotoPreview] = useState(null);
+  // A draft handed over from another screen (openComposerWith) arrives in
+  // `defaults`: caption text and photos as data URLs, already downscaled by
+  // the screen that made them. Nothing is uploaded until Post is tapped.
+  const draftBlob = (dataUrl) => { try{ return dataUrl ? dataUrlToBlob(dataUrl) : null; }catch(err){ return null; } };
+  const [caption, setCaption] = useState((defaults && defaults.caption) || "");
+  const [photoFile, setPhotoFile] = useState(() => draftBlob(defaults && defaults.photo));
+  const [photoPreview, setPhotoPreview] = useState((defaults && defaults.photo) || null);
   // "Help me choose": a second photo and a question. Same post underneath,
   // so it keeps likes, comments, reporting and its place in the type rooms.
-  const [isPoll, setIsPoll] = useState(false);
+  const [isPoll, setIsPoll] = useState(!!(defaults && defaults.isPoll));
   /* Off by default, and only ever offered here at posting time. The privacy
      policy and the sign-up consent screen both promise Community posts are
      shown to "other members" — this is the one way a post steps outside that,
      and it has to be the author's deliberate choice, made before posting. */
   const [shareable, setShareable] = useState(false);
-  const [photoBFile, setPhotoBFile] = useState(null);
-  const [photoBPreview, setPhotoBPreview] = useState(null);
+  const [photoBFile, setPhotoBFile] = useState(() => draftBlob(defaults && defaults.photoB));
+  const [photoBPreview, setPhotoBPreview] = useState((defaults && defaults.photoB) || null);
+  // Where this post was started, for the funnel: result | styleme | outfit
+  // from a hand-over, room inside a type/style/group space, composer here.
+  const source = (defaults && defaults.source) || (defaults && defaults.room ? "room" : "composer");
   const [videoFile, setVideoFile] = useState(null);
   const [videoPreviewUrl, setVideoPreviewUrl] = useState(null);
   const [videoUrl, setVideoUrl] = useState("");
@@ -9362,7 +9612,10 @@ function ComposeSheet({ profile, defaults, onPosted, onClose }){
       if(videoFile) fd.append("video", videoFile, videoFile.name || "clip.mp4");
       if(trimmedLink && !videoFile) fd.append("videoUrl", trimmedLink);
       if(defaults && defaults.groupId) fd.append("groupId", defaults.groupId);
+      if(defaults && defaults.seasonTag) fd.append("seasonTag", defaults.seasonTag);
+      fd.append("source", source);
       const created = await Api.createPost(fd);
+      if(source === "result" || source === "styleme" || source === "outfit") track("post_from_" + source, { postId: created && created.id });
       onPosted(created);
       onClose();
     }catch(err){
@@ -9541,7 +9794,7 @@ function PollCard({ post, profile, onPatch }){
     );
   };
 
-  return e("div", { style:{ marginBottom:10 } },
+  return e("div", { style:{ marginBottom:10 }, "data-poll-controls":"1" },
     e("div", { className:"eyebrow", style:{ marginBottom:6 } }, "Help me choose"),
     e("div", { style:{ display:"flex", gap:10 } },
       option("a", post.photoUrl, "Option A"),
@@ -9888,10 +10141,20 @@ function CommentThread({ node, profile, focusCommentId, focusRef, onReply, onOpe
    in question (PostCard's focusCommentId).
 ===================================================================== */
 
-function PostDetailScreen({ postId, focusCommentId, profile, onBack, onOpenProfile }){
+function PostDetailScreen({ postId, focusCommentId, focusVote, profile, onBack, onOpenProfile }){
   const [post, setPost] = useState(undefined); // undefined = loading, null = gone
   const [followingIds, setFollowingIds] = useState(() => new Set());
   const [loadError, setLoadError] = useState(null);
+  // Opened from a poll page's "Vote" link: bring the two options into view
+  // once they exist. Once only — a poll refresh must not yank the page.
+  const scrolledToVoteRef = useRef(false);
+  useEffect(() => {
+    if(!focusVote || !post || !post.poll || scrolledToVoteRef.current) return;
+    scrolledToVoteRef.current = true;
+    setTimeout(() => {
+      try{ const el = document.querySelector("[data-poll-controls]"); if(el) el.scrollIntoView({ behavior:"smooth", block:"center" }); }catch(err){}
+    }, 120);
+  }, [focusVote, post && post.id, post && !!post.poll]);
 
   const refreshFollows = useCallback(() => {
     if(!profile) return;
@@ -10990,8 +11253,12 @@ function App(){
   // purchases still need an account; those screens show a sign-in prompt
   // instead. Remembered per device so the gate doesn't reappear on every
   // launch; cleared the moment a real account signs in.
-  const [guest, setGuest] = useState(() => !!loadLocal("lore_guest", false));
-  const [gateWantsForm, setGateWantsForm] = useState(false);
+  // Arriving from a poll page's "Vote" link (?pendingPost=, captured at
+  // boot) means an account is the next step, so a remembered explorer is
+  // shown the sign-up form rather than Home. Only on that landing: a later
+  // reload behaves as it always did, and the post is still remembered.
+  const [guest, setGuest] = useState(() => !!loadLocal("lore_guest", false) && !pendingPostFromUrl);
+  const [gateWantsForm, setGateWantsForm] = useState(() => pendingPostFromUrl);
   function exploreAsGuest(target){ setGuest(true); saveLocal("lore_guest", true); setGateWantsForm(false); if(target) setScreen(target); }
   function leaveGuestForGate(){ setGuest(false); removeLocal("lore_guest"); setGateWantsForm(true); }
   const [sessionExpired, setSessionExpired] = useState(false);
@@ -11755,6 +12022,18 @@ function App(){
     }).catch(()=>{});
   }, [profile && profile.visitorId, kibbeResult, styleBlend, colorResult]);
 
+  // The poll someone came to vote on (see capturePendingPost). Opens once
+  // there is an account and no email link is holding the screen — so it
+  // also fires right after a ?verify= link completes — and never again.
+  useEffect(() => {
+    if(!profile || !profile.visitorId || pendingLinkAction) return;
+    const id = pendingPostId();
+    if(!id) return;
+    clearPendingPost();
+    openPost(id, null, { focusVote:true });
+    track("pending_post_resumed", { postId:id });
+  }, [profile && profile.visitorId, pendingLinkAction]);
+
   function completeGate(newProfile){
     setProfile(newProfile);
     setGuest(false);
@@ -11808,11 +12087,11 @@ function App(){
   // A like/comment/reply notification opens the post it is about, with that
   // comment highlighted — not the commenter's profile, which is where every
   // one of these used to land.
-  function openPost(postId, commentId){
+  function openPost(postId, commentId, opts){
     if(!postId) return;
     setViewingProfileId(null);
     setViewingConversation(null);
-    setViewingPost({ postId, commentId: commentId || null });
+    setViewingPost({ postId, commentId: commentId || null, focusVote: !!(opts && opts.focusVote) });
   }
   function closePost(){
     setViewingPost(null);
@@ -11881,7 +12160,7 @@ function App(){
   }
   else if(viewingPost){
     body = e(PostDetailScreen, {
-      postId: viewingPost.postId, focusCommentId: viewingPost.commentId,
+      postId: viewingPost.postId, focusCommentId: viewingPost.commentId, focusVote: !!viewingPost.focusVote,
       profile, onBack: closePost, onOpenProfile: openProfile,
     });
   }
@@ -11892,7 +12171,7 @@ function App(){
       viewerKibbeBlend: blend, viewerStyleWordBlend: styleBlend, viewerKibbeTypeName: kibbeTypeName, viewerTopStyleWords: topStyleWords
     });
   }
-  else if(screen === "home") body = e(HomeScreen, { profile, blend, styleBlend, kibbeResult, colorResult, closetCount: closet.length, closet, outfitCount: (outfits || []).length, digestOptOut, onToggleDigest: toggleDigest, morningPushOptOut, onToggleMorningPush: toggleMorningPush, isPremium, billing, giftNotice, referral, onManageBilling: openBillingPortal, onUpgrade:openPaywall, onNavigate:goTo, onSignOut:signOut, onOpenProfile:openProfile, onAccountDeleted:handleAccountDeleted, onSignIn:leaveGuestForGate });
+  else if(screen === "home") body = e(HomeScreen, { profile, blend, styleBlend, kibbeResult, colorResult, closetCount: closet.length, closet, outfitCount: (outfits || []).length, digestOptOut, onToggleDigest: toggleDigest, morningPushOptOut, onToggleMorningPush: toggleMorningPush, isPremium, billing, giftNotice, referral, onManageBilling: openBillingPortal, onUpgrade:openPaywall, onNavigate:goTo, onSignOut:signOut, onOpenProfile:openProfile, onAccountDeleted:handleAccountDeleted, onSignIn:leaveGuestForGate, onOpenPost:openPost });
   else if(screen === "quiz") body = e(StyleQuizScreen, { kibbeResult, styleLanguageResult:styleBlend, onSaveKibbe:setKibbeResult, onSaveStyle:setStyleBlend, onSignIn: profile ? null : leaveGuestForGate, colorResult });
   else if(screen === "color") body = e(ColorScreen, { colorResult, onSaveColor:setColorResult });
   else if(screen === "closet") body = e(ClosetScreen, { closet, setCloset, blend, styleWordBlend:styleBlend, kibbeTypeName, topStyleWords, profile, isPremium, closetFreeLimit, onUpgrade:openPaywall, syncStatus:closetSyncStatus, onRetrySync:retryClosetSync, storageFull:closetStorageFull, outfits, setOutfits });

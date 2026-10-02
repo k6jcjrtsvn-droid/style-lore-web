@@ -267,9 +267,11 @@
       ["accounts",     "Made an account"],
       ["verified",     "Verified their email"],
       ["tookQuiz",     "Finished the quiz"],
+      ["tookColorQuiz","Finished the colour quiz"],
       ["loggedCloset", "Logged a closet item"],
       ["posted",       "Posted in Community"],
-      ["premium",      "Went Premium"]
+      ["premium",      "Went Premium"],
+      ["active7d",     "Active in last 7 days (last_seen_at)"]
     ];
     var base = Number(st.accounts || 0);
     var stage = '<div class="fsec"><h2>How far people get</h2><table class="f">' +
@@ -280,7 +282,31 @@
         return '<tr><td>' + esc(o[1]) + '</td><td class="n">' + num(v) +
                '</td><td class="n">' + (o[0] === "accounts" ? "\u2014" : pct) + '</td></tr>';
       }).join("") + '</table>' +
-      '<p class="fnote">Accounts only. The quiz works signed out, so anyone who took it, read their type and left without signing up is invisible here.</p></div>';
+      '<p class="fnote">Accounts only. The quiz works signed out, so anyone who took it, read their type and left without signing up is invisible here — except as a count in the next table.</p></div>';
+
+    /* The moments that leave no account behind: signed-out quiz finishes,
+       share taps, share-page opens, and which screen posts start from. Fed
+       by api/events.php, p.php and posts.source since 30 Sep 2026; all
+       zero before that. */
+    var eng = d.engagement || {};
+    var EVT = { result_share_tap:"Share from quiz result", styleme_share_tap:"Share from Style-ME",
+                outfit_share_tap:"Share an outfit", p_vote_cta_tap:"Vote button on a shared poll" };
+    var SRC = { result:"Quiz result", styleme:"Style-ME", outfit:"Outfit builder", composer:"Composer",
+                room:"A room", profile:"Profile", "(none)":"Not recorded (older posts/clients)" };
+    var engagement = '<div class="fsec"><h2>Sharing and signed-out activity</h2><table class="f">' +
+      '<tr><th>What</th><th class="n">Count</th></tr>' +
+      '<tr><td>Signed-out quiz completions (events, 28d)</td><td class="n">' + num(eng.signedOutQuiz28d) + '</td></tr>' +
+      '<tr><td>Share taps (28d)</td><td class="n">' + num(eng.shareTaps28d) + '</td></tr>' +
+      (d.shareTapsByEvent || []).map(function(r){
+        return '<tr><td>&nbsp;&nbsp;└ ' + esc(EVT[r.event] || r.event) + '</td><td class="n">' + num(r.n) + '</td></tr>';
+      }).join("") +
+      '<tr><td>Share-page hits (28d)</td><td class="n">' + num(eng.shareHits28d) + '</td></tr>' +
+      '<tr><td>Posts by source (all time)</td><td class="n">' +
+        num((d.postsBySource || []).reduce(function(a, r){ return a + Number(r.n || 0); }, 0)) + '</td></tr>' +
+      (d.postsBySource || []).map(function(r){
+        return '<tr><td>&nbsp;&nbsp;└ ' + esc(SRC[r.source] || r.source) + '</td><td class="n">' + num(r.n) + '</td></tr>';
+      }).join("") +
+      '</table><p class="fnote">Recorded from 30 Sep 2026. A share tap is the button, not a completed share — the phone\'s share sheet reports nothing back. Share-page hits are opens of /p/&lt;id&gt; by anyone, members included.</p></div>';
 
     /* The room census. A type with members and no posts is a room that
        greets its own people with "be the first" — the most common reason a
@@ -304,7 +330,7 @@
       }).join("") + '</table>' +
       '<p class="fnote">' + (dead ? dead + ' of these rooms have no posts at all. Someone of that type who finishes the quiz is shown the rest of their Kibbe family instead of an empty room \u2014 but the room is still theirs to start.' : 'Every room here has something in it.') + '</p></div>' : "";
 
-    var head = stage + census + '<div class="fsec">' +
+    var head = stage + engagement + census + '<div class="fsec">' +
       '<h2>Signups from iOS</h2>' +
       '<p class="fbig">' + num(ios && ios.total) +
         ' <small>of ' + num(total) + ' accounts \u00b7 ' + num(ios && ios.last7) + ' in the last 7 days</small></p>' +

@@ -24,7 +24,12 @@
  *   - The post only. No comments, no likes, no follower counts: those belong
  *     to other members who did not tick anything.
  *   - Poll photos show, but there is no voting here. One vote per account
- *     means nothing without an account.
+ *     means nothing without an account — so a poll ends in a button into
+ *     the app (/?pendingPost=<id>) that says so plainly, and the app picks
+ *     the vote up after sign-up.
+ *   - Every render is counted in `share_hits` (post id, time, a hash of the
+ *     address, the referer) — the one number that says whether sharing
+ *     works at all. Nothing that identifies the reader is kept.
  */
 require_once __DIR__ . '/includes/helpers.php';
 
@@ -52,6 +57,23 @@ $pdo = db();
 ensure_poll_schema($pdo);
 ensure_post_share_column($pdo);
 
+/** Share-page hits, one row per 200 render. Created on first use, same as
+ *  the events table (api/events.php); read by api/admin_funnel.php. */
+function ensure_share_hits_table(PDO $pdo): void {
+    static $done = false; if ($done) return; $done = true;
+    try {
+        $pdo->exec('CREATE TABLE IF NOT EXISTS share_hits (
+            id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+            post_id CHAR(36) NOT NULL,
+            created_at BIGINT NOT NULL,
+            ip_hash CHAR(40) NULL,
+            referer VARCHAR(255) NULL,
+            INDEX idx_post_time (post_id, created_at),
+            INDEX idx_time (created_at)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4');
+    } catch (Throwable $e) { error_log('ensure_share_hits_table: ' . $e->getMessage()); }
+}
+
 $stmt = $pdo->prepare(
     'SELECT id, author_name, kibbe_tag, caption, photo_url, photo_b_url, is_poll, video_url, created_at
        FROM posts
@@ -61,6 +83,15 @@ $stmt = $pdo->prepare(
 $stmt->execute([$id]);
 $post = $stmt->fetch(PDO::FETCH_ASSOC);
 if (!$post) share_404();
+
+// Count the render. Best-effort: a counter must never turn a working share
+// link into an error page.
+try {
+    ensure_share_hits_table($pdo);
+    $referer = mb_substr(trim((string)($_SERVER['HTTP_REFERER'] ?? '')), 0, 255) ?: null;
+    $pdo->prepare('INSERT INTO share_hits (post_id, created_at, ip_hash, referer) VALUES (?,?,?,?)')
+        ->execute([(string)$post['id'], current_time_ms(), sha1(client_ip()), $referer]);
+} catch (Throwable $e) { error_log('share_hits insert: ' . $e->getMessage()); }
 
 $typeNames = [
     'dramatic' => 'Dramatic', 'soft-dramatic' => 'Soft Dramatic',
@@ -128,6 +159,8 @@ header('Referrer-Policy: strict-origin-when-cross-origin');
   .shots img, .single img { width:100%; border-radius:12px; display:block; border:1px solid var(--line); }
   .shots > div { flex:1; min-width:0; }
   .opt { font-size:12px; color:var(--ink-soft); margin-top:6px; text-align:center; }
+  .vote { margin-top:16px; text-align:center; }
+  .vote .opt { margin-top:10px; }
   .cta { margin-top:26px; padding:18px; border:1px solid var(--line); border-radius:14px; text-align:center; }
   .cta p { margin:0 0 12px; font-size:14px; }
   .btn { display:inline-block; background:var(--accent); color:#fff; text-decoration:none;
@@ -147,7 +180,10 @@ header('Referrer-Policy: strict-origin-when-cross-origin');
       <div><img src="<?= $h($abs($post['photo_url'])) ?>" alt="Option A"><div class="opt">Option A</div></div>
       <div><img src="<?= $h($abs($post['photo_b_url'])) ?>" alt="Option B"><div class="opt">Option B</div></div>
     </div>
-    <p class="opt" style="margin-top:12px">Voting happens in the app.</p>
+    <div class="vote">
+      <a class="btn" href="/?pendingPost=<?= $h(rawurlencode((string)$post['id'])) ?>">Vote — free account, 20 seconds</a>
+      <p class="opt">Voting needs a free account so it's one vote per person.</p>
+    </div>
   <?php elseif ($post['photo_url']): ?>
     <div class="single"><img src="<?= $h($abs($post['photo_url'])) ?>" alt="<?= $h($caption !== '' ? $caption : 'Outfit shared on Style-LORE') ?>"></div>
   <?php endif; ?>

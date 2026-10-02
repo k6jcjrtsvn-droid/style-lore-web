@@ -242,12 +242,31 @@ function require_owner(PDO $pdo, string $accountId, ?string $token): void {
     if ($accountId === '' || !$token) {
         error_response('Missing account id or auth token — try logging in again.', 401);
     }
+    if (!owner_token_valid($pdo, $accountId, $token)) {
+        error_response('Not authorized for this account — try logging in again.', 401);
+    }
+}
+
+/**
+ * The check behind require_owner(), as a boolean: true when $token is a
+ * live session token for $accountId. Split out (2026-09-30) so an endpoint
+ * that works signed out but personalises when signed in (api/featured.php)
+ * can ask "is this really them?" without a wrong answer being a 401.
+ *
+ * Also the one place every authenticated request passes through, so it is
+ * where accounts.last_seen_at is stamped — see touch_last_seen().
+ */
+function owner_token_valid(PDO $pdo, string $accountId, ?string $token): bool {
+    if ($accountId === '' || !$token) return false;
     $hash = hash_token($token);
     $stmt = $pdo->prepare('SELECT auth_token_hash FROM accounts WHERE id = ?');
     $stmt->execute([$accountId]);
     $row = $stmt->fetch();
-    if (!$row) error_response('Not authorized for this account — try logging in again.', 401);
-    if ($row['auth_token_hash'] && hash_equals($row['auth_token_hash'], $hash)) return;
+    if (!$row) return false;
+    if ($row['auth_token_hash'] && hash_equals($row['auth_token_hash'], $hash)) {
+        touch_last_seen($pdo, $accountId);
+        return true;
+    }
     // Any other device this account is signed in on.
     ensure_auth_tokens_table($pdo);
     try {
@@ -257,10 +276,44 @@ function require_owner(PDO $pdo, string $accountId, ?string $token): void {
             // Touch at most once a minute to keep the eviction order meaningful without a write per request.
             $pdo->prepare('UPDATE auth_tokens SET last_used_at = ? WHERE token_hash = ? AND last_used_at < ?')
                 ->execute([current_time_ms(), $hash, current_time_ms() - 60000]);
-            return;
+            touch_last_seen($pdo, $accountId);
+            return true;
         }
     } catch (Throwable $e) { error_log('require_owner auth_tokens: ' . $e->getMessage()); }
-    error_response('Not authorized for this account — try logging in again.', 401);
+    return false;
+}
+
+/** accounts.last_seen_at — when this account last made an authenticated
+ *  request, in ms. Lazy, idempotent, same pattern as ensure_digest_columns. */
+function ensure_last_seen_column(PDO $pdo): void {
+    static $done = false; if ($done) return; $done = true;
+    try { $pdo->exec('ALTER TABLE accounts ADD COLUMN IF NOT EXISTS last_seen_at BIGINT DEFAULT NULL'); }
+    catch (Throwable $e) { error_log('ensure_last_seen_column: ' . $e->getMessage()); }
+}
+
+/**
+ * Stamps accounts.last_seen_at for $accountId, at most once per ten minutes
+ * per account — the WHERE clause makes the repeat calls a no-op row match,
+ * not a write, so a busy session costs one UPDATE per ten minutes rather
+ * than one per request. "Active in the last 7 days" in the admin Funnel tab
+ * reads this column; nothing else does.
+ *
+ * Must never throw: it runs inside every authenticated request, and a
+ * missing column (MIGRATE-2026-09-30 not yet run) is not a reason to sign
+ * anybody out. On that failure the column is added for NEXT time — but only
+ * outside a transaction, because DDL commits one implicitly (the signup
+ * 500s of 22-23 Sep, see auth_signup.php). Every caller today runs this
+ * before it opens a transaction, so in practice the column appears on the
+ * first request after deploy.
+ */
+function touch_last_seen(PDO $pdo, string $accountId): void {
+    $now = current_time_ms();
+    try {
+        $pdo->prepare('UPDATE accounts SET last_seen_at = ? WHERE id = ? AND (last_seen_at IS NULL OR last_seen_at < ?)')
+            ->execute([$now, $accountId, $now - 10 * 60 * 1000]);
+    } catch (Throwable $e) {
+        if (!$pdo->inTransaction()) ensure_last_seen_column($pdo);
+    }
 }
 
 /**
@@ -667,6 +720,31 @@ function digest_unsub_token(string $accountId): string {
     return substr(hash_hmac('sha256', 'digest:' . $accountId, $secret), 0, 32);
 }
 
+/**
+ * This week's tip and outfit for one Kibbe type, from includes/digest_tips.php.
+ *
+ * The weekly email (api/cron_weekly_digest.php) and the in-app "this week"
+ * card (api/featured.php) must show the SAME tip, so the choice lives here
+ * rather than in each caller: index by ISO week into the type's list, so it
+ * rotates weekly and every request in a week agrees. $typeName is matched
+ * the way the profile stores it ("Flamboyant Gamine"), case-insensitively;
+ * null when the type is unknown.
+ */
+function weekly_tip_for_type(array $tips, string $typeName, int $week): ?array {
+    $wanted = strtolower(trim($typeName));
+    if ($wanted === '') return null;
+    foreach ($tips as $id => $t) {
+        if (strtolower($t['name']) !== $wanted) continue;
+        return [
+            'id'     => (string)$id,
+            'name'   => (string)$t['name'],
+            'tip'    => (string)$t['tips'][$week % count($t['tips'])],
+            'outfit' => (string)$t['outfits'][$week % count($t['outfits'])],
+        ];
+    }
+    return null;
+}
+
 /** profiles.color_result_json — the color-season quiz result, synced like kibbe_result_json. Lazy, idempotent. */
 function ensure_color_result_column(PDO $pdo): void {
     static $done = false; if ($done) return; $done = true;
@@ -748,6 +826,26 @@ function ensure_post_share_column(PDO $pdo): void {
     try {
         $pdo->exec('ALTER TABLE posts ADD COLUMN IF NOT EXISTS shareable TINYINT(1) NOT NULL DEFAULT 0');
     } catch (Throwable $e) { error_log('ensure_post_share_column: ' . $e->getMessage()); }
+}
+
+/** Where a post was started from — the quiz result, a Style-ME read, the
+ *  outfit builder, the plain composer, a room or a profile. NULL for every
+ *  post made before this existed and for anything a client sends that is not
+ *  in POST_SOURCES. It labels a row for the admin Funnel tab ("Posts by
+ *  source") and is never trusted for anything that matters. */
+const POST_SOURCES = ['result', 'styleme', 'outfit', 'composer', 'room', 'profile'];
+
+function ensure_post_source_column(PDO $pdo): void {
+    static $done = false; if ($done) return; $done = true;
+    try {
+        $pdo->exec('ALTER TABLE posts ADD COLUMN IF NOT EXISTS source VARCHAR(20) DEFAULT NULL');
+    } catch (Throwable $e) { error_log('ensure_post_source_column: ' . $e->getMessage()); }
+}
+
+/** The whitelisted post source, or null. */
+function normalize_post_source(?string $raw): ?string {
+    $v = strtolower(trim((string)$raw));
+    return in_array($v, POST_SOURCES, true) ? $v : null;
 }
 
 /** Styling tips left on someone's public closet item (api/closet_tips.php).

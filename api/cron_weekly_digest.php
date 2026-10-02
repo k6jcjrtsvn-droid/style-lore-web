@@ -56,16 +56,14 @@ $stmt = $pdo->prepare(
 $stmt->execute([$sixDaysAgo]);
 $rows = $stmt->fetchAll();
 
-$byName = [];
-foreach ($tips as $id => $t) $byName[strtolower($t['name'])] = ['id' => $id] + $t;
-
 $sent = 0; $skipped = 0; $failed = 0;
 foreach ($rows as $r) {
-    $type = $byName[strtolower(trim((string)$r['kibbe_type_name']))] ?? null;
+    // Shared with api/featured.php so the email and the in-app card never
+    // disagree about what "this week's tip" is.
+    $type = weekly_tip_for_type($tips, (string)$r['kibbe_type_name'], $week);
     if (!$type) { $skipped++; continue; }
-    $tipList = $type['tips'];
-    $tip = $tipList[$week % count($tipList)];
-    $outfit = $type['outfits'][$week % count($type['outfits'])];
+    $tip = $type['tip'];
+    $outfit = $type['outfit'];
     $first = trim(explode(' ', (string)$r['name'])[0] ?? '');
     $unsub = SITE_BASE_URL . '/api/digest_unsubscribe.php?id=' . rawurlencode($r['id']) . '&t=' . digest_unsub_token($r['id']);
     $guide = SITE_BASE_URL . '/types/' . $type['id'] . '.html';

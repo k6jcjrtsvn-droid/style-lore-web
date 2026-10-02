@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# STALE since 2026-09-30: pages are hand-edited now; running this would overwrite them AND robots/sitemap. Do not run.
 """Generates web/types/*.html — one public, crawlable guide per Kibbe type —
 plus web/types/index.html, sitemap.xml and robots.txt. Content lives here so
 the pages can be regenerated after a wording change; run and commit."""

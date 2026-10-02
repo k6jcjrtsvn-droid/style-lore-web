@@ -44,6 +44,10 @@ CREATE TABLE IF NOT EXISTS accounts (
   -- auth_forgot.php / auth_reset.php).
   reset_token_hash CHAR(64) DEFAULT NULL,
   reset_token_expires BIGINT DEFAULT NULL,
+  -- When this account last made an authenticated request (ms), stamped at
+  -- most once per 10 minutes by touch_last_seen() in includes/helpers.php.
+  -- Read only by the admin Funnel tab ("Active in last 7 days").
+  last_seen_at BIGINT DEFAULT NULL,
   UNIQUE KEY uniq_email (email)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
@@ -103,6 +107,11 @@ CREATE TABLE IF NOT EXISTS posts (
   -- excluded from the main feed/profile listings and only ever returned
   -- when a caller explicitly asks for that group's posts (api/posts.php).
   group_id CHAR(36) DEFAULT NULL,
+  -- Which screen the post was started from: result | styleme | outfit |
+  -- composer | room | profile (POST_SOURCES in includes/helpers.php). NULL
+  -- for older posts and older clients. Labels the row for the admin Funnel
+  -- tab; never trusted for anything else.
+  source VARCHAR(20) DEFAULT NULL,
   KEY idx_author (author_id),
   KEY idx_created (created_at),
   KEY idx_hidden (hidden),
@@ -360,6 +369,40 @@ CREATE TABLE IF NOT EXISTS beta_testers (
   synced_at BIGINT DEFAULT NULL,
   sent_at BIGINT DEFAULT NULL,
   UNIQUE KEY uniq_email (email)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- ---------------------------------------------------------------------
+-- events — small product events the app sends (api/events.php): the
+-- moments that otherwise leave no trace in this database, such as a quiz
+-- finished signed out or a share button tapped. The event name is a closed
+-- list in api/events.php. No auth (the signed-out case is the point), so
+-- only a hash of the address is kept and the endpoint is rate-limited.
+-- ---------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS events (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  created_at BIGINT NOT NULL,
+  event VARCHAR(40) NOT NULL,
+  account_id CHAR(36) NULL,
+  visitor_id VARCHAR(64) NULL,
+  meta VARCHAR(500) NULL,
+  ip_hash CHAR(40) NULL,
+  INDEX idx_event_time (event, created_at),
+  INDEX idx_time (created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- ---------------------------------------------------------------------
+-- share_hits — one row per render of a shared post page /p/<id> (p.php),
+-- so "does anyone open the links people share" has a number. Nothing that
+-- identifies the reader: a hash of the address and the referer only.
+-- ---------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS share_hits (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  post_id CHAR(36) NOT NULL,
+  created_at BIGINT NOT NULL,
+  ip_hash CHAR(40) NULL,
+  referer VARCHAR(255) NULL,
+  INDEX idx_post_time (post_id, created_at),
+  INDEX idx_time (created_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 SET FOREIGN_KEY_CHECKS = 1;

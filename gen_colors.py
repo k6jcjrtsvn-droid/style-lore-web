@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# STALE since 2026-09-30: pages are hand-edited now; do not run.
 """Generate /colors/ — the twelve color-season guide pages plus an index.
 
 Companion to gen_types.py, and deliberately a SEPARATE script: gen_types.py

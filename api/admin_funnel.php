@@ -24,6 +24,11 @@
  * And a per-type room census — accounts of each type against posts of each
  * type — because an empty room is the reason a new member leaves, and until
  * now there was no way to see which rooms were empty without counting by eye.
+ *
+ * Since 2026-09-30 the blind spot above is partly lit: api/events.php records
+ * signed-out quiz completions and share-button taps, p.php counts share-page
+ * opens, posts carry a `source`, and accounts carry `last_seen_at`. Those
+ * come back as two more stage rows plus an `engagement` block.
  */
 require_once __DIR__ . '/../includes/helpers.php';
 require_method('GET');
@@ -37,6 +42,8 @@ if ($secret === '' || $sent === '' || !hash_equals($secret, $sent)) {
 
 $pdo = db();
 ensure_funnel_schema($pdo);
+ensure_post_source_column($pdo);
+ensure_last_seen_column($pdo);
 
 $weekAgo = current_time_ms() - 7 * 24 * 60 * 60 * 1000;
 
@@ -162,6 +169,49 @@ $stage = rows($pdo,
        (SELECT COUNT(*) FROM subscriptions WHERE is_premium = 1) AS premium');
 $stage = $stage ? $stage[0] : [];
 
+/* Two more stage rows (2026-09-30), each its own query so a column that is
+ * not there yet costs that row and not the table:
+ *   tookColorQuiz  accounts with a colour season on their profile — the
+ *                  other half of the quiz, never counted until now.
+ *   active7d       accounts seen in the last 7 days (accounts.last_seen_at,
+ *                  stamped by every authenticated request). The first
+ *                  honest answer to "how many people still open it". */
+$stage['tookColorQuiz'] = 0;
+$stage['active7d'] = 0;
+foreach (rows($pdo,
+    "SELECT COUNT(*) AS n FROM profiles
+      WHERE COALESCE(JSON_UNQUOTE(JSON_EXTRACT(color_result_json, '$.seasonId')), '') <> ''") as $r) {
+    $stage['tookColorQuiz'] = (int)$r['n'];
+}
+foreach (rows($pdo, 'SELECT COUNT(*) AS n FROM accounts WHERE last_seen_at >= ?', [$weekAgo]) as $r) {
+    $stage['active7d'] = (int)$r['n'];
+}
+
+/* What the funnel could never see before api/events.php and the share-page
+ * counter existed: people who finished the quiz signed out and left, share
+ * buttons that were tapped, and whether a shared link was ever opened. 28
+ * days, because a week of these is too few to read. Every query is
+ * best-effort — the tables are created on first use, so on a fresh deploy
+ * they simply read zero. */
+$monthAgo = current_time_ms() - 28 * 24 * 60 * 60 * 1000;
+$engagement = ['signedOutQuiz28d' => 0, 'shareTaps28d' => 0, 'shareHits28d' => 0];
+foreach (rows($pdo, 'SELECT COUNT(*) AS n FROM events WHERE event = "quiz_complete_signed_out" AND created_at >= ?', [$monthAgo]) as $r) {
+    $engagement['signedOutQuiz28d'] = (int)$r['n'];
+}
+$shareTapsByEvent = rows($pdo,
+    'SELECT event, COUNT(*) AS n FROM events
+      WHERE event IN ("result_share_tap", "styleme_share_tap", "outfit_share_tap", "p_vote_cta_tap") AND created_at >= ?
+      GROUP BY event ORDER BY n DESC', [$monthAgo]);
+foreach ($shareTapsByEvent as $r) $engagement['shareTaps28d'] += (int)$r['n'];
+foreach (rows($pdo, 'SELECT COUNT(*) AS n FROM share_hits WHERE created_at >= ?', [$monthAgo]) as $r) {
+    $engagement['shareHits28d'] = (int)$r['n'];
+}
+/* Where posts get started. "(none)" is every post from before posts.source
+ * existed and every post from a client that predates it. */
+$postsBySource = rows($pdo,
+    'SELECT COALESCE(NULLIF(source, ""), "(none)") AS source, COUNT(*) AS n
+       FROM posts WHERE COALESCE(hidden, 0) = 0 GROUP BY 1 ORDER BY n DESC');
+
 /* The room census. A type with accounts and no posts is a room that greets
  * its own members with "be the first" — the single most common reason a new
  * member never comes back. */
@@ -184,6 +234,9 @@ json_response([
     'acquisition' => $acquisition,
     'acquisitionFellBack' => $acquisitionFellBack,
     'leads' => $leads,
+    'engagement' => $engagement,
+    'shareTapsByEvent' => $shareTapsByEvent,
+    'postsBySource' => $postsBySource,
     'daily' => $daily,
     'note' => 'Clicks and signups are separate populations. Nothing links a click to the account it may have become, so read the ratio as a trend, not as attribution. Per-platform columns count people, not rows, so someone with many posts counts once. "iOS" means the account was created from the iOS app, recorded only from 23 Sep 2026 — anything older reads as (unrecorded), not as web, and TestFlight installs that never made an account appear nowhere here at all. The stage counts cover accounts only — the quiz works signed out, so anyone who took it and left without signing up is invisible here. The acquisition table is first-touch: the source is whatever brought someone here the FIRST time, kept until they sign up, so a channel gets credit for a conversion that happens weeks later. \"(direct)\" is not a channel — it is everyone with nothing recorded, including every account made before 27 Sep 2026. Leads are people who asked us to email their quiz result without making an account; \"converted\" counts those who later signed up with the same address.',
 ]);
