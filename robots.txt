@@ -4,6 +4,9 @@ Disallow: /api/
 Disallow: /includes/
 Disallow: /uploads/
 Disallow: /beta-admin.html
+# The Pinterest run sheet. Internal working page, not content -- it also
+# sends meta noindex and is deliberately absent from sitemap.xml.
+Disallow: /pins/
 # Shared Community posts are reachable by link but never listed — members
 # opted into sharing a link, not into being findable by name. (p.php also
 # sends noindex, which is what actually keeps them out of results.)
