@@ -8694,13 +8694,17 @@ function CheckerScreen({ blend, styleWordBlend, kibbeTypeName, topStyleWords, vi
     if(!photoBlob || aiBusy) return;
     if(!visitorId){ if(onSignIn) onSignIn(); return; }
     if(!isPremium && !hasFreeRead){ if(onUpgrade) onUpgrade("checker"); return; }
+    // Permission first, and BEFORE setAiBusy(true). This return happens above
+    // the try/finally, so anything set busy here is never cleared -- and the
+    // guard on line 2 (`|| aiBusy`) then rejects the retry that onGranted
+    // fires after the sheet is agreed to, leaving "Reading your photo..."
+    // spinning forever. askStylist() has always ordered it this way; this one
+    // did not. Do not move setAiBusy(true) back above this line.
+    if(!aiConsentRef.current){ setAfterConsent("read"); setShowAiConsent(true); return; }
     setAiBusy(true);
     setAiResult(null);
     setAiError(null);
     setAiCorrectDraft(null);
-    // Permission first. The server refuses without it, but returning here
-    // means the photo never leaves the phone at all.
-    if(!aiConsentRef.current){ setAfterConsent("read"); setShowAiConsent(true); return; }
     setAiThread([]);
     setAiAskDraft("");
     setAiAskError(null);
