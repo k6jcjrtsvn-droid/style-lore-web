@@ -186,6 +186,15 @@ $messages[] = ['role' => 'user', 'content' => $question];
 
 $payload = ['model' => $model, 'max_tokens' => 500, 'messages' => $messages];
 
+// Our own ceiling, checked before the money is spent. See
+// ai_budget_blocked() for why a cap exists at all when a watchdog is
+// also running: one runaway loop can outspend any check interval.
+if (ai_budget_blocked($pdo)) {
+    [$msg, $status, $code, $reason] = ai_budget_failure();
+    record_ai_unavailable($pdo, 'checker_ask ' . $reason);
+    json_response(['error' => $msg, 'code' => $code], $status);
+}
+
 try {
     $ch = curl_init('https://api.anthropic.com/v1/messages');
     curl_setopt_array($ch, [
@@ -211,8 +220,12 @@ try {
     $decoded = json_decode($responseBody, true);
     if ($httpCode !== 200 || !is_array($decoded)) {
         error_log('Checker ask: API error (' . $httpCode . '): ' . substr((string)$responseBody, 0, 500));
-        error_response("Couldn't reach the AI service right now — try again in a moment.", 502);
+        [$msg, $status, $code, $reason] = anthropic_failure($httpCode, (string)$responseBody);
+        record_ai_unavailable($pdo, 'checker_ask ' . $reason);
+        json_response(['error' => $msg, 'code' => $code], $status);
     }
+
+    record_ai_spend($pdo, 'checker_ask', $model, $decoded['usage'] ?? null, $visitorId);
 
     $text = '';
     if (!empty($decoded['content']) && is_array($decoded['content'])) {

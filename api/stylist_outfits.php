@@ -151,6 +151,13 @@ $payload = [
     ],
 ];
 
+// Already degrades to hand-written copy below, so the cap simply takes
+// that same path rather than showing an error.
+if (ai_budget_blocked($pdo)) {
+    record_ai_unavailable($pdo, 'stylist_outfits monthly_cap_reached');
+    json_response(['ok' => false, 'code' => 'fallback']);
+}
+
 $ch = curl_init('https://api.anthropic.com/v1/messages');
 curl_setopt_array($ch, [
     CURLOPT_RETURNTRANSFER => true,
@@ -170,10 +177,17 @@ curl_close($ch);
 
 if ($responseBody === false || $httpCode !== 200) {
     error_log('Stylist outfits: HTTP ' . $httpCode . ' ' . $curlErr . ' ' . substr((string)$responseBody, 0, 300));
+    // The fallback copy is good enough that this is not worth an error on
+    // screen -- but it IS worth a breadcrumb, because silently serving
+    // fallback copy to everybody is exactly how an empty balance goes
+    // unnoticed for a week.
+    [, , , $reason] = anthropic_failure((int)$httpCode, (string)$responseBody);
+    record_ai_unavailable($pdo, 'stylist_outfits ' . $reason);
     json_response(['ok' => false, 'code' => 'fallback']);
 }
 
 $decoded = json_decode((string)$responseBody, true);
+record_ai_spend($pdo, 'stylist_outfits', (string)($payload['model'] ?? ''), $decoded['usage'] ?? null, $visitorId);
 $text = '';
 foreach (($decoded['content'] ?? []) as $block) {
     if (($block['type'] ?? '') === 'text') $text .= $block['text'];

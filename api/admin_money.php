@@ -77,6 +77,11 @@ function money_input_defs(): array {
         'cost_resend_monthly'  => ['label' => 'Resend (email)',              'group' => 'cost',    'unit' => 'monthly', 'default' => '0'],
         'cost_other_monthly'   => ['label' => 'Anything else, monthly',      'group' => 'cost',    'unit' => 'monthly', 'default' => '0'],
         'cost_anthropic_month' => ['label' => 'Anthropic API, this month',   'group' => 'cost',    'unit' => 'mtd',     'default' => '0'],
+        // Read off the Anthropic Console by hand, because no API reports a
+        // credit balance -- see ai_spend.php. Its updated_at is the as-of
+        // instant, and metered spend since then is subtracted from it to
+        // estimate what is left. Retype it after every top-up.
+        'anthropic_balance_usd'=> ['label' => 'Anthropic credit balance',    'group' => 'cost',    'unit' => 'usd',     'default' => '0'],
         'cost_oneoff_total'    => ['label' => 'One-off costs to date',       'group' => 'cost',    'unit' => 'oneoff',  'default' => '25'],
     ];
 }
@@ -342,7 +347,19 @@ $fixedMonthly = money_num($inputs, 'cost_hosting_monthly')
               + money_num($inputs, 'cost_other_monthly')
               + money_num($inputs, 'cost_domain_annual') / 12
               + money_num($inputs, 'cost_apple_annual') / 12;
-$anthropicMtd = money_num($inputs, 'cost_anthropic_month');
+// Was hand-typed, and the header above still says Anthropic billing is not
+// available programmatically. That is true of the BALANCE and of Anthropic's
+// own invoice -- but every call now reports its own token usage, so what the
+// AI features cost this month is metered on our side and this figure is live.
+// The typed value is still honoured for a month with no metered calls in it,
+// so figures from before metering existed do not silently become zero.
+// $monthStart is this server's local month boundary, which is the one the
+// rest of this page counts against; the cap in helpers.php uses UTC so it
+// behaves the same wherever it runs. The two can disagree by hours on the
+// 1st, and that is cheaper than either figure disagreeing with its own page.
+$anthropicMetered = ai_spend_since($pdo, (int)($monthStart * 1000));
+$anthropicMeteredCalls = ai_spend_call_count_since($pdo, (int)($monthStart * 1000));
+$anthropicMtd = $anthropicMeteredCalls > 0 ? $anthropicMetered : money_num($inputs, 'cost_anthropic_month');
 $oneOff       = money_num($inputs, 'cost_oneoff_total');
 
 $costs = [];

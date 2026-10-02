@@ -114,10 +114,27 @@ function closet_describe_call(string $apiKey, string $model, string $mime, strin
     return [$code, $body === false ? null : (string)$body, $err];
 }
 
+if (ai_budget_blocked($pdo)) {
+    [$msg, $status, $code, $reason] = ai_budget_failure();
+    record_ai_unavailable($pdo, 'closet_describe ' . $reason);
+    // Shipped builds fold auto-describe away on this code and invite
+    // typing instead, which is the right shape for a convenience feature.
+    json_response(['error' => "Auto-describe is paused for a short while — type a description instead.", 'code' => $code], $status);
+}
+
 try {
+    $servedModel = $cheapModel;
     [$httpCode, $responseBody, $curlErr] = closet_describe_call($apiKey, $cheapModel, $mime, $imageBase64, $instructions);
-    if ($httpCode === 404 || $httpCode === 400) {
+    // A 400 used to mean one thing here -- "that model name is not on this
+    // key" -- so it retried on the main model. Running out of credit is ALSO
+    // a 400, and retrying that just spends a second failed call on the
+    // dearer model and doubles the log noise. So the retry now only happens
+    // when the body does not say this is a billing problem.
+    $billingTrouble = stripos((string)$responseBody, 'credit balance') !== false
+                   || stripos((string)$responseBody, 'billing') !== false;
+    if (($httpCode === 404 || $httpCode === 400) && !$billingTrouble) {
         // Model name not available on this key — try the main model once.
+        $servedModel = $mainModel;
         [$httpCode, $responseBody, $curlErr] = closet_describe_call($apiKey, $mainModel, $mime, $imageBase64, $instructions);
     }
     if ($responseBody === null) {
@@ -127,8 +144,12 @@ try {
     $decoded = json_decode($responseBody, true);
     if ($httpCode !== 200 || !is_array($decoded)) {
         error_log('Closet describe: API error (' . $httpCode . '): ' . substr($responseBody, 0, 300));
-        error_response("Couldn't reach the AI service right now — type a description instead.", 502);
+        [$msg, $status, $code, $reason] = anthropic_failure($httpCode, (string)$responseBody);
+        record_ai_unavailable($pdo, 'closet_describe ' . $reason);
+        json_response(['error' => "Couldn't reach the AI service right now — type a description instead.", 'code' => $code], $status);
     }
+
+    record_ai_spend($pdo, 'closet_describe', $servedModel, $decoded['usage'] ?? null, $visitorId);
     $text = '';
     foreach (($decoded['content'] ?? []) as $block) {
         if (($block['type'] ?? '') === 'text') $text .= $block['text'];

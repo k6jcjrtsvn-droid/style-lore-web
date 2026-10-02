@@ -1907,3 +1907,244 @@ function post_season_for_author(PDO $pdo, ?string $authorId): ?string {
         return null;
     }
 }
+
+/* -------------------------------------------------------------------
+ * WHAT THE AI STYLIST COSTS, MEASURED HERE RATHER THAN GUESSED
+ *
+ * The AI Stylist spends real money on every tap. Anthropic bills prepaid
+ * credits, and -- this is the part that shaped the whole design -- there is
+ * NO API that reports the remaining balance. The Usage and Cost API reports
+ * spend after the fact and nothing else. So "watch the balance" is not a
+ * thing that can be built; the only honest approach is to meter the spend
+ * ourselves at the point it happens and project forward.
+ *
+ * Every Anthropic response already carries its own token counts in
+ * `usage`. Pricing them against the published rates gives a running total
+ * that is accurate to the cent, arrives instantly rather than minutes
+ * later, is broken down per feature and per account, and -- the reason it
+ * is done this way -- needs no organisation Admin key anywhere near the
+ * web host. A key that can read the whole org's billing does not belong on
+ * a shared host next to a public PHP endpoint.
+ *
+ * The figures are an ESTIMATE of Anthropic's bill, not the bill. They will
+ * drift from the Console by small amounts. They are for deciding when to
+ * top up, not for accounting.
+ * ------------------------------------------------------------------- */
+
+/** Published per-million-token prices, USD, checked 2 Oct 2026.
+ *
+ *  An unknown model falls back to the MOST EXPENSIVE model in use rather
+ *  than to zero. A model we forgot to list must read as costly, because the
+ *  failure that matters is a spend that silently meters as free and so
+ *  never trips the cap. */
+function ai_model_prices(string $model): array {
+    $table = [
+        'claude-sonnet-5'   => ['in' => 2.00, 'out' => 10.00],
+        'claude-sonnet-5.5' => ['in' => 2.00, 'out' => 10.00],
+        'claude-haiku-4-5'  => ['in' => 1.00, 'out' =>  5.00],
+        'claude-haiku-3-5'  => ['in' => 0.80, 'out' =>  4.00],
+        'claude-opus-5'     => ['in' => 5.00, 'out' => 25.00],
+        'claude-opus-5.5'   => ['in' => 4.00, 'out' => 20.00],
+    ];
+    $key = strtolower(trim($model));
+    if (isset($table[$key])) return $table[$key];
+    foreach ($table as $name => $price) {
+        if ($key !== '' && strpos($key, $name) === 0) return $price;
+    }
+    error_log('ai_model_prices: unpriced model "' . $model . '" -- billed at opus rates until listed');
+    return ['in' => 5.00, 'out' => 25.00];
+}
+
+/** Dollars for one call, from the `usage` block Anthropic returned.
+ *
+ *  Cache writes cost 1.25x the input rate and cache reads 0.1x, so they are
+ *  priced separately instead of being lumped in with plain input. */
+function ai_cost_usd(string $model, array $usage): float {
+    $p = ai_model_prices($model);
+    $in        = (int)($usage['input_tokens'] ?? 0);
+    $out       = (int)($usage['output_tokens'] ?? 0);
+    $cacheIn   = (int)($usage['cache_creation_input_tokens'] ?? 0);
+    $cacheRead = (int)($usage['cache_read_input_tokens'] ?? 0);
+    $dollars = ($in * $p['in'] + $out * $p['out']
+             + $cacheIn * $p['in'] * 1.25
+             + $cacheRead * $p['in'] * 0.10) / 1000000.0;
+    return round($dollars, 8);
+}
+
+/** One row per Anthropic call. Separate table rather than `events` because
+ *  these have to be SUMMED, and summing dollars out of a VARCHAR meta blob
+ *  is how a monitor ends up quietly reporting zero. */
+function ensure_ai_spend_table(PDO $pdo): void {
+    static $done = false; if ($done) return; $done = true;
+    if ($pdo->inTransaction()) { $done = false; return; }
+    try {
+        $pdo->exec(
+            'CREATE TABLE IF NOT EXISTS ai_spend (
+                id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+                created_at BIGINT NOT NULL,
+                feature VARCHAR(40) NOT NULL,
+                model VARCHAR(60) NOT NULL,
+                account_id CHAR(36) NULL,
+                input_tokens INT UNSIGNED NOT NULL DEFAULT 0,
+                output_tokens INT UNSIGNED NOT NULL DEFAULT 0,
+                cache_write_tokens INT UNSIGNED NOT NULL DEFAULT 0,
+                cache_read_tokens INT UNSIGNED NOT NULL DEFAULT 0,
+                cost_usd DECIMAL(12,8) NOT NULL DEFAULT 0,
+                INDEX idx_time (created_at),
+                INDEX idx_feature_time (feature, created_at),
+                INDEX idx_account_time (account_id, created_at)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4'
+        );
+    } catch (Throwable $e) { error_log('ensure_ai_spend_table: ' . $e->getMessage()); }
+}
+
+/** Record what a call cost. Never throws and never blocks the response --
+ *  a metering failure must not cost the customer the answer they just paid
+ *  for. A missing row understates spend, which the daily reconciliation
+ *  against the Console is there to catch. */
+function record_ai_spend(PDO $pdo, string $feature, string $model, ?array $usage, ?string $accountId = null): float {
+    if (!is_array($usage)) { error_log('record_ai_spend: no usage block for ' . $feature . ' (' . $model . ')'); return 0.0; }
+    $cost = ai_cost_usd($model, $usage);
+    ensure_ai_spend_table($pdo);
+    try {
+        $st = $pdo->prepare(
+            'INSERT INTO ai_spend
+               (created_at, feature, model, account_id, input_tokens, output_tokens, cache_write_tokens, cache_read_tokens, cost_usd)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
+        );
+        $st->execute([
+            (int)round(microtime(true) * 1000),
+            substr($feature, 0, 40),
+            substr($model, 0, 60),
+            $accountId ?: null,
+            (int)($usage['input_tokens'] ?? 0),
+            (int)($usage['output_tokens'] ?? 0),
+            (int)($usage['cache_creation_input_tokens'] ?? 0),
+            (int)($usage['cache_read_input_tokens'] ?? 0),
+            $cost,
+        ]);
+    } catch (Throwable $e) { error_log('record_ai_spend: ' . $e->getMessage()); }
+    return $cost;
+}
+
+/** Dollars spent since an epoch-ms instant. */
+function ai_spend_since(PDO $pdo, int $sinceMs): float {
+    ensure_ai_spend_table($pdo);
+    try {
+        $st = $pdo->prepare('SELECT COALESCE(SUM(cost_usd), 0) FROM ai_spend WHERE created_at >= ?');
+        $st->execute([$sinceMs]);
+        return (float)$st->fetchColumn();
+    } catch (Throwable $e) { error_log('ai_spend_since: ' . $e->getMessage()); return 0.0; }
+}
+
+/** How many metered calls since an instant. Zero is the signal that
+ *  metering has nothing to say about a period, which is different from
+ *  having measured a period that genuinely cost nothing. */
+function ai_spend_call_count_since(PDO $pdo, int $sinceMs): int {
+    ensure_ai_spend_table($pdo);
+    try {
+        $st = $pdo->prepare('SELECT COUNT(*) FROM ai_spend WHERE created_at >= ?');
+        $st->execute([$sinceMs]);
+        return (int)$st->fetchColumn();
+    } catch (Throwable $e) { error_log('ai_spend_call_count_since: ' . $e->getMessage()); return 0; }
+}
+
+/** Dollars spent since midnight UTC on the 1st of the current month. */
+function ai_month_to_date_usd(PDO $pdo): float {
+    $startOfMonth = (int)(gmmktime(0, 0, 0, (int)gmdate('n'), 1, (int)gmdate('Y')) * 1000);
+    return ai_spend_since($pdo, $startOfMonth);
+}
+
+/** The monthly ceiling in dollars. 0 disables the cap entirely.
+ *
+ *  The DEFAULT IS NOT ZERO on purpose. A cap that has to be switched on in
+ *  config.php is a cap that is off on the one host that matters, so the
+ *  protection ships on and config.php only ever raises it. $50 is roughly
+ *  7,000 photo reads a month at today's rates -- far above present traffic
+ *  and far below an amount worth losing to a scraper. Raise it as real use
+ *  grows: the watchdog warns at three quarters of it, so there is notice
+ *  before it ever bites a paying customer. */
+function ai_monthly_budget_usd(): float {
+    return (defined('AI_MONTHLY_BUDGET_USD')) ? (float)AI_MONTHLY_BUDGET_USD : 50.0;
+}
+
+/** True when this month's metered spend has reached the ceiling.
+ *
+ *  The cap exists for the failure that monitoring cannot catch in time: one
+ *  scraper or one retry loop can burn a month of credit in an hour, between
+ *  two checks of any watchdog. It is a brake on OUR spending, deliberately
+ *  set well below the actual balance, so that hitting it is a bad hour for
+ *  the feature rather than an outage for every paying customer with no
+ *  credit left to serve them.
+ *
+ *  A metering failure reads as "not blocked" on purpose. Erring the other
+ *  way would turn a dropped INSERT into a shut-down paid feature. */
+function ai_budget_blocked(PDO $pdo): bool {
+    $budget = ai_monthly_budget_usd();
+    if ($budget <= 0) return false;
+    return ai_month_to_date_usd($pdo) >= $budget;
+}
+
+/** Note that the AI Stylist turned a customer away, and why, so the
+ *  watchdog can see it without reading PHP error logs it has no access to. */
+function record_ai_unavailable(PDO $pdo, string $reason): void {
+    error_log('AI_STYLIST_UNAVAILABLE: ' . $reason);
+    try {
+        // events.php owns that table's DDL and is not included here, so the
+        // helper is used when it happens to be loaded and the INSERT simply
+        // relies on the migration otherwise. A lost breadcrumb must never be
+        // a fatal error inside the error path.
+        if (function_exists('ensure_events_table')) ensure_events_table($pdo);
+        $st = $pdo->prepare('INSERT INTO events (created_at, event, meta) VALUES (?, ?, ?)');
+        $st->execute([(int)round(microtime(true) * 1000), 'ai_unavailable', substr($reason, 0, 500)]);
+    } catch (Throwable $e) { error_log('record_ai_unavailable: ' . $e->getMessage()); }
+}
+
+/** Turn an Anthropic failure into something true to say on screen.
+ *
+ *  This replaced a single catch-all that said "try again in a moment" to
+ *  every failure alike. Running out of credit comes back as a 400 whose
+ *  body says the balance is too low -- a state where "try again in a
+ *  moment" is simply false, and will stay false until somebody tops up.
+ *  Telling a paying customer to retry forever is worse than telling them
+ *  the feature is down.
+ *
+ *  Returns [message, httpStatus, code, reason].
+ *
+ *  The CODES ARE DELIBERATELY ONES ALREADY SHIPPED. Builds in people's
+ *  hands key on `ai_unavailable` to fold the feature away cleanly -- the
+ *  closet auto-describe hides itself and invites typing instead. A brand
+ *  new code would reach those builds as an unhandled error string, so
+ *  states a human has to fix reuse `ai_unavailable` and only the retryable
+ *  ones get a new code, where falling through to the message is right.
+ *
+ *  `reason` is for our logs and the watchdog. It is never shown.
+ */
+function anthropic_failure(int $httpCode, ?string $body): array {
+    $raw = strtolower((string)$body);
+    $paused = "The AI Stylist is paused for a short while — nothing was used, so your read is still waiting for you.";
+
+    if ($httpCode === 400 && (strpos($raw, 'credit balance is too low') !== false
+                           || strpos($raw, 'insufficient') !== false
+                           || strpos($raw, 'billing') !== false)) {
+        return [$paused, 503, 'ai_unavailable', 'out_of_credit'];
+    }
+    if ($httpCode === 401 || $httpCode === 403) {
+        return [$paused, 503, 'ai_unavailable', 'auth_rejected'];
+    }
+    if ($httpCode === 429) {
+        return ["The AI Stylist is busy right now — give it a minute and try again.", 503, 'ai_busy', 'rate_limited'];
+    }
+    if ($httpCode === 529 || $httpCode >= 500) {
+        return ["The AI service is having a moment — try again shortly.", 502, 'ai_busy', 'upstream_' . $httpCode];
+    }
+    return ["Couldn't reach the AI service right now — try again in a moment.", 502, 'ai_upstream', 'http_' . $httpCode];
+}
+
+/** The same shape for our own cap, so a call site handles one case.
+ *  Our ceiling says the same thing to the customer as Anthropic's does:
+ *  which of the two stopped the call is our business, not theirs. */
+function ai_budget_failure(): array {
+    return ["The AI Stylist is paused for a short while — nothing was used, so your read is still waiting for you.",
+            503, 'ai_unavailable', 'monthly_cap_reached'];
+}

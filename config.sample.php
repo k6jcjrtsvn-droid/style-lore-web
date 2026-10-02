@@ -78,6 +78,23 @@ define('CRON_KEY', '');
 define('ANTHROPIC_API_KEY', '');
 define('ANTHROPIC_MODEL', 'claude-sonnet-5');
 
+// The most this month's AI calls may cost US, in dollars, before the AI
+// features start refusing politely. 0 removes the ceiling entirely.
+//
+// This is OUR brake, not Anthropic's. It exists for the one failure a
+// watchdog cannot catch in time: a scraper or a retry loop can burn a
+// month of credit in an hour, between any two checks. Hitting this cap
+// costs us a bad hour for one feature; running the Anthropic balance to
+// zero costs every paying customer the thing they paid for, and takes a
+// card payment and a wait to undo.
+//
+// If this line is absent the cap is $50/month — see ai_monthly_budget_usd()
+// in includes/helpers.php for why the default is not "off". At today's
+// published rates that is roughly 7,000 photo reads. RAISE IT as real use
+// grows; /api/admin/ai-spend warns at three quarters of it, so there is
+// notice before it ever turns a customer away.
+define('AI_MONTHLY_BUDGET_USD', 50);
+
 // Powers Style-LORE Premium subscriptions (the AI Stylist above, unlimited
 // Closet items instead of the free 20-item cap) via RevenueCat, which
 // handles the actual Google Play Billing purchase flow from the mobile
