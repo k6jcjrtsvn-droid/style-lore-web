@@ -9,7 +9,7 @@
  * identical.
  *
  *   /ios              -> the TestFlight public link
- *   /android          -> the Play opt-in page
+ *   /android          -> the public Play listing
  *   /ios?s=instagram  -> same, tagged so posts can be compared
  *
  * A failure here must never cost a tester, so every step is wrapped: if the
@@ -19,7 +19,7 @@ require_once __DIR__ . '/../includes/helpers.php';
 
 const DESTINATIONS = [
     'ios'     => 'https://testflight.apple.com/join/CqYS67Md',
-    'android' => 'https://play.google.com/apps/testing/com.stylelore.app',
+    'android' => 'https://play.google.com/store/apps/details?id=com.stylelore.app',
 ];
 
 $slug = strtolower(trim((string)($_GET['slug'] ?? '')));
