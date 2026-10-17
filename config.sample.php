@@ -148,3 +148,33 @@ define('STRIPE_PRICE_YEARLY', '');
 // before, this only skips the "also buzz their phone" step.
 define('FIREBASE_PROJECT_ID', '');
 define('FIREBASE_SERVICE_ACCOUNT_PATH', '');
+
+// --- App Store Connect API (read-only review status) ------------------
+//
+// Lets /api/asc_review_status.php ask Apple what state the iOS app and its
+// review submissions are in, with no browser and nobody logged in. This
+// exists because App Store Connect signs a browser out constantly: the
+// scheduled review watcher was signed out for 24 consecutive runs over 15
+// days in Oct 2026 and missed a rejection for five days.
+//
+// 1. App Store Connect > Users and Access > Integrations > App Store
+//    Connect API > Team Keys > the + button. Name it something like
+//    "Review status (read only)" and give it the lowest role that works —
+//    try **Developer** first; if the endpoint comes back 403 FORBIDDEN,
+//    regenerate as App Manager. Do NOT reuse the Codemagic key.
+//
+// 2. Apple lets you download the .p8 private key ONCE. It is a real
+//    secret — anyone holding it can act on the developer account — so
+//    upload it somewhere OUTSIDE public_html, next to config.php, exactly
+//    like the Firebase service account above. Never commit it.
+//
+// 3. ASC_KEY_ID is the 10-character Key ID in that table. ASC_ISSUER_ID is
+//    the UUID shown above the table (it is the same for every key on the
+//    team). ASC_APP_ID is the app's Apple ID — 6813713328 for Style-LORE.
+//
+// Leave any of these blank and the endpoint answers 503 and changes
+// nothing else; the rest of the site does not depend on it.
+define('ASC_KEY_ID', '');
+define('ASC_ISSUER_ID', '');
+define('ASC_PRIVATE_KEY_PATH', '');   // e.g. '/home/yourcpaneluser/AuthKey_XXXXXXXXXX.p8'
+define('ASC_APP_ID', '6813713328');
