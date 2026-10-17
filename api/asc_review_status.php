@@ -158,15 +158,45 @@ if (!$s['ok']) {
 }
 
 // One word for the watcher to branch on, so it never has to guess.
-$states = [];
-foreach (($out['versions'] ?? []) as $row) if (!empty($row['state'])) $states[] = $row['state'];
-foreach (($out['submissions'] ?? []) as $row) if (!empty($row['state'])) $states[] = $row['state'];
-$bad  = ['REJECTED', 'METADATA_REJECTED', 'DEVELOPER_REJECTED', 'UNRESOLVED_ISSUES', 'INVALID_BINARY'];
-$live = ['READY_FOR_SALE', 'READY_FOR_DISTRIBUTION', 'COMPLETE'];
-$out['verdict'] = count(array_intersect($bad, $states)) ? 'needs_attention'
-                : (count(array_intersect($live, $states)) ? 'approved_or_live' : 'in_progress');
-$out['allStates'] = array_values(array_unique($states));
+//
+// Deliberately NOT a sweep over every state we saw. The first version of
+// this returned "approved_or_live" while the app sat in WAITING_FOR_REVIEW,
+// because two OLD submissions were COMPLETE and COMPLETE was being treated
+// as good news. It is not: `0958cfe8…` is COMPLETE and it is the 12 Oct
+// REJECTION — a review submission reads COMPLETE once it is finished,
+// whatever the outcome. Judge the CURRENT version, and only the NEWEST
+// submission, and never let a historical row produce an all-clear.
+$versions   = is_array($out['versions'] ?? null) && !isset($out['versions']['error']) ? $out['versions'] : [];
+$subs       = is_array($out['submissions'] ?? null) && !isset($out['submissions']['error']) ? $out['submissions'] : [];
+$curVersion = $versions[0]['state'] ?? null;
+
+// Newest submission by submitted date — Apple's order is not guaranteed.
+$latestSub = null;
+foreach ($subs as $row) {
+    if (empty($row['state'])) continue;
+    if ($latestSub === null || strcmp((string)$row['submitted'], (string)$latestSub['submitted']) > 0) $latestSub = $row;
+}
+
+$badVersion = ['REJECTED', 'METADATA_REJECTED', 'DEVELOPER_REJECTED', 'INVALID_BINARY'];
+$liveVersion = ['READY_FOR_SALE', 'READY_FOR_DISTRIBUTION', 'PENDING_DEVELOPER_RELEASE', 'PENDING_APPLE_RELEASE'];
+
+if (in_array($curVersion, $badVersion, true) || ($latestSub['state'] ?? '') === 'UNRESOLVED_ISSUES') {
+    $verdict = 'needs_attention';
+} elseif (in_array($curVersion, $liveVersion, true)) {
+    $verdict = 'approved_or_live';
+} elseif ($curVersion === null) {
+    $verdict = 'unknown';          // the call failed; never an all-clear
+} else {
+    $verdict = 'in_progress';
+}
+
+$out['verdict']              = $verdict;
+$out['currentVersionState']  = $curVersion;
+$out['latestSubmissionState'] = $latestSub['state'] ?? null;
+$out['latestSubmissionId']   = $latestSub['id'] ?? null;
 $out['note'] = 'Apple does not expose App Review message text in the public API. '
-             . 'A needs_attention verdict means open the App Review page for the reason.';
+             . 'needs_attention means open the App Review page for the reason. '
+             . 'A submission state of COMPLETE only means that submission finished — '
+             . 'it is not an approval.';
 
 json_response($out);
