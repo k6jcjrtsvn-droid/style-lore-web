@@ -27,6 +27,11 @@
  */
 require_once __DIR__ . '/../includes/helpers.php';
 @include_once __DIR__ . '/../includes/watchdog_token.php';
+// The App Store Connect settings may live in config.php, or — better — in a
+// small file beside it one level ABOVE public_html, so the four constants can
+// be added without opening config.php (which holds the database password, the
+// Stripe secret key and the Anthropic key). Either location works.
+@include_once dirname(__DIR__, 2) . '/asc_config.php';
 
 $token = (string)($_GET['token'] ?? '');
 if (!defined('WATCHDOG_READ_TOKEN') || WATCHDOG_READ_TOKEN === '' || !hash_equals(WATCHDOG_READ_TOKEN, $token)) {
