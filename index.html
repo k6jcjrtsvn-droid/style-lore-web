@@ -102,7 +102,19 @@
   })();
   window.dataLayer = window.dataLayer || [];
   function gtag(){dataLayer.push(arguments);}
-  if(!window.STYLE_LORE_NATIVE){
+  // Clean-capture mode for marketing footage: ?capture=1 (sticky for the rest
+  // of the tab's session) loads neither Analytics nor AdSense, so a screen
+  // recording of the web app has no Auto Ad injected into the middle of it.
+  // Opt-in only — a normal visit is completely unchanged, and the native app
+  // never loaded either script anyway. Added 2026-10-22 because the Android
+  // app sets FLAG_SECURE and cannot be screen-recorded at all, so social and
+  // Pinterest footage has to be captured in a browser.
+  window.STYLE_LORE_CAPTURE = false;
+  try {
+    if (/[?&]capture=1(&|$)/.test(location.search)) sessionStorage.setItem("lore_capture", "1");
+    window.STYLE_LORE_CAPTURE = sessionStorage.getItem("lore_capture") === "1";
+  } catch (e) { /* private mode: just leave capture off */ }
+  if(!window.STYLE_LORE_NATIVE && !window.STYLE_LORE_CAPTURE){
     var ga = document.createElement("script");
     ga.async = true;
     ga.src = "https://www.googletagmanager.com/gtag/js?id=G-31ZW3WX1TX";
