@@ -84,6 +84,43 @@ $out['config'] = [
     'cronKey' => defined('CRON_KEY') && CRON_KEY !== '',
     'firebasePush' => defined('FIREBASE_SERVICE_ACCOUNT_PATH') && FIREBASE_SERVICE_ACCOUNT_PATH !== '' && is_readable(FIREBASE_SERVICE_ACCOUNT_PATH),
 ];
+// PHP build identity — for telling whether a security rebuild has landed.
+// Shared hosts (CloudLinux/cPanel, which is what we are on) backport a CVE
+// fix WITHOUT changing the version number, so PHP_VERSION alone cannot
+// answer "are we patched?". The build date can. Added 2026-10-22 for
+// PHP2Shell, CVE-2026-109618 / CVE-2026-109619 (unauthenticated RCE in PHP
+// itself); the upstream fix for our branch is 8.3.36.
+$buildDate = null;
+if (function_exists('phpinfo')) {
+    try {
+        ob_start();
+        phpinfo(INFO_GENERAL);
+        $info = (string)ob_get_clean();
+        // phpinfo() is plain text under CLI and a table under a web SAPI;
+        // turn cell ends into " => " so one pattern reads both.
+        $info = preg_replace('#</t[dh]>#i', ' => ', $info);
+        $info = strip_tags($info);
+        if (preg_match('/Build Date\s*=>\s*([^\r\n]+)/', $info, $m)) {
+            $buildDate = trim($m[1]);
+        }
+    } catch (Throwable $e) {
+        if (ob_get_level() > 0) ob_end_clean();
+        $buildDate = 'error: ' . $e->getMessage();
+    }
+}
+$out['runtime'] = [
+    'phpVersion' => PHP_VERSION,
+    'buildDate'  => $buildDate,
+    'sapi'       => PHP_SAPI,
+    'ini'        => [
+        // 0 here means our .user.ini is being honoured (CVE-2026-109619
+        // mitigation). 1 means it is not — investigate.
+        'session.upload_progress.enabled' => ini_get('session.upload_progress.enabled'),
+        'memory_limit'                    => ini_get('memory_limit'),
+        'upload_max_filesize'             => ini_get('upload_max_filesize'),
+        'post_max_size'                   => ini_get('post_max_size'),
+    ],
+];
 $out['uploadsWritable'] = is_writable(__DIR__ . '/../uploads');
 if ($out['problems']) $out['ok'] = false;
 json_response($out);
