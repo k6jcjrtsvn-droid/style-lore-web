@@ -101,7 +101,8 @@ if (function_exists('phpinfo')) {
         $info = preg_replace('#</t[dh]>#i', ' => ', $info);
         $info = strip_tags($info);
         if (preg_match('/Build Date\s*=>\s*([^\r\n]+)/', $info, $m)) {
-            $buildDate = trim($m[1]);
+            // Trim the cell separator we introduced above off the tail.
+            $buildDate = trim(preg_replace('/\s*=>\s*$/', '', $m[1]));
         }
     } catch (Throwable $e) {
         if (ob_get_level() > 0) ob_end_clean();
