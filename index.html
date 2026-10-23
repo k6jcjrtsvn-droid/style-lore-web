@@ -11303,6 +11303,40 @@ function App(){
   // Remember the tab for the next reload (see loadLastScreen above).
   useEffect(() => { try{ localStorage.setItem(SCREEN_KEY, screen); }catch(err){} }, [screen]);
 
+  // Screen recording on Android. MainActivity sets FLAG_SECURE on every
+  // launch, so the OS refuses to screenshot or screen-record the app — that
+  // is what stops anyone capturing another member's Community photos. It has
+  // to be set before the WebView loads, so it cannot know who is signed in.
+  //
+  // Once we DO know, we ask the server whether this account is one of the
+  // few allowed to record the app for our own marketing (see
+  // api/capture_allowed.php). The list lives on the server, not in the
+  // binary, so it can be granted or revoked without shipping a new build,
+  // and the flag is re-set on every launch so a revoked account is locked
+  // again on its next start.
+  //
+  // Website and iOS do nothing here. Any failure leaves the app locked,
+  // which is the safe default.
+  useEffect(() => {
+    if(!IS_NATIVE_APP || !profile || !profile.visitorId || !profile.token) return;
+    let platform = "";
+    try{ platform = window.Capacitor.getPlatform(); }catch(err){ return; }
+    if(platform !== "android") return;
+    let cancelled = false;
+    (async () => {
+      try{
+        const r = await fetch(API_BASE + "/api/capture_allowed.php?accountId=" + encodeURIComponent(profile.visitorId),
+                              { headers: authHeader(profile.token), cache:"no-store" });
+        if(cancelled || !r.ok) return;
+        const j = await r.json();
+        if(cancelled || !j || !j.allowed) return;
+        const plugin = nativePlugin("ScreenCapture");
+        if(plugin && plugin.setAllowed) await plugin.setAllowed({ allowed:true });
+      }catch(err){ /* stays locked */ }
+    })();
+    return () => { cancelled = true; };
+  }, [profile && profile.visitorId, profile && profile.token]);
+
   // Style-LORE Premium entitlement. The server (has_premium(), synced
   // from RevenueCat's webhook — see api/revenuecat_webhook.php) is always
   // the real source of truth for anything that spends money server-side
