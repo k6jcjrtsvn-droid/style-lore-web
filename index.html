@@ -8484,6 +8484,31 @@ function PaywallSheet({ reason, onClose, onPurchased, profile, webCheckout: webC
       ? "Everything Style-LORE can do for your wardrobe, for less than a coffee a month."
       : "Know before you buy, and stop guessing in the fitting room.";
 
+  // Apple 3.1.2 and Play both require the subscription's name, length and
+  // price, plus functional Terms of Use and Privacy Policy links, AT THE
+  // POINT OF PURCHASE. This paragraph used to live inside the branch that
+  // renders the loaded packages, so when getOfferings() failed the sheet
+  // lost the price, the length and BOTH LINKS together. That is the screen
+  // App Review rejected on 18 Oct 2026 ("a functional link to the Terms of
+  // Use (EULA)" missing from within the app), and the screen a real tester
+  // hit on build 1.0 (7) on 3 Nov. It is built once here and rendered in
+  // every signed-in native state, whether or not the store ever answers.
+  const storeTerms = e("p", { className:"footnote", style:{ margin:"10px 0 0", textAlign:"left", lineHeight:1.45 } },
+    "Style-LORE Premium is an auto-renewing subscription. ",
+    trialEligible ? "Your 7-day free trial becomes a paid subscription unless you cancel at least 24 hours before it ends. " : "",
+    "Payment is charged to your ", STORE_ACCOUNT_NAME, " at confirmation, and renews at the same price each period unless you turn off auto-renew at least 24 hours before the period ends. Manage or cancel in your phone's subscription settings. ",
+    e("a", { href:"https://style-lore.com/terms.html", target:"_blank", rel:"noopener" }, "Terms of Use"), " · ",
+    e("a", { href:"https://style-lore.com/privacy.html", target:"_blank", rel:"noopener" }, "Privacy Policy"));
+
+  // Name, length and price for when the store has not given us live
+  // packages. Same figures as App Store Connect and Play. Stated as text
+  // rather than buttons because nothing can be bought until the store
+  // answers -- but what Apple requires on screen is on screen regardless.
+  const fallbackPlans = e("div", { style:{ display:"flex", flexDirection:"column", gap:4, marginBottom:4 } },
+    e("p", { style:{ margin:0, fontSize:14, fontWeight:600 } }, "Style-LORE Premium — $39.99 / year"),
+    e("p", { style:{ margin:0, fontSize:14, fontWeight:600 } }, "Style-LORE Premium — $4.99 / month"),
+    trialEligible ? e("p", { className:"footnote", style:{ margin:"2px 0 0" } }, "Both plans start with a 7-day free trial.") : null);
+
   let plansContent;
   if (!isNative && webCheckout){
     // Website: Stripe's hosted Checkout. Card details never touch our server.
@@ -8519,9 +8544,17 @@ function PaywallSheet({ reason, onClose, onPurchased, profile, webCheckout: webC
         e("a", { href:"https://style-lore.com/privacy.html", target:"_blank", rel:"noopener" }, "Privacy Policy"))
     );
   } else if (offerings === null){
-    plansContent = e("p", { style:{ fontSize:13, color:"var(--ink-soft)" } }, "Loading plans…");
+    plansContent = e("div", null,
+      fallbackPlans,
+      // Only while it is genuinely still loading -- when the call has failed
+      // the error banner below says so, and both at once reads as a bug.
+      error ? null : e("p", { style:{ fontSize:13, color:"var(--ink-soft)", margin:"10px 0 0" } }, "Loading plans…"),
+      storeTerms);
   } else if (offerings.length === 0){
-    plansContent = e(Banner, { kind:"info" }, "No plans are available right now — check back soon.");
+    plansContent = e("div", null,
+      fallbackPlans,
+      e(Banner, { kind:"info" }, "No plans are available right now — check back soon."),
+      storeTerms);
   } else {
     plansContent = e("div", { style:{ display:"flex", flexDirection:"column", gap:10, marginBottom:12 } },
       offerings.map(pkg => {
@@ -8538,18 +8571,8 @@ function PaywallSheet({ reason, onClose, onPurchased, profile, webCheckout: webC
           : (pkg.product.title || pkg.product.identifier) + " — " + pkg.product.priceString + period);
       }),
       e("button", { className:"btn-text", style:{ fontSize:12.5 }, disabled:!!busy, onClick:restore }, busy === "restore" ? "Restoring…" : "Restore purchases"),
-      // Auto-renew terms + functional Terms and Privacy links, in the binary,
-      // at the point of purchase. App Store Review Guideline 3.1.2 and
-      // Schedule 2 of the Paid Apps Agreement both require this and it is one
-      // of the most common subscription rejections; Google Play asks for the
-      // same disclosure. The store name is switched per platform because the
-      // wording has to name the account that is actually charged.
-      e("p", { className:"footnote", style:{ margin:"10px 0 0", textAlign:"left", lineHeight:1.45 } },
-        "Style-LORE Premium is an auto-renewing subscription. ",
-        trialEligible ? "Your 7-day free trial becomes a paid subscription unless you cancel at least 24 hours before it ends. " : "",
-        "Payment is charged to your ", STORE_ACCOUNT_NAME, " at confirmation, and renews at the same price each period unless you turn off auto-renew at least 24 hours before the period ends. Manage or cancel in your phone's subscription settings. ",
-        e("a", { href:"https://style-lore.com/terms.html", target:"_blank", rel:"noopener" }, "Terms of Use"), " · ",
-        e("a", { href:"https://style-lore.com/privacy.html", target:"_blank", rel:"noopener" }, "Privacy Policy"))
+      // Same disclosure as every other signed-in state -- see storeTerms above.
+      storeTerms
     );
   }
 
