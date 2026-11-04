@@ -224,6 +224,11 @@
   html,body{margin:0; padding:0;}
   html{scrollbar-color: var(--line) transparent;}
   body{
+    /* Chrome Android owns the overscroll gesture and will fire its own
+       pull-to-refresh while someone is scrolling the Community feed.
+       'contain' stops the scroll chaining without killing the local
+       overscroll glow. Safari honours this from iOS 16. */
+    overscroll-behavior-y:contain;
     background:var(--paper);
     color:var(--ink);
     font-family:'Work Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
@@ -891,7 +896,7 @@
   .post-name{font-size:13.5px; font-weight:600;}
   .post-time{font-size:11.5px; color:var(--ink-soft);}
   .post-caption{font-size:14.5px; line-height:1.55; margin-bottom:10px;}
-  .post-photo{width:100%; border-radius:var(--radius-s); margin-bottom:10px; display:block; border:1px solid var(--line-soft); cursor:zoom-in;}
+  .post-photo{width:100%; border-radius:var(--radius-s); margin-bottom:10px; display:block; border:1px solid var(--line-soft); cursor:zoom-in; touch-action:manipulation;}
   .zoomable{ cursor:zoom-in; }
   /* Lightbox: any photo in the app (posts, profile pictures, public closet
      items) opens full screen; pinch or double-tap to zoom, drag to pan. */
@@ -904,12 +909,38 @@
   .lightbox-hint{ position:absolute; top:calc(24px + env(safe-area-inset-top)); left:16px; font-size:11.5px; color:rgba(255,255,255,.55); letter-spacing:.06em; text-transform:uppercase; pointer-events:none; }
   .post-video{width:100%; max-height:420px; border-radius:var(--radius-s); margin-bottom:10px; display:block; background:#0B0B0D; border:1px solid var(--line-soft);}
   .post-actions{display:flex; align-items:center; gap:18px; padding-top:10px; border-top:1px solid var(--line-soft); margin-top:2px;}
-  .post-action{display:flex; align-items:center; gap:6px; font-size:12.5px; color:var(--ink-soft); transition:color .15s ease, transform .1s ease;}
+  .post-action{display:flex; align-items:center; gap:6px; font-size:12.5px; color:var(--ink-soft); transition:color .15s ease, transform .1s ease; touch-action:manipulation;}
   .post-action svg{width:16px; height:16px; stroke:currentColor; fill:none; stroke-width:1.5;}
   .post-action:hover{color:var(--accent);}
   .post-action:active{transform:scale(.94);}
   .post-action[aria-pressed="true"]{color:var(--accent);}
   .post-action[aria-pressed="true"] svg{fill:var(--accent); stroke:var(--accent);}
+
+  /* The heart's reward moment. We deliberately do NOT ship double-tap-to-like
+     on the feed photo: a single tap there already opens the lightbox, so
+     detecting a double tap would mean deferring every single tap by the
+     platform's 300ms double-tap timeout -- three times past the 0.1s that
+     reads as instant. See claude/community-ux-spec-2026-11-04.md.
+     Transform and opacity only: Chrome measured animating top/left dropping
+     ~50% of frames against ~1% for transform. Particles only exist while
+     the animation runs, so an unliked post carries no extra DOM. */
+  .heart-wrap{position:relative; display:inline-flex; align-items:center; justify-content:center;}
+  .heart-wrap.is-bursting svg{animation:heartPop 260ms cubic-bezier(.2,.9,.3,1.2);}
+  @keyframes heartPop{0%{transform:scale(1);} 35%{transform:scale(1.35);} 100%{transform:scale(1);}}
+  .heart-spark{position:absolute; left:50%; top:50%; width:4px; height:4px; margin:-2px 0 0 -2px;
+    border-radius:50%; background:var(--accent); pointer-events:none;
+    animation:heartSpark 420ms ease-out forwards; animation-delay:calc(var(--i) * 18ms);}
+  @keyframes heartSpark{
+    0%{opacity:0; transform:rotate(var(--angle)) translateX(2px) scale(.6);}
+    25%{opacity:1;}
+    100%{opacity:0; transform:rotate(var(--angle)) translateX(16px) scale(.3);}
+  }
+  /* Reduced motion keeps the state change -- that is information, not
+     decoration -- and drops only the movement. */
+  @media (prefers-reduced-motion: reduce){
+    .heart-wrap.is-bursting svg{animation:none;}
+    .heart-spark{display:none;}
+  }
   .comment-list{margin-top:12px; padding-left:2px;}
   .comment-row{font-size:13px; line-height:1.5; margin-bottom:6px;}
   .comment-row b{font-weight:600;}
@@ -9859,6 +9890,10 @@ function copyShareLink(postId, setStatus){
   }
 }
 
+// Eight particles thrown out from the heart's centre. Module-level so the
+// array is not rebuilt on every render of every post card.
+const HEART_SPARK_ANGLES = [0, 45, 90, 135, 180, 225, 270, 315];
+
 function PostCard({ post, profile, followingIds, onToggleFollow, onOpenProfile, onPatch, onRemove, startWithComments, focusCommentId }){
   const [showComments, setShowComments] = useState(!!startWithComments);
   // The comment being replied to: { id, authorName }. null = a new top-level
@@ -9883,6 +9918,17 @@ function PostCard({ post, profile, followingIds, onToggleFollow, onOpenProfile, 
 
   const liked = !!(post.likes && post.likes[profile.visitorId]);
   const likeCount = post.likes ? Object.values(post.likes).filter(Boolean).length : 0;
+  // The heart burst. Driven by a timer rather than animationend, because the
+  // pop (260ms) finishes before the last spark (420ms + 7*18ms stagger) and
+  // clearing on the first animationend would cut the sparks off mid-flight.
+  const [bursting, setBursting] = useState(false);
+  const burstTimer = useRef(null);
+  useEffect(() => () => { if(burstTimer.current) clearTimeout(burstTimer.current); }, []);
+  function fireBurst(){
+    if(burstTimer.current) clearTimeout(burstTimer.current);
+    setBursting(true);
+    burstTimer.current = setTimeout(() => { setBursting(false); burstTimer.current = null; }, 600);
+  }
   const isOwnPost = post.authorId === profile.visitorId;
   const isFollowing = !!(followingIds && post.authorId && followingIds.has(post.authorId));
 
@@ -9908,7 +9954,7 @@ function PostCard({ post, profile, followingIds, onToggleFollow, onOpenProfile, 
 
   async function toggleLike(){
     const nextLiked = !liked;
-    if(nextLiked) haptic("medium");
+    if(nextLiked){ haptic("medium"); fireBurst(); }
     onPatch({ likes: Object.assign({}, post.likes || {}, { [profile.visitorId]: nextLiked }) });
     try{ await Api.like(post.id, profile.visitorId, nextLiked, profile.token); }
     catch(err){
@@ -10051,7 +10097,15 @@ function PostCard({ post, profile, followingIds, onToggleFollow, onOpenProfile, 
         onClick: () => openPhoto(mediaUrl(post.photoUrl), post.caption ? post.caption : (post.authorName ? "Posted by " + post.authorName : "")),
         onKeyDown: ev => { if(ev.key === "Enter" || ev.key === " "){ ev.preventDefault(); openPhoto(mediaUrl(post.photoUrl), post.caption || ""); } } }) : null,
     e("div", { className:"post-actions" },
-      e("button", { className:"post-action", "aria-pressed":liked, disabled:busy, onClick:toggleLike }, Icon("heart"), likeCount || ""),
+      e("button", { className:"post-action", "aria-pressed":liked, disabled:busy, onClick:toggleLike },
+        e("span", { className:"heart-wrap" + (bursting ? " is-bursting" : "") },
+          Icon("heart"),
+          bursting ? HEART_SPARK_ANGLES.map((deg, i) => e("span", {
+            key:i, className:"heart-spark", "aria-hidden":"true",
+            style:{ "--angle": deg + "deg", "--i": String(i) }
+          })) : null
+        ),
+        likeCount || ""),
       e("button", { className:"post-action", onClick:()=>setShowComments(!showComments) }, Icon("comment"), (post.comments||[]).length || ""),
       isOwnPost
         ? e("div", { style:{ marginLeft:"auto", display:"flex", gap:16 } },
