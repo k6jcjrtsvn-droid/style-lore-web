@@ -1091,7 +1091,73 @@ function save_upload(string $field, string $subdir, string $requiredMimePrefix, 
     if (!move_uploaded_file($file['tmp_name'], $dest)) {
         throw new RuntimeException('Could not save the uploaded file — check that the uploads/ folder is writable.');
     }
+    strip_image_metadata($dest, $mime);
     return '/uploads/' . $subdir . '/' . $filename;
+}
+
+/**
+ * Removes metadata from an uploaded JPEG by re-encoding it, baking any EXIF
+ * rotation into the pixels on the way so the image still displays the right
+ * way up once the orientation tag is gone.
+ *
+ * Why this exists: phones write GPS coordinates into JPEG EXIF, and until now
+ * save_upload() moved the file to /uploads/ byte-for-byte — so members' photos
+ * were served from a public URL carrying the location they were taken at.
+ * See claude/community-ux-spec-2026-11-04.md.
+ *
+ * Best effort by design. The client downscales through a canvas before upload,
+ * which already strips metadata and bakes rotation, so this is the guard for
+ * the no-JS path rather than the main mechanism. If GD is missing, or the
+ * image is large enough that decoding it would risk the process on shared
+ * hosting, the file is left alone rather than failing the upload: a post that
+ * saves with metadata beats a post that does not save.
+ */
+function strip_image_metadata(string $path, string $mime): void {
+    if ($mime !== 'image/jpeg') return;                       // where phone GPS lives
+    if (!function_exists('imagecreatefromjpeg') || !function_exists('imagejpeg')) return;
+
+    $info = @getimagesize($path);
+    if ($info === false) return;
+    $w = (int)($info[0] ?? 0);
+    $h = (int)($info[1] ?? 0);
+    // GD decodes to roughly w*h*4 bytes. A 48MP phone photo is ~195MB, which
+    // would take the process out on shared hosting.
+    if ($w < 1 || $h < 1 || $w * $h > 25000000) return;
+
+    $orientation = 1;
+    if (function_exists('exif_read_data')) {
+        $exif = @exif_read_data($path);
+        if (is_array($exif) && isset($exif['Orientation'])) {
+            $orientation = (int)$exif['Orientation'];
+        }
+    }
+
+    $img = @imagecreatefromjpeg($path);
+    if ($img === false) return;
+
+    // The three rotations that actually occur in the wild. GD rotates
+    // counter-clockwise for a positive angle, so orientation 6 ("rotate 90
+    // clockwise to display") is -90 here. Verified against Pillow's
+    // exif_transpose output, which is what a browser shows.
+    // The mirrored orientations (2, 4, 5, 7) are left alone: vanishingly rare,
+    // and stripping their tag without flipping is a cosmetic risk worth taking
+    // against carrying a flip matrix around.
+    if ($orientation === 3 || $orientation === 6 || $orientation === 8) {
+        $angle = $orientation === 3 ? 180 : ($orientation === 6 ? -90 : 90);
+        $rotated = @imagerotate($img, $angle, 0);
+        if ($rotated !== false) { imagedestroy($img); $img = $rotated; }
+    }
+
+    // Write a sibling temp file and rename over the original, so a failure
+    // part-way through cannot leave a truncated image where a valid one was.
+    $tmp = $path . '.strip';
+    $ok = @imagejpeg($img, $tmp, 90);
+    imagedestroy($img);
+    if ($ok && @filesize($tmp) > 0) {
+        @rename($tmp, $path);
+    } else {
+        @unlink($tmp);
+    }
 }
 
 /**

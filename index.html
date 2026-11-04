@@ -7035,7 +7035,7 @@ function StyleQuizScreen({ kibbeResult, styleLanguageResult, onSaveKibbe, onSave
             ? e("img", { src:photoPreview, alt:"Selected preview" })
             : e("label", { className:"photo-frame-label", htmlFor:"kibbe-photo-input", onClick: ev => pickWithNativeCamera(ev, pickPhoto) }, Icon("camera"), e("span", null, "Tap to upload a photo"))
         ),
-        e("input", { id:"kibbe-photo-input", type:"file", accept:"image/*", className:"visually-hidden", onChange:pickPhoto }),
+        e("input", { id:"kibbe-photo-input", type:"file", accept:"image/jpeg,image/png,image/webp,image/gif", className:"visually-hidden", onChange:pickPhoto }),
         !photoPreview ? e("label", { htmlFor:"kibbe-photo-input", className:"btn btn-ghost btn-block", style:{ marginBottom:6 }, onClick: ev => pickWithNativeCamera(ev, pickPhoto) }, "Choose photo") : null,
         e("p", { className:"trust-line" }, Icon("lock"), "Your photo never leaves your phone."),
         photoError ? e(Banner, { kind:"error" }, photoError) : null,
@@ -7408,7 +7408,7 @@ function PhotoColorSampler({ onDone }){
       e("div", { className:"photo-frame" },
         e("label", { className:"photo-frame-label", htmlFor:"color-photo-input", onClick: ev => pickWithNativeCamera(ev, pickPhoto) }, Icon("camera"), e("span", null, "Tap to upload a photo"))
       ),
-      e("input", { id:"color-photo-input", type:"file", accept:"image/*", className:"visually-hidden", onChange:pickPhoto }),
+      e("input", { id:"color-photo-input", type:"file", accept:"image/jpeg,image/png,image/webp,image/gif", className:"visually-hidden", onChange:pickPhoto }),
       error ? e(Banner, { kind:"error" }, error) : null
     );
   }
@@ -8041,7 +8041,7 @@ function AddItemSheet({ onAdd, onClose, viewer }){
         photoPreview ? e("img", { src:photoPreview, alt:"Preview of the photo you selected" })
           : e("label", { className:"photo-frame-label", htmlFor:"closet-photo-input", onClick: ev => pickWithNativeCamera(ev, pickPhoto) }, Icon("shirt"), e("span", null, "Add a photo (optional)"))
       ),
-      e("input", { id:"closet-photo-input", type:"file", accept:"image/*", className:"visually-hidden", onChange:pickPhoto }),
+      e("input", { id:"closet-photo-input", type:"file", accept:"image/jpeg,image/png,image/webp,image/gif", className:"visually-hidden", onChange:pickPhoto }),
       photoPreview && viewer && describe !== "off" ? e("div", { style:{ margin:"-4px 0 12px" } },
         e("button", { type:"button", className:"btn btn-ghost btn-block btn-sm", disabled: describe === "busy", onClick: describeForMe },
           describe === "busy" ? "Looking at your photo…" : describe === "done" ? "Describe it again" : "✨ Describe it for me"),
@@ -8918,7 +8918,7 @@ function CheckerScreen({ blend, styleWordBlend, kibbeTypeName, topStyleWords, vi
       photoPreview ? e("img", { src:photoPreview, alt:"Preview of the photo you selected" })
         : e("label", { className:"photo-frame-label", htmlFor:"checker-photo-input", onClick: ev => pickWithNativeCamera(ev, pickCheckerPhoto) }, Icon("shirt"), e("span", null, "Add a photo"))
     ),
-    e("input", { id:"checker-photo-input", type:"file", accept:"image/*", className:"visually-hidden", onChange:pickCheckerPhoto }),
+    e("input", { id:"checker-photo-input", type:"file", accept:"image/jpeg,image/png,image/webp,image/gif", className:"visually-hidden", onChange:pickCheckerPhoto }),
     e("p", { className:"trust-line", style:{ marginTop:-4, marginBottom:12 } }, Icon("lock"), "Your photo never leaves your phone."),
 
     // Once a photo is in the frame the frame itself is an <img>, so the
@@ -9724,7 +9724,7 @@ function ComposeSheet({ profile, defaults, onPosted, onClose }){
           : e("label", { className:"photo-frame-label", htmlFor:"post-photo-input", onClick: ev => pickWithNativeCamera(ev, pickPhoto) }, Icon("camera"),
               e("span", null, isPoll ? "Add the first option" : "Add a photo (optional)"))
       ),
-      e("input", { id:"post-photo-input", type:"file", accept:"image/*", className:"visually-hidden", onChange:pickPhoto }),
+      e("input", { id:"post-photo-input", type:"file", accept:"image/jpeg,image/png,image/webp,image/gif", className:"visually-hidden", onChange:pickPhoto }),
 
       isPoll ? e("div", null,
         e("div", { className:"photo-frame", style:{ aspectRatio:"16/10", marginTop:10 } },
@@ -9732,7 +9732,7 @@ function ComposeSheet({ profile, defaults, onPosted, onClose }){
             : e("label", { className:"photo-frame-label", htmlFor:"post-photo-b-input", onClick: ev => pickWithNativeCamera(ev, pickPhotoB) }, Icon("camera"),
                 e("span", null, "Add the second option"))
         ),
-        e("input", { id:"post-photo-b-input", type:"file", accept:"image/*", className:"visually-hidden", onChange:pickPhotoB })
+        e("input", { id:"post-photo-b-input", type:"file", accept:"image/jpeg,image/png,image/webp,image/gif", className:"visually-hidden", onChange:pickPhotoB })
       ) : null,
 
       isPoll ? null : e("div", { className:"field" },
@@ -10640,7 +10640,7 @@ function EditProfileSheet({ viewer, currentProfile, onSaved, onClose }){
           : e("span", { className:"avatar-picker-label" }, Icon("camera"), e("span", null, "Add photo")),
         e("span", { className:"avatar-picker-edit-badge" }, Icon("camera"))
       ),
-      e("input", { id:"avatar-input", type:"file", accept:"image/*", className:"visually-hidden", onChange:pickAvatar }),
+      e("input", { id:"avatar-input", type:"file", accept:"image/jpeg,image/png,image/webp,image/gif", className:"visually-hidden", onChange:pickAvatar }),
 
       e("div", { className:"field" },
         e("label", { htmlFor:"profile-name" }, "Display name"),
@@ -10964,7 +10964,7 @@ function AddStorySheet({ profile, onCreated, onClose }){
           : videoPreviewUrl ? e("video", { src:videoPreviewUrl, controls:true, playsInline:true, style:{ width:"100%", height:"100%", objectFit:"cover" } })
           : e("label", { className:"photo-frame-label", htmlFor:"story-photo-input", onClick: ev => pickWithNativeCamera(ev, pickPhoto) }, Icon("camera"), e("span", null, "Add a photo or clip"))
       ),
-      e("input", { id:"story-photo-input", type:"file", accept:"image/*", className:"visually-hidden", onChange:pickPhoto }),
+      e("input", { id:"story-photo-input", type:"file", accept:"image/jpeg,image/png,image/webp,image/gif", className:"visually-hidden", onChange:pickPhoto }),
       e("input", { id:"story-video-input", type:"file", accept:"video/*", className:"visually-hidden", onChange:pickVideo }),
       e("div", { style:{ display:"flex", gap:8, margin:"10px 0" } },
         e("label", { htmlFor:"story-photo-input", className:"btn btn-ghost btn-sm", onClick: ev => pickWithNativeCamera(ev, pickPhoto) }, "Photo"),
