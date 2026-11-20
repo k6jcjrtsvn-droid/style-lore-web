@@ -214,7 +214,7 @@ INTRO_1 = JUMP + '''
 <li>Post from your own Pinterest <b>business account</b>.</li>
 <li><b>Claim style-lore.com</b> on it: Settings → Claimed accounts → Claim website. Kenneth can add whatever Pinterest asks for to the site. This gives you analytics on every pin from the site and puts your profile beside them. <b>Only one Pinterest account can ever claim a site</b>, so claim it on the account you'll post from and tell Kenneth once it's done.</li>
 <li>Make two boards, named exactly <b>Kibbe Body Types</b> and <b>Color Analysis</b>. Each day below says which one.</li>
-<li>Put this in both board descriptions:<br><i>Free Kibbe body type and colour season quiz at style-lore.com — now on Google Play.</i></li>
+<li>Put this in both board descriptions:<br><i>Free Kibbe body type and colour season quiz at style-lore.com — free on iPhone and Android.</i></li>
 </ol>
 </div>
 
@@ -234,7 +234,7 @@ INTRO_1 = JUMP + '''
 <ul>
 <li><b>One pin a day. Never a batch.</b> Pinterest suppresses accounts that dump twenty at once.</li>
 <li><b>Don't judge it before day 14.</b> Pinterest is slow and then it isn't. A quiet first fortnight is normal.</li>
-<li><b>Never say the iPhone app is out.</b> It isn't — it's still with Apple. The app is on <b>Google Play only</b>. If you mention it, the wording is "on Google Play now, iPhone coming".</li>
+<li><b>Both apps are live — say so.</b> iPhone was approved on 20 November 2026, so Style-LORE is on the <b>App Store and Google Play</b>. "Free on iPhone and Android" is accurate now. The old rule said never to claim the iPhone app was out; that rule is retired.</li>
 </ul>
 <p style="margin:10px 0 0">Anything unclear, ask Kenneth rather than guess — especially anything claiming what the app does. Everything below is checked against the live site, so pasting it exactly is always safe.</p>
 </div>
@@ -270,7 +270,7 @@ INTRO_2 = '''
 <ul>
 <li><b>One pin a day. Never a batch.</b></li>
 <li><b>Don't judge it before day 14.</b> These are slower-burning than the first set and should keep earning for months.</li>
-<li><b>Never say the iPhone app is out.</b> It isn't — it's still with Apple. The app is on <b>Google Play only</b>. If you mention it, the wording is "on Google Play now, iPhone coming".</li>
+<li><b>Both apps are live — say so.</b> iPhone was approved on 20 November 2026, so Style-LORE is on the <b>App Store and Google Play</b>. "Free on iPhone and Android" is accurate now. The old rule said never to claim the iPhone app was out; that rule is retired.</li>
 </ul>
 <p style="margin:10px 0 0">Everything below is taken word for word from the page it links to, so pasting it exactly is always safe.</p>
 </div>

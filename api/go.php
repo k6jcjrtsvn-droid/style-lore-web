@@ -18,7 +18,11 @@
 require_once __DIR__ . '/../includes/helpers.php';
 
 const DESTINATIONS = [
-    'ios'     => 'https://testflight.apple.com/join/CqYS67Md',
+    // iOS went live on the App Store 20 Nov 2026 (submission f638fb60, build
+    // 1.0 (9)). Until then this pointed at the TestFlight beta, which is kept
+    // here because testers still need it and the join link is not re-derivable:
+    //   https://testflight.apple.com/join/CqYS67Md
+    'ios'     => 'https://apps.apple.com/app/id6813713328',
     'android' => 'https://play.google.com/store/apps/details?id=com.stylelore.app',
 ];
 

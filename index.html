@@ -4481,7 +4481,7 @@ const IS_NATIVE_APP = !!window.STYLE_LORE_NATIVE;
 // Which account the store actually bills, for the subscription disclosure on
 // the paywall. Apple and Google both want their own name used.
 const STORE_ACCOUNT_NAME = (window.Capacitor && window.Capacitor.getPlatform && window.Capacitor.getPlatform() === "ios")
-  ? "Apple ID" : "Google Play account";
+  ? "Apple Account" : "Google Play account";
 // Same question, asked where the answer has to be a store name rather than an
 // account name: the deletion sheet has to point at the right subscription
 // page, and sending an iPhone owner to Google Play would be worse than saying
@@ -5931,10 +5931,10 @@ function LandingBelowFold({ onQuiz }){
       e("details", null, e("summary", null, "Does it work for menswear?"), e("p", null, "Yes. Choose menswear, womenswear or both, and the questions, outfit ideas and shopping links follow suit.")),
       e("details", null, e("summary", null, "Can I see what my clothes actually cost me?"), e("p", null, "If you want to. Adding what a piece cost is optional, and the closet then works out your cost per wear — the £15-a-wear boots you keep reaching for versus the coat that has cost you its full price once. The price is private to you and never appears anywhere other people can see.")),
       e("details", null, e("summary", null, "What does Premium add?"), e("p", null, "Outfits built for you from your own closet and ranked against your lines, with a stylist's note on why each one works; a stylist's read on any photo; a closet with no limit plus a gap list and capsule; and every check saved. $4.99 a month or $39.99 a year, with a 7-day free trial the first time. Everything else — the quiz, your colors, the closet, the outfit builder, Style-ME and the community — stays free.")),
-      e("details", null, e("summary", null, "Is there an app?"), e("p", null, "Yes — Style-LORE is on Google Play (beta) with iPhone coming. The website is the same app, so you can start here and pick up on your phone."))
+      e("details", null, e("summary", null, "Is there an app?"), e("p", null, "Yes — Style-LORE is on the App Store and on Google Play, free on both. The website is the same app, so you can start here and pick up on your phone."))
     ),
     e("p", { className:"landing-foot" },
-      e("a", { href:"/types/" }, "Body type guides"), " · ", e("a", { href:"/colors/" }, "Color season guides"), " · ", e("a", { href:"/beta.html" }, "Android beta"), " · ",
+      e("a", { href:"/types/" }, "Body type guides"), " · ", e("a", { href:"/colors/" }, "Color season guides"), " · ", e("a", { href:"/compare/" }, "Compare two types or seasons"), " · ", e("a", { href:"/beta.html" }, "Android beta"), " · ",
       e("a", { href:"/terms.html" }, "Terms"), " · ", e("a", { href:"/privacy.html" }, "Privacy"), e("br"),
       "© " + new Date().getFullYear() + " Style-LORE · support@style-lore.com")
   );
