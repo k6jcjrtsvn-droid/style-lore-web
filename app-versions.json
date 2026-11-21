@@ -9,8 +9,8 @@
     "url": "https://play.google.com/store/apps/details?id=com.stylelore.app"
   },
   "ios": {
-    "version": "1.0",
-    "notes": "Style-LORE is now on iPhone and iPad: the Kibbe quiz, your colour season, your closet, Style-ME fit checks and the Community.",
+    "version": "1.0.1",
+    "notes": "Fixes a problem that stopped photos being added from your camera roll on iPhone. Also smooths out scrolling and tapping in the Community feed.",
     "url": "https://apps.apple.com/app/id6813713328"
   }
 }
