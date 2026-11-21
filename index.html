@@ -6461,7 +6461,7 @@ const GETTING_STARTED_DISMISSED = "lore_gs_done";
 function gettingStartedSteps({ blend, season, closetCount, outfitCount }){
   return [
     { id:"type",   done: !!blend,              title:"Get your type",        desc:"Your Kibbe lines and your style words.",                 screen:"quiz",   cta:"Take the quiz" },
-    { id:"colors", done: !!season,             title:"Find your colors",     desc:"Six questions for a palette you can hold up to a garment.", screen:"color",  cta:"Find them" },
+    { id:"colors", done: !!season,             title:"Find your colors",     desc:"Six questions for a palette you can hold up to a garment.", screen:"color",  cta:"Find my colors" },
     { id:"closet", done: closetCount >= 3,     title:"Log three pieces",     desc:"Enough for the closet to start telling you what's missing.", screen:"closet", cta:"Add a piece" },
     { id:"outfit", done: outfitCount >= 1,     title:"Build your first outfit", desc:"Put two pieces together and save the combination.",     screen:"closet", cta:"Build one" },
   ];
@@ -9466,7 +9466,7 @@ function CommunityScreen({ profile, blend, onOpenProfile, onSignIn }){
           e("div", { className:"eyebrow" }, "People who dress like you"),
           e("h1", { className:"screen-title" }, "Community")
         ),
-        e("button", { className:"btn btn-accent btn-sm", onClick:openCompose }, "+ Post")
+        e("button", { className:"btn btn-accent btn-sm", onClick:openCompose }, isGuest ? "Join to post" : "+ Post")
       ),
 
       isGuest ? e("div", { className:"card", style:{ marginBottom:14, padding:"12px 14px" } },
@@ -10016,6 +10016,7 @@ function PostCard({ post, profile, followingIds, onToggleFollow, onOpenProfile, 
   // A guest can read the feed (see needsAccount in App). Everything that
   // writes asks for an account instead of throwing on a null profile.
   const me = profile || { visitorId:null, token:null, name:null };
+  const isGuest = !profile;
   function requireAccount(){
     if(profile) return false;
     if(onSignIn) onSignIn();
@@ -10271,20 +10272,35 @@ function PostCard({ post, profile, followingIds, onToggleFollow, onOpenProfile, 
       threadComments(post.comments).map(node => e(CommentThread, {
         key: node.comment.id != null ? ("c"+node.comment.id) : ("i"+node.index),
         node, profile, focusCommentId, focusRef,
-        onReply: startReply, onOpenProfile, onReportComment: reportComment,
+        // No Reply button for a guest: it would open a reply banner with no
+        // box under it, now that the composer is members-only.
+        onReply: isGuest ? null : startReply, onOpenProfile, onReportComment: reportComment,
       })),
       replyTo ? e("div", { className:"reply-banner" },
         e("span", null, "Replying to ", e("b", null, replyTo.authorName)),
         e("button", { className:"btn-text", style:{ padding:0, fontSize:12 }, onClick:()=>setReplyTo(null) }, "Cancel")
       ) : null,
-      e("div", { className:"comment-input-row" },
-        e("input", { type:"text", value:commentText, maxLength:180, ref:commentInputRef,
-          placeholder: replyTo ? ("Reply to " + replyTo.authorName + "…") : "Add a comment…",
-          onChange: ev=>setCommentText(ev.target.value),
-          onKeyDown: ev => { if(ev.key === "Enter") submitComment(); } }),
-        e("button", { className:"btn-text", disabled:commentBusy || !commentText.trim(), onClick:submitComment },
-          commentBusy ? "Sending…" : (replyTo ? "Reply" : "Send"))
-      )
+      // A guest gets the invitation, never the box. Guests could read the feed
+      // from 21 Nov, and the composer was still rendered for them: you could
+      // type a whole comment, press Send, and be thrown to the signup form
+      // with the text gone and no way to get it back. requireAccount() stopped
+      // the write, but only after the person had done the work. Liking can
+      // bounce like that -- one tap, nothing lost -- a comment cannot.
+      isGuest
+        ? e("div", { className:"comment-input-row", style:{ display:"block" } },
+            e("p", { className:"footnote", style:{ margin:"0 0 8px" } },
+              "Comments are for members — a free account takes a moment."),
+            e("button", { className:"btn btn-accent btn-sm", onClick: () => { if(onSignIn) onSignIn(); } },
+              "Create a free account to join in")
+          )
+        : e("div", { className:"comment-input-row" },
+            e("input", { type:"text", value:commentText, maxLength:180, ref:commentInputRef,
+              placeholder: replyTo ? ("Reply to " + replyTo.authorName + "…") : "Add a comment…",
+              onChange: ev=>setCommentText(ev.target.value),
+              onKeyDown: ev => { if(ev.key === "Enter") submitComment(); } }),
+            e("button", { className:"btn-text", disabled:commentBusy || !commentText.trim(), onClick:submitComment },
+              commentBusy ? "Sending…" : (replyTo ? "Reply" : "Send"))
+          )
     ) : null
   );
 }
@@ -12462,7 +12478,26 @@ function App(){
     // Before the first recommendation, not buried in the quiz intro where it
     // used to sit as an optional control that silently defaulted to
     // womenswear when skipped.
-    (!wardrobeAsked && screen !== "quiz") ? e(WardrobeSheet, { onDone: () => setWardrobeAsked(true) }) : null,
+    // The sheet only changes recommendations and shop links, so it belongs on
+    // the screens that use them and nowhere else. It used to fire on every
+    // screen, which on 21 Nov meant two live bugs: it popped on top of
+    // "Start the <Type> room" -- the result screen's most important call to
+    // action -- and it was the first thing a returning visitor saw instead of
+    // the landing page, because tapping "Take the free quiz" sets lore_guest.
+    // Suppressing it only on the quiz screen was not enough: the moment the
+    // visitor navigated anywhere, it fired.
+    //
+    // It also waits for a quiz result. The question only makes sense once
+    // something is about to be recommended; before a result, nothing
+    // recommends anything, so asking it is premature -- and it was landing
+    // on brand-new visitors who had done nothing but tap one button, as the
+    // first thing they ever saw on the site.
+    //
+    // Never being asked is safe. getWardrobe() === null behaves exactly like
+    // "both" -- no reweighting at all -- and the style-language intro asks the
+    // same question properly, with context, for anyone who gets that far.
+    (!wardrobeAsked && !!kibbeResult && (screen === "home" || screen === "closet" || screen === "checker"))
+      ? e(WardrobeSheet, { onDone: () => setWardrobeAsked(true) }) : null,
     e("header", { className:"topbar" },
       e("span", { className:"wordmark", style:{ display:"inline-flex", alignItems:"center", gap:"0.12em" } },
         e(LogoMark, { size:"0.85em" }), "Style-LORE"),
