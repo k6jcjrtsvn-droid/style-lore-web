@@ -293,6 +293,24 @@
                 outfit_share_tap:"Share an outfit", p_vote_cta_tap:"Vote button on a shared poll" };
     var SRC = { result:"Quiz result", styleme:"Style-ME", outfit:"Outfit builder", composer:"Composer",
                 room:"A room", profile:"Profile", "(none)":"Not recorded (older posts/clients)" };
+    /* The quiz funnel, added 21 Nov 2026 with the events that feed it. Each
+       row is a step; the interesting number is the fall between two rows.
+       All zero before 21 Nov — there was no instrumentation at all. */
+    var qs = d.quizSteps || {};
+    var QSTEP = [["quiz_start","Started the quiz"],
+                 ["quiz_part1_complete","Finished part 1 (13 questions) — sees their type"],
+                 ["photo_refine_shown","Opened the photo refine from the result"],
+                 ["quiz_part2_start","Started part 2 (style words)"],
+                 ["quiz_part2_complete","Finished part 2"]];
+    var quizFunnel = '<div class="fsec"><h2>Quiz funnel (28d)</h2><table class="f">' +
+      '<tr><th>Step</th><th class="n">Count</th></tr>' +
+      QSTEP.map(function(p){ return '<tr><td>' + esc(p[1]) + '</td><td class="n">' + num(qs[p[0]]) + '</td></tr>'; }).join("") +
+      '<tr><td>Guests who opened Community (read-only)</td><td class="n">' + num(qs.community_guest_view) + '</td></tr>' +
+      (d.storeBadges || []).map(function(r){
+        return '<tr><td>Store badge tapped &nbsp;' + esc(r.meta) + '</td><td class="n">' + num(r.n) + '</td></tr>';
+      }).join("") +
+      '</table><p class="fnote">Nothing here existed before 21 Nov 2026, so earlier periods read zero rather than low.</p></div>';
+
     var engagement = '<div class="fsec"><h2>Sharing and signed-out activity</h2><table class="f">' +
       '<tr><th>What</th><th class="n">Count</th></tr>' +
       '<tr><td>Signed-out quiz completions (events, 28d)</td><td class="n">' + num(eng.signedOutQuiz28d) + '</td></tr>' +
@@ -330,7 +348,7 @@
       }).join("") + '</table>' +
       '<p class="fnote">' + (dead ? dead + ' of these rooms have no posts at all. Someone of that type who finishes the quiz is shown the rest of their Kibbe family instead of an empty room \u2014 but the room is still theirs to start.' : 'Every room here has something in it.') + '</p></div>' : "";
 
-    var head = stage + engagement + census + '<div class="fsec">' +
+    var head = stage + quizFunnel + engagement + census + '<div class="fsec">' +
       '<h2>Signups from iOS</h2>' +
       '<p class="fbig">' + num(ios && ios.total) +
         ' <small>of ' + num(total) + ' accounts \u00b7 ' + num(ios && ios.last7) + ' in the last 7 days</small></p>' +

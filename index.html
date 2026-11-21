@@ -1029,6 +1029,18 @@
   .gate-hero-actions .btn-block{ margin:0 auto; max-width:360px; width:100%; }
   .gate-hero-art{ display:none; }
 
+  /* Download badges. Deliberately typographic rather than Apple's and
+     Google's own artwork: the official badges are trademarked images with
+     their own placement rules, and these read cleanly in the house style.
+     Swapping the real artwork in later is a straight img-for-span swap. */
+  .store-badges{ display:flex; flex-wrap:wrap; gap:10px; justify-content:center; margin:0 0 16px; }
+  .store-badge{ display:inline-flex; flex-direction:column; align-items:flex-start; justify-content:center;
+    gap:1px; text-decoration:none; padding:8px 16px; min-width:152px;
+    border:1px solid var(--ink); border-radius:999px; background:var(--ink); color:var(--paper); }
+  .store-badge .sb-pre{ font-size:9.5px; letter-spacing:.1em; text-transform:uppercase; opacity:.8; line-height:1.2; }
+  .store-badge .sb-name{ font-size:14px; font-weight:600; line-height:1.25; }
+  .store-badge:hover,.store-badge:focus-visible{ background:var(--accent); border-color:var(--accent); }
+
   .landing-shots{ display:flex; gap:12px; overflow-x:auto; scroll-snap-type:x mandatory; padding:4px 0 10px; -webkit-overflow-scrolling:touch; }
   .landing-shots figure{ flex:0 0 200px; margin:0; scroll-snap-align:start; }
   .landing-shots img{ width:100%; height:auto; border-radius:18px; border:1px solid var(--line); box-shadow:var(--shadow); display:block; }
@@ -5889,6 +5901,22 @@ function Avatar({ url, name, size }){
 /* The website's front door, shown under the welcome screen for people who
    arrived from a search or a link and need the story before the quiz.
    Website only (the app has its own store listing for this). */
+/* Download badges for the App Store and Google Play.
+   Both go through /ios and /android rather than the store URLs directly, so
+   the existing go.php click counter sees them (and its crawler filter keeps
+   bots out of the funnel). Never rendered inside the native apps. */
+function StoreBadges({ where }){
+  if(IS_NATIVE_APP) return null;
+  const badge = (href, pre, name, label) => e("a", {
+    className:"store-badge", href, "aria-label":label,
+    onClick: () => { try{ track("store_badge_tap", { store:name, where: where || "page" }); }catch(_){} }
+  }, e("span", { className:"sb-pre" }, pre), e("span", { className:"sb-name" }, name));
+  return e("div", { className:"store-badges" },
+    badge("/ios", "Download on the", "App Store", "Download Style-LORE on the App Store"),
+    badge("/android", "Get it on", "Google Play", "Get Style-LORE on Google Play")
+  );
+}
+
 function LandingBelowFold({ onQuiz }){
   const w = getWardrobe() === "men" ? "m" : "w";
   const shots = [
@@ -5934,7 +5962,7 @@ function LandingBelowFold({ onQuiz }){
       e("details", null, e("summary", null, "Is there an app?"), e("p", null, "Yes — Style-LORE is on the App Store and on Google Play, free on both. The website is the same app, so you can start here and pick up on your phone."))
     ),
     e("p", { className:"landing-foot" },
-      e("a", { href:"/types/" }, "Body type guides"), " · ", e("a", { href:"/colors/" }, "Color season guides"), " · ", e("a", { href:"/compare/" }, "Compare two types or seasons"), " · ", e("a", { href:"/beta.html" }, "Android beta"), " · ",
+      e("a", { href:"/types/" }, "Body type guides"), " · ", e("a", { href:"/colors/" }, "Color season guides"), " · ", e("a", { href:"/compare/" }, "Compare two types or seasons"), " · ", e("a", { href:"/ios" }, "iPhone app"), " · ", e("a", { href:"/android" }, "Android app"), " · ",
       e("a", { href:"/terms.html" }, "Terms"), " · ", e("a", { href:"/privacy.html" }, "Privacy"), e("br"),
       "© " + new Date().getFullYear() + " Style-LORE · support@style-lore.com")
   );
@@ -6052,7 +6080,8 @@ function AccountGate({ onComplete, onExplore, startWithForm }){
             " if you'd rather save your results now, or ",
             e("button", { type:"button", className:"link-btn", onClick: () => onExplore("home") }, "just look around"),
             "."),
-          e("p", { className:"footnote", style:{ marginTop:6 } }, e(LegalLinks, null))
+          e("p", { className:"footnote", style:{ marginTop:6 } }, e(LegalLinks, null)),
+          (!IS_NATIVE_APP) ? e(StoreBadges, { where:"hero" }) : null
         ),
         (!IS_NATIVE_APP) ? e("div", { className:"gate-hero-art", "aria-hidden":"true" },
           e("img", { src:"/assets/landing/result.jpg", alt:"", width:480, height:820, loading:"eager" })
@@ -6854,9 +6883,13 @@ function EmailMyResult({ kibbeId, seasonId }){
   );
 }
 
-function StyleQuizScreen({ kibbeResult, styleLanguageResult, onSaveKibbe, onSaveStyle, onSignIn, colorResult }){
+function StyleQuizScreen({ kibbeResult, styleLanguageResult, onSaveKibbe, onSaveStyle, onSignIn, colorResult, autoStart, onWardrobeChosen }){
   const colorSeasonForShare = (colorResult && colorResult.seasonId && COLOR_SEASON_BY_ID[colorResult.seasonId]) || null;
-  const initialStage = (kibbeResult && kibbeResult.kibbeTypeId) || (styleLanguageResult) ? "result" : "intro";
+  const hasAnyResult = !!((kibbeResult && kibbeResult.kibbeTypeId) || styleLanguageResult);
+  // Arriving from the landing page's "Take the free quiz" with nothing saved
+  // means the person has already said yes to taking it — a second intro
+  // screen in front of question 1 is just a tap that loses people.
+  const initialStage = hasAnyResult ? "result" : (autoStart ? "quiz" : "intro");
   const [stage, setStage] = useState(initialStage); // intro | quiz | photo | style-intro | style-quiz | result
   const [bodyAnswers, setBodyAnswers] = useState({});
   const [modAnswers, setModAnswers] = useState({});
@@ -6865,6 +6898,16 @@ function StyleQuizScreen({ kibbeResult, styleLanguageResult, onSaveKibbe, onSave
   const [photoBlob, setPhotoBlob] = useState(null);
   const [photoPreview, setPhotoPreview] = useState(null);
   const [analyzing, setAnalyzing] = useState(false);
+  const [photoUsed, setPhotoUsed] = useState(false);
+  // One quiz_start per run, so the funnel's denominator is people who began
+  // rather than people who re-rendered or stepped back to question one.
+  const startedRef = useRef(false);
+  useEffect(() => {
+    if(stage === "quiz" && !startedRef.current){
+      startedRef.current = true;
+      track("quiz_start", { auto: !!autoStart });
+    }
+  }, [stage]);
   const [photoError, setPhotoError] = useState(null);
   const [styleAnswers, setStyleAnswers] = useState({});
   const [styleQIndex, setStyleQIndex] = useState(0);
@@ -6872,7 +6915,15 @@ function StyleQuizScreen({ kibbeResult, styleLanguageResult, onSaveKibbe, onSave
   // Optional, skippable — "women" | "men" | "both" | null (null and
   // "both" behave identically: no reweighting at all).
   const [genderLean, setGenderLeanState] = useState(() => getWardrobe());
-  const setGenderLean = (updater) => setGenderLeanState(prev => { const next = typeof updater === "function" ? updater(prev) : updater; setWardrobe(next); return next; });
+  // The style-language intro asks "Shopping for" with far more context than
+  // the sheet does. Answering it there has to count, or the sheet asks the
+  // same question again the moment the person leaves the quiz.
+  const setGenderLean = (updater) => setGenderLeanState(prev => {
+    const next = typeof updater === "function" ? updater(prev) : updater;
+    setWardrobe(next);
+    if(next && onWardrobeChosen) onWardrobeChosen();
+    return next;
+  });
 
   function choose(q, idx){
     haptic("light");
@@ -6882,8 +6933,14 @@ function StyleQuizScreen({ kibbeResult, styleLanguageResult, onSaveKibbe, onSave
       if(qIndex < KIBBE_QUIZ_QUESTIONS.length - 1){
         setTimeout(() => setQIndex(qIndex + 1), 180);
       } else {
-        setKibbeQuizResult(buildKibbeResult(bodyAnswers, next));
-        setStage("photo");
+        // Part one is the headline result and the thing the marketing
+        // promises, so it is shown the moment it exists. The photo refine
+        // and the style-word half used to sit in front of it — twenty-five
+        // questions and three intro screens before anybody saw anything —
+        // and both are offered from the result screen instead now.
+        const built = buildKibbeResult(bodyAnswers, next);
+        setKibbeQuizResult(built);
+        afterKibbePart(built);
       }
     } else {
       const next = { ...bodyAnswers, [q.id]: idx };
@@ -6905,16 +6962,31 @@ function StyleQuizScreen({ kibbeResult, styleLanguageResult, onSaveKibbe, onSave
   // The moment a run of the quiz finishes — both halves done, result on
   // screen. Not "See my last result", which only re-opens one. Signed-out
   // completions are the ones the funnel could never see before.
+  function goToResult(){ setStage("result"); maybeAskForReview("result"); }
+
   function finishQuiz(kibbe, retake){
-    setStage("result"); maybeAskForReview("result");
+    goToResult();
     track(onSignIn ? "quiz_complete_signed_out" : "quiz_complete", { type: (kibbe && kibbe.kibbeTypeId) || null, retake: !!retake });
   }
 
   function afterKibbePart(result){
     haptic("success");
     onSaveKibbe(result);
+    track("quiz_part1_complete", { type: (result && result.kibbeTypeId) || null });
+    // Both halves done -> the run is finished. Otherwise the result stands
+    // on its own and the style words are offered as a next step on it.
     if(styleQuizBlend) finishQuiz(result, !!(kibbeResult && kibbeResult.kibbeTypeId));
-    else setStage("style-intro");
+    else goToResult();
+  }
+
+  // The photo refine comes back to the result it just sharpened, and must
+  // not re-fire the part-one event: that run already completed.
+  function applyPhotoResult(merged){
+    haptic("success");
+    onSaveKibbe(merged);
+    setKibbeQuizResult(merged);
+    setPhotoUsed(true);
+    goToResult();
   }
 
   async function analyzePhoto(){
@@ -6928,8 +7000,7 @@ function StyleQuizScreen({ kibbeResult, styleLanguageResult, onSaveKibbe, onSave
       const mergedFamily = mergeBlends(kibbeQuizResult.familyBlend, photoFamilyBlend, 0.5, 0.5, FAMILIES);
       const match = matchKibbeType(mergedFamily, kibbeQuizResult.modScore);
       const merged = { familyBlend: mergedFamily, modScore: kibbeQuizResult.modScore, kibbeBlend: match.blend, kibbeTypeId: match.typeId, confidence: match.confidence };
-      setKibbeQuizResult(merged);
-      afterKibbePart(merged);
+      applyPhotoResult(merged);
     }catch(err){
       setPhotoError(err.message || "Couldn't analyze that photo — try again.");
     }finally{
@@ -6938,11 +7009,12 @@ function StyleQuizScreen({ kibbeResult, styleLanguageResult, onSaveKibbe, onSave
   }
 
   function skipPhoto(){
-    afterKibbePart(kibbeQuizResult);
+    goToResult();
   }
 
   function retakeKibbe(){
     setBodyAnswers({}); setModAnswers({}); setQIndex(0); setPhotoBlob(null); setPhotoPreview(null); setPhotoError(null);
+    setPhotoUsed(false); startedRef.current = false;
     setStage("intro");
   }
 
@@ -6956,6 +7028,7 @@ function StyleQuizScreen({ kibbeResult, styleLanguageResult, onSaveKibbe, onSave
       const b = computeBlend(next, STYLE_LANGUAGE_QUESTIONS, STYLE_WORDS, genderLean);
       setStyleQuizBlend(b);
       onSaveStyle(b);
+      track("quiz_part2_complete", { type: (kibbeQuizResult && kibbeQuizResult.kibbeTypeId) || null });
       finishQuiz(kibbeQuizResult, !!styleLanguageResult);
     }
   }
@@ -7026,9 +7099,9 @@ function StyleQuizScreen({ kibbeResult, styleLanguageResult, onSaveKibbe, onSave
   if(stage === "photo"){
     return e("div", null,
       e("div", { className:"eyebrow" }, "Optional"),
-      e("h1", { className:"screen-title" }, "Refine with a photo?"),
+      e("h1", { className:"screen-title" }, "Make your read sharper"),
       e("p", { className:"screen-lede", style:{ marginBottom:18 } },
-        "Upload a front-facing, full-body photo and we'll blend a read of your visible bone structure and scale 50/50 with your quiz result. This runs entirely on your device — the photo is never uploaded or sent anywhere, and it's discarded the moment analysis finishes."),
+        "A front-facing, full-body photo lets us read your bone structure and scale directly, and blend that 50/50 with your answers. It's analyzed on your phone and never uploaded."),
       e("div", null,
         e("div", { className:"photo-frame" },
           photoPreview
@@ -7042,7 +7115,7 @@ function StyleQuizScreen({ kibbeResult, styleLanguageResult, onSaveKibbe, onSave
         photoPreview ? e("button", { className:"btn btn-accent btn-block", disabled:analyzing, onClick:analyzePhoto, style:{ marginBottom:10 } },
           analyzing ? e(Thinking, { label:"Analyzing photo on your device…" }) : "Analyze photo") : null
       ),
-      e("button", { className:"btn-text", onClick:skipPhoto }, "Skip — use quiz result only")
+      e("button", { className:"btn-text", onClick:skipPhoto }, "← Back to my result")
     );
   }
 
@@ -7067,7 +7140,10 @@ function StyleQuizScreen({ kibbeResult, styleLanguageResult, onSaveKibbe, onSave
         e("div", { className:"field-hint", style:{ marginTop:6 } }, "Why we don't ask your gender: body type is about lines and proportions, not who you are. We only need to know which racks you shop.")
       ),
       e("button", { className:"btn btn-accent btn-block", onClick:()=>setStage("style-quiz") }, "Start this part"),
-      styleQuizBlend ? e("button", { className:"btn btn-ghost btn-block", style:{ marginTop:10 }, onClick:()=>(setStage("result"), maybeAskForReview("result")) }, "See my last result") : null
+      (styleQuizBlend || (kibbeQuizResult && kibbeQuizResult.kibbeTypeId))
+        ? e("button", { className:"btn btn-ghost btn-block", style:{ marginTop:10 }, onClick:goToResult },
+            styleQuizBlend ? "See my last result" : "← Back to my result")
+        : null
     );
   }
 
@@ -7147,6 +7223,29 @@ function StyleQuizScreen({ kibbeResult, styleLanguageResult, onSaveKibbe, onSave
       e(EmailMyResult, { kibbeId: hasKibbe ? kibbeType.id : null, seasonId: (colorResult && colorResult.seasonId) || null }),
       e("button", { className:"btn btn-accent btn-sm", onClick:onSignIn }, "Create a free account")
     ) : null,
+
+    // The style-word half and the photo refine used to sit IN FRONT of this
+    // screen. Both are offered from it now: someone who has just been told
+    // who they are will answer twelve more questions and hand over a photo;
+    // someone who has been told nothing will not.
+    (!hasStyle || !photoUsed) ? e("div", { className:"card", style:{ marginBottom:16, padding:14 } },
+      e("div", { className:"eyebrow", style:{ marginBottom:10 } }, "Keep going"),
+      !hasStyle ? e("div", { style:{ marginBottom: photoUsed ? 0 : 14 } },
+        e("div", { style:{ fontSize:14.5, fontWeight:600, marginBottom:2 } }, "Add your style words"),
+        e("p", { style:{ fontSize:13.5, color:"var(--ink-soft)", marginBottom:10 } },
+          "Twelve quick ones on silhouette, color and fabric. They sharpen every suggestion in the app."),
+        e("button", { className:"btn btn-accent btn-sm", onClick: () => { track("quiz_part2_start", { from:"result" }); setStage("style-intro"); } },
+          "Twelve more questions")
+      ) : null,
+      !photoUsed ? e("div", null,
+        e("div", { style:{ fontSize:14.5, fontWeight:600, marginBottom:2 } }, "Make this read sharper"),
+        e("p", { style:{ fontSize:13.5, color:"var(--ink-soft)", marginBottom:10 } },
+          "Add a full-body photo and we'll blend what it shows with your answers. It's read on your phone and never uploaded."),
+        e("button", { className:"btn btn-ghost btn-sm", onClick: () => { track("photo_refine_shown", { from:"result" }); setStage("photo"); } },
+          "Add a photo")
+      ) : null
+    ) : null,
+
     e("div", { style:{ marginBottom:28 } },
       e("div", { className:"eyebrow", style:{ marginBottom:4 } }, "Body & shape type"),
       hasKibbe ? e(React.Fragment, null,
@@ -9167,7 +9266,17 @@ function openComposerWith(draft){
   if(window.__loreGoTo) window.__loreGoTo("community");
 }
 
-function CommunityScreen({ profile, blend, onOpenProfile }){
+function CommunityScreen({ profile, blend, onOpenProfile, onSignIn }){
+  const isGuest = !profile;
+  // Every write goes through this. True means the caller stops and lets the
+  // account prompt take over.
+  function requireAccount(){
+    if(profile) return false;
+    if(onSignIn) onSignIn();
+    return true;
+  }
+  // How many signed-out visitors actually read the feed, now that they can.
+  useEffect(() => { if(isGuest) track("community_guest_view", {}); }, []);
   const [posts, setPosts] = useState(null);
   const [loadError, setLoadError] = useState(null);
   const [followingIds, setFollowingIds] = useState(() => new Set());
@@ -9273,6 +9382,7 @@ function CommunityScreen({ profile, blend, onOpenProfile }){
   const groupIsMember = !!(groupDetail && groupDetail.isMember);
 
   async function joinCurrentGroup(){
+    if(requireAccount()) return;
     if(!groupDetail || groupBusy) return;
     setGroupBusy(true);
     setGroupError(null);
@@ -9281,6 +9391,7 @@ function CommunityScreen({ profile, blend, onOpenProfile }){
     finally{ setGroupBusy(false); }
   }
   async function leaveCurrentGroup(){
+    if(requireAccount()) return;
     if(!groupDetail || groupBusy) return;
     setGroupBusy(true);
     setGroupError(null);
@@ -9290,6 +9401,7 @@ function CommunityScreen({ profile, blend, onOpenProfile }){
   }
 
   async function toggleFollow(authorId, authorName){
+    if(requireAccount()) return;
     if(!authorId || authorId === profile.visitorId) return;
     const wasFollowing = followingIds.has(authorId);
     setFollowingIds(prev => {
@@ -9316,7 +9428,7 @@ function CommunityScreen({ profile, blend, onOpenProfile }){
     (p.styleTags||[]).forEach(id => { if(styleCounts[id] !== undefined) styleCounts[id]++; });
   });
 
-  function openCompose(){ setShowCompose(true); }
+  function openCompose(){ if(requireAccount()) return; setShowCompose(true); }
   function closeCompose(){ setShowCompose(false); setComposeDraft(null); }
   function composeDefaults(){
     let base;
@@ -9357,7 +9469,13 @@ function CommunityScreen({ profile, blend, onOpenProfile }){
         e("button", { className:"btn btn-accent btn-sm", onClick:openCompose }, "+ Post")
       ),
 
-      e(StoryTray, {
+      isGuest ? e("div", { className:"card", style:{ marginBottom:14, padding:"12px 14px" } },
+        e("p", { style:{ fontSize:13.5, color:"var(--ink-soft)", margin:"0 0 10px" } },
+          "You're reading as a guest. A free account lets you post, like, comment and follow — and keeps your quiz result across devices."),
+        e("button", { className:"btn btn-accent btn-sm", onClick:onSignIn }, "Create a free account")
+      ) : null,
+
+      isGuest ? null : e(StoryTray, {
         stories, profile,
         onOpenStory: authorId => setViewingStoryAuthor(authorId),
         onAddStory: () => setShowAddStory(true),
@@ -9367,7 +9485,7 @@ function CommunityScreen({ profile, blend, onOpenProfile }){
 
       e("div", { className:"tabs", style:{ marginBottom:14 } },
         e("button", { className:"tab-chip", "aria-pressed": homeTab==="foryou" ? "true" : "false", onClick:()=>setHomeTab("foryou") }, "For you"),
-        e("button", { className:"tab-chip", "aria-pressed": homeTab==="following" ? "true" : "false", onClick:()=>setHomeTab("following") }, "Following" + (followingIds.size ? " (" + followingIds.size + ")" : "")),
+        isGuest ? null : e("button", { className:"tab-chip", "aria-pressed": homeTab==="following" ? "true" : "false", onClick:()=>setHomeTab("following") }, "Following" + (followingIds.size ? " (" + followingIds.size + ")" : "")),
         e("button", { className:"tab-chip", "aria-pressed": homeTab==="all" ? "true" : "false", onClick:()=>setHomeTab("all") }, "All")
       ),
 
@@ -9376,7 +9494,7 @@ function CommunityScreen({ profile, blend, onOpenProfile }){
           ? e(EmptyState, { icon:"community" }, homeEmpty)
           : e("div", null,
               homePosts.map(p => e(PostCard, {
-                key:p.id, post:p, profile, followingIds, onToggleFollow:toggleFollow, onOpenProfile,
+                key:p.id, post:p, profile, followingIds, onToggleFollow:toggleFollow, onOpenProfile, onSignIn,
                 onPatch: patch => patchPostLocal(setPosts, p.id, patch),
                 onRemove: () => setPosts(prev => prev ? prev.filter(x => x.id !== p.id) : prev),
               })),
@@ -9388,7 +9506,7 @@ function CommunityScreen({ profile, blend, onOpenProfile }){
                   " family — the same bone structure at a different scale. Post yours and " +
                   (KIBBE_BY_ID[myTop.id] || {}).name + " stops being empty."),
                 homeRelated.map(p => e(PostCard, {
-                  key:p.id, post:p, profile, followingIds, onToggleFollow:toggleFollow, onOpenProfile,
+                  key:p.id, post:p, profile, followingIds, onToggleFollow:toggleFollow, onOpenProfile, onSignIn,
                   onPatch: patch => patchPostLocal(setPosts, p.id, patch),
                   onRemove: () => setPosts(prev => prev ? prev.filter(x => x.id !== p.id) : prev),
                 }))
@@ -9525,7 +9643,7 @@ function CommunityScreen({ profile, blend, onOpenProfile }){
         ? e(EmptyState, { icon:"community" }, emptyMsg)
         : e("div", null,
             feedPosts.map(p => e(PostCard, {
-              key:p.id, post:p, profile, followingIds, onToggleFollow:toggleFollow, onOpenProfile,
+              key:p.id, post:p, profile, followingIds, onToggleFollow:toggleFollow, onOpenProfile, onSignIn,
               onPatch: patch => patchPostLocal(activeFeedSetter, p.id, patch),
               onRemove: () => activeFeedSetter(prev => prev ? prev.filter(x => x.id !== p.id) : prev),
             })),
@@ -9538,7 +9656,7 @@ function CommunityScreen({ profile, blend, onOpenProfile }){
               e("p", { className:"footnote", style:{ marginTop:0, marginBottom:12 } },
                 "These are from the rest of the " + ((KIBBE_BY_ID[space.id] || {}).family || "") + " family, who share your bone structure at a different scale. Post yours and this room becomes its own."),
               relatedPosts.map(p => e(PostCard, {
-                key:p.id, post:p, profile, followingIds, onToggleFollow:toggleFollow, onOpenProfile,
+                key:p.id, post:p, profile, followingIds, onToggleFollow:toggleFollow, onOpenProfile, onSignIn,
                 onPatch: patch => patchPostLocal(setPosts, p.id, patch),
                 onRemove: () => setPosts(prev => prev ? prev.filter(x => x.id !== p.id) : prev),
               }))
@@ -9894,7 +10012,15 @@ function copyShareLink(postId, setStatus){
 // array is not rebuilt on every render of every post card.
 const HEART_SPARK_ANGLES = [0, 45, 90, 135, 180, 225, 270, 315];
 
-function PostCard({ post, profile, followingIds, onToggleFollow, onOpenProfile, onPatch, onRemove, startWithComments, focusCommentId }){
+function PostCard({ post, profile, followingIds, onToggleFollow, onOpenProfile, onPatch, onRemove, startWithComments, focusCommentId, onSignIn }){
+  // A guest can read the feed (see needsAccount in App). Everything that
+  // writes asks for an account instead of throwing on a null profile.
+  const me = profile || { visitorId:null, token:null, name:null };
+  function requireAccount(){
+    if(profile) return false;
+    if(onSignIn) onSignIn();
+    return true;
+  }
   const [showComments, setShowComments] = useState(!!startWithComments);
   // The comment being replied to: { id, authorName }. null = a new top-level
   // comment, which is what the composer does when nothing is selected.
@@ -9916,7 +10042,7 @@ function PostCard({ post, profile, followingIds, onToggleFollow, onOpenProfile, 
   const [reportBusy, setReportBusy] = useState(false);
   const [followBusy, setFollowBusy] = useState(false);
 
-  const liked = !!(post.likes && post.likes[profile.visitorId]);
+  const liked = !!(me.visitorId && post.likes && post.likes[me.visitorId]);
   const likeCount = post.likes ? Object.values(post.likes).filter(Boolean).length : 0;
   // The heart burst. Driven by a timer rather than animationend, because the
   // pop (260ms) finishes before the last spark (420ms + 7*18ms stagger) and
@@ -9929,7 +10055,7 @@ function PostCard({ post, profile, followingIds, onToggleFollow, onOpenProfile, 
     setBursting(true);
     burstTimer.current = setTimeout(() => { setBursting(false); burstTimer.current = null; }, 600);
   }
-  const isOwnPost = post.authorId === profile.visitorId;
+  const isOwnPost = !!me.visitorId && post.authorId === me.visitorId;
   const isFollowing = !!(followingIds && post.authorId && followingIds.has(post.authorId));
 
   // Arrived here from a notification about one particular comment: bring it
@@ -9946,6 +10072,7 @@ function PostCard({ post, profile, followingIds, onToggleFollow, onOpenProfile, 
   }, [focusCommentId, showComments, (post.comments || []).length]);
 
   async function handleToggleFollow(){
+    if(requireAccount()) return;
     if(!onToggleFollow || followBusy) return;
     setFollowBusy(true);
     try{ await onToggleFollow(post.authorId, post.authorName); }
@@ -9953,10 +10080,11 @@ function PostCard({ post, profile, followingIds, onToggleFollow, onOpenProfile, 
   }
 
   async function toggleLike(){
+    if(requireAccount()) return;
     const nextLiked = !liked;
     if(nextLiked){ haptic("medium"); fireBurst(); }
-    onPatch({ likes: Object.assign({}, post.likes || {}, { [profile.visitorId]: nextLiked }) });
-    try{ await Api.like(post.id, profile.visitorId, nextLiked, profile.token); }
+    onPatch({ likes: Object.assign({}, post.likes || {}, { [me.visitorId]: nextLiked }) });
+    try{ await Api.like(post.id, me.visitorId, nextLiked, me.token); }
     catch(err){
       onAuthError(err);
       // A rate limit is worth saying out loud; anything else is transient
@@ -9966,11 +10094,12 @@ function PostCard({ post, profile, followingIds, onToggleFollow, onOpenProfile, 
   }
 
   async function submitComment(){
+    if(requireAccount()) return;
     if(!commentText.trim()) return;
     setCommentBusy(true);
     try{
       setActionError(null);
-      const updated = await Api.comment(post.id, profile.visitorId, profile.token, commentText.trim(), replyTo ? replyTo.id : 0);
+      const updated = await Api.comment(post.id, me.visitorId, me.token, commentText.trim(), replyTo ? replyTo.id : 0);
       if(updated) onPatch({ comments: updated.comments });
       setCommentText("");
       setReplyTo(null);
@@ -9987,10 +10116,11 @@ function PostCard({ post, profile, followingIds, onToggleFollow, onOpenProfile, 
   }
 
   async function report(){
+    if(requireAccount()) return;
     setReportBusy(true);
     try{
       setActionError(null);
-      await Api.report(post.id, profile.visitorId, profile.token);
+      await Api.report(post.id, me.visitorId, me.token);
       onRemove();
     }catch(err){ onAuthError(err); setActionError(err.message || "Couldn't report that post — try again."); }
     finally{ setReportBusy(false); setConfirmReport(false); }
@@ -10003,9 +10133,10 @@ function PostCard({ post, profile, followingIds, onToggleFollow, onOpenProfile, 
   // alone would be a lie about what just happened; blocking is the control
   // for "I never want to see this person again".
   async function reportComment(commentId){
+    if(requireAccount()) return;
     setActionError(null);
     try{
-      await Api.reportComment(post.id, profile.visitorId, profile.token, commentId);
+      await Api.reportComment(post.id, me.visitorId, me.token, commentId);
     }catch(err){
       onAuthError(err);
       setActionError(err.message || "Couldn't report that comment — try again.");
@@ -10029,7 +10160,7 @@ function PostCard({ post, profile, followingIds, onToggleFollow, onOpenProfile, 
     setBusy(true);
     setActionError(null);
     try{
-      const updated = await Api.editPost(post.id, profile.visitorId, profile.token, { caption: trimmed });
+      const updated = await Api.editPost(post.id, me.visitorId, me.token, { caption: trimmed });
       onPatch({ caption: updated.caption, styleTags: updated.styleTags, kibbeTag: updated.kibbeTag });
       setEditing(false);
     }catch(err){ setActionError(err.message || "Couldn't update your post — try again."); }
@@ -10040,7 +10171,7 @@ function PostCard({ post, profile, followingIds, onToggleFollow, onOpenProfile, 
     setBusy(true);
     setActionError(null);
     try{
-      await Api.deletePost(post.id, profile.visitorId, profile.token);
+      await Api.deletePost(post.id, me.visitorId, me.token);
       onRemove();
       // No need to reset confirmDeletePost/busy — onRemove drops this
       // post from the parent's list, unmounting this component.
@@ -10198,7 +10329,7 @@ function CommentThread({ node, profile, focusCommentId, focusRef, onReply, onOpe
       ref: isFocus ? focusRef : null,
     },
       e("div", { className:"comment-row" },
-        (onOpenProfile && c.authorId && c.authorId !== profile.visitorId)
+        (onOpenProfile && c.authorId && (!profile || c.authorId !== profile.visitorId))
           ? e("button", { className:"btn-text", style:{ padding:0, fontWeight:600, fontSize:13 },
               onClick:()=>onOpenProfile(c.authorId) }, c.authorName)
           : e("b", null, c.authorName),
@@ -10234,7 +10365,8 @@ function CommentThread({ node, profile, focusCommentId, focusRef, onReply, onOpe
    in question (PostCard's focusCommentId).
 ===================================================================== */
 
-function PostDetailScreen({ postId, focusCommentId, focusVote, profile, onBack, onOpenProfile }){
+function PostDetailScreen({ postId, focusCommentId, focusVote, profile, onBack, onOpenProfile, onSignIn }){
+  function requireAccount(){ if(profile) return false; if(onSignIn) onSignIn(); return true; }
   const [post, setPost] = useState(undefined); // undefined = loading, null = gone
   const [followingIds, setFollowingIds] = useState(() => new Set());
   const [loadError, setLoadError] = useState(null);
@@ -10265,6 +10397,7 @@ function PostDetailScreen({ postId, focusCommentId, focusVote, profile, onBack, 
   useEffect(() => startPolling(load, 15000), [load]);
 
   async function toggleFollow(authorId, authorName){
+    if(requireAccount()) return;
     if(!authorId || authorId === profile.visitorId) return;
     const wasFollowing = followingIds.has(authorId);
     setFollowingIds(prev => {
@@ -10287,7 +10420,7 @@ function PostDetailScreen({ postId, focusCommentId, focusVote, profile, onBack, 
       : post === null
         ? e(EmptyState, { icon:"community" }, "This post isn't here any more — it may have been deleted or removed.")
         : e(PostCard, {
-            post, profile, followingIds, onToggleFollow: toggleFollow, onOpenProfile,
+            post, profile, followingIds, onToggleFollow: toggleFollow, onOpenProfile, onSignIn,
             startWithComments: true, focusCommentId,
             onPatch: patch => setPost(prev => prev ? Object.assign({}, prev, patch) : prev),
             onRemove: onBack,
@@ -11352,7 +11485,15 @@ function App(){
   // reload behaves as it always did, and the post is still remembered.
   const [guest, setGuest] = useState(() => !!loadLocal("lore_guest", false) && !pendingPostFromUrl);
   const [gateWantsForm, setGateWantsForm] = useState(() => pendingPostFromUrl);
-  function exploreAsGuest(target){ setGuest(true); saveLocal("lore_guest", true); setGateWantsForm(false); if(target) setScreen(target); }
+  // "Take the free quiz" on the landing page is already a yes. Carry that
+  // through so the quiz screen opens on question one instead of a second
+  // intro, and so the wardrobe sheet does not land on top of it.
+  const [quizAutoStart, setQuizAutoStart] = useState(false);
+  function exploreAsGuest(target){
+    setGuest(true); saveLocal("lore_guest", true); setGateWantsForm(false);
+    setQuizAutoStart(target === "quiz");
+    if(target) setScreen(target);
+  }
   function leaveGuestForGate(){ setGuest(false); removeLocal("lore_guest"); setGateWantsForm(true); }
   const [sessionExpired, setSessionExpired] = useState(false);
   const [kibbeResult, setKibbeResult] = useState(() => loadLocal("lore_kibbe", null));
@@ -12269,8 +12410,16 @@ function App(){
   }
   // Signed-out explorer: screens that only make sense with an account get
   // a friendly sign-in prompt instead of a broken screen.
-  const needsAccount = !profile && (viewingConversation || viewingProfileId || viewingPost ||
-    screen === "community" || screen === "notifications" || screen === "inbox");
+  // Community is read-only for guests since 21 Nov 2026. The feed endpoint
+  // has always been public (GET /api/posts needs no auth) and /p/<id>
+  // already renders signed out, so the wall was costing us the one thing
+  // that makes this app different and giving nothing back: a stranger
+  // looking at a login form has no reason to make an account; a stranger
+  // who has just scrolled other people's outfits does. Everything that
+  // WRITES still needs an account, and each of those is where the prompt
+  // now lives.
+  const needsAccount = !profile && (viewingConversation || viewingProfileId ||
+    screen === "notifications" || screen === "inbox");
 
   let body;
   if(needsAccount){
@@ -12288,7 +12437,7 @@ function App(){
   else if(viewingPost){
     body = e(PostDetailScreen, {
       postId: viewingPost.postId, focusCommentId: viewingPost.commentId, focusVote: !!viewingPost.focusVote,
-      profile, onBack: closePost, onOpenProfile: openProfile,
+      profile, onBack: closePost, onOpenProfile: openProfile, onSignIn: profile ? null : leaveGuestForGate,
     });
   }
   else if(viewingProfileId){
@@ -12299,11 +12448,11 @@ function App(){
     });
   }
   else if(screen === "home") body = e(HomeScreen, { profile, blend, styleBlend, kibbeResult, colorResult, closetCount: closet.length, closet, outfitCount: (outfits || []).length, digestOptOut, onToggleDigest: toggleDigest, morningPushOptOut, onToggleMorningPush: toggleMorningPush, isPremium, billing, giftNotice, referral, onManageBilling: openBillingPortal, onUpgrade:openPaywall, onNavigate:goTo, onSignOut:signOut, onOpenProfile:openProfile, onAccountDeleted:handleAccountDeleted, onSignIn:leaveGuestForGate, onOpenPost:openPost });
-  else if(screen === "quiz") body = e(StyleQuizScreen, { kibbeResult, styleLanguageResult:styleBlend, onSaveKibbe:setKibbeResult, onSaveStyle:setStyleBlend, onSignIn: profile ? null : leaveGuestForGate, colorResult });
+  else if(screen === "quiz") body = e(StyleQuizScreen, { kibbeResult, styleLanguageResult:styleBlend, onSaveKibbe:setKibbeResult, onSaveStyle:setStyleBlend, onSignIn: profile ? null : leaveGuestForGate, colorResult, autoStart: quizAutoStart, onWardrobeChosen: () => setWardrobeAsked(true) });
   else if(screen === "color") body = e(ColorScreen, { colorResult, onSaveColor:setColorResult });
   else if(screen === "closet") body = e(ClosetScreen, { closet, setCloset, blend, styleWordBlend:styleBlend, kibbeTypeName, topStyleWords, profile, isPremium, closetFreeLimit, onUpgrade:openPaywall, syncStatus:closetSyncStatus, onRetrySync:retryClosetSync, storageFull:closetStorageFull, outfits, setOutfits });
   else if(screen === "checker") body = e(CheckerScreen, { blend, styleWordBlend:styleBlend, kibbeTypeName, topStyleWords, visitorId: profile ? profile.visitorId : null, authToken: profile ? profile.token : null, isPremium, freeAiReadsLeft, onFreeAiReadUsed: () => setFreeAiReadsLeft(n => Math.max(0, n - 1)), onSignIn: profile ? null : leaveGuestForGate, onUpgrade:openPaywall });
-  else if(screen === "community") body = e(CommunityScreen, { profile, blend, onOpenProfile:openProfile });
+  else if(screen === "community") body = e(CommunityScreen, { profile, blend, onOpenProfile:openProfile, onSignIn: profile ? null : leaveGuestForGate });
   else if(screen === "notifications") body = e(NotificationsScreen, { profile, onBack:()=>goTo("home"), onOpenProfile:openProfile, onOpenConversation:openConversation, onOpenPost:openPost });
   else if(screen === "inbox") body = e(InboxScreen, { profile, onBack:()=>goTo("home"), onOpenConversation:openConversation });
 
@@ -12313,7 +12462,7 @@ function App(){
     // Before the first recommendation, not buried in the quiz intro where it
     // used to sit as an optional control that silently defaulted to
     // womenswear when skipped.
-    !wardrobeAsked ? e(WardrobeSheet, { onDone: () => setWardrobeAsked(true) }) : null,
+    (!wardrobeAsked && screen !== "quiz") ? e(WardrobeSheet, { onDone: () => setWardrobeAsked(true) }) : null,
     e("header", { className:"topbar" },
       e("span", { className:"wordmark", style:{ display:"inline-flex", alignItems:"center", gap:"0.12em" } },
         e(LogoMark, { size:"0.85em" }), "Style-LORE"),

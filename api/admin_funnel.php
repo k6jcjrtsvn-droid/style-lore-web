@@ -206,6 +206,24 @@ foreach ($shareTapsByEvent as $r) $engagement['shareTaps28d'] += (int)$r['n'];
 foreach (rows($pdo, 'SELECT COUNT(*) AS n FROM share_hits WHERE created_at >= ?', [$monthAgo]) as $r) {
     $engagement['shareHits28d'] = (int)$r['n'];
 }
+
+/* The quiz funnel, step by step. The style quiz is 25 questions in two
+ * parts and until 21 Nov 2026 nothing recorded where anybody stopped — so
+ * "is the quiz too long" could only be argued, never measured. Part one now
+ * ends on the result screen and part two is offered from it, which is
+ * exactly the change these rows exist to judge. Ordered, so the drop
+ * between consecutive rows is the number that matters. */
+$quizSteps = ['quiz_start' => 0, 'quiz_part1_complete' => 0, 'photo_refine_shown' => 0,
+              'quiz_part2_start' => 0, 'quiz_part2_complete' => 0, 'community_guest_view' => 0];
+foreach (rows($pdo,
+    'SELECT event, COUNT(*) AS n FROM events
+      WHERE event IN ("quiz_start","quiz_part1_complete","photo_refine_shown","quiz_part2_start","quiz_part2_complete","community_guest_view")
+        AND created_at >= ? GROUP BY event', [$monthAgo]) as $r) {
+    $quizSteps[(string)$r['event']] = (int)$r['n'];
+}
+$storeBadges = rows($pdo,
+    'SELECT COALESCE(meta, "(none)") AS meta, COUNT(*) AS n FROM events
+      WHERE event = "store_badge_tap" AND created_at >= ? GROUP BY meta ORDER BY n DESC', [$monthAgo]);
 /* Where posts get started. "(none)" is every post from before posts.source
  * existed and every post from a client that predates it. */
 $postsBySource = rows($pdo,
@@ -231,6 +249,8 @@ json_response([
     'clicksBySource' => $bySource,
     'signups' => $signups,
     'signupsFellBack' => $signupsFellBack,
+    'quizSteps' => $quizSteps,
+    'storeBadges' => $storeBadges,
     'acquisition' => $acquisition,
     'acquisitionFellBack' => $acquisitionFellBack,
     'leads' => $leads,

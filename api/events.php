@@ -26,6 +26,14 @@ const EVENT_NAMES = [
     'result_share_tap', 'styleme_share_tap', 'outfit_share_tap',
     'post_from_result', 'post_from_styleme', 'post_from_outfit',
     'p_vote_cta_tap', 'pending_post_resumed',
+    // Added 21 Nov 2026. The style quiz is 25 questions in two parts and
+    // nothing recorded where people stopped, so "is the quiz too long" was
+    // unanswerable. These five make the drop-off visible, step by step.
+    'quiz_start', 'quiz_part1_complete', 'photo_refine_shown',
+    'quiz_part2_start', 'quiz_part2_complete',
+    // Where people leave for a store, and whether a signed-out visitor
+    // getting into the feed is worth the change that let them.
+    'store_badge_tap', 'community_guest_view',
 ];
 
 $pdo = db();
