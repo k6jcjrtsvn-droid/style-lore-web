@@ -3,9 +3,9 @@
   "androidStoreUrl": "https://play.google.com/store/apps/details?id=com.stylelore.app",
   "iosStoreUrl": "https://apps.apple.com/app/id6813713328",
   "android": {
-    "version": "1.9",
-    "versionCode": 12,
-    "notes": "Style-ME replaces the Checker, the AI Stylist says how sure it is and takes follow-up questions, you choose whether a photo is sent to our AI, and you can reply to a comment.",
+    "version": "1.11",
+    "versionCode": 14,
+    "notes": "Your body type arrives sooner \u2014 the quiz shows your result after the first set of questions. You can also browse the Community feed before making an account. Fixes: Premium not loading for some people, and photos from your camera roll failing to attach.",
     "url": "https://play.google.com/store/apps/details?id=com.stylelore.app"
   },
   "ios": {

@@ -12,9 +12,16 @@
   // tracking rules — so Analytics and AdSense are only loaded on the web.
   window.STYLE_LORE_NATIVE = !!(window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform());
   window.STYLE_LORE_API_BASE = window.STYLE_LORE_NATIVE ? "https://style-lore.com" : "";
-  // Bump this with every app release; it travels with every bug report so we
-  // know which build a problem came from.
-  window.STYLE_LORE_APP_VERSION = "1.8.0";
+  // The web page's own build stamp. It travels with every bug report, so a
+  // native app must not report the website's number: on launch the native
+  // bootstrap replaces this with the real installed version read from
+  // Capacitor's App.getInfo(), and with "native-unknown" if that call fails,
+  // so a report never claims a version the device is not running. This used
+  // to be bumped by hand and went stale for three Android releases -- it
+  // still said 1.8.0 while 1.11 was live on Play, which mislabelled every
+  // Android bug report since 1.9 and made the update check compare the
+  // website's number against the store's.
+  window.STYLE_LORE_APP_VERSION = "web";
   // Native push needs Firebase (android/app/google-services.json). The
   // Codemagic build flips this to false when that file is missing, so the
   // app never calls Push.register() without Firebase — which crashes the
@@ -6432,17 +6439,36 @@ function useUpdateAvailable(){
     // a bundled copy, so the version constant they see is the website's.
     // Running natively on a non-localhost origin therefore means "old build".
     const runningFromBundle = /^(https?|capacitor|ionic):\/\/localhost/.test(location.origin);
-    const current = runningFromBundle ? window.STYLE_LORE_APP_VERSION : "1.1";
-    fetch("/app-versions.json", { cache:"no-store" })
-      .then(r => r.ok ? r.json() : null)
-      .then(j => {
-        if(cancelled || !j || !j[platform]) return;
-        const latest = j[platform];
-        if(latest.version && compareVersions(latest.version, current) > 0){
-          setUpdate({ version: latest.version, notes: latest.notes || "", url: latest.url || (platform === "ios" ? j.iosStoreUrl : j.androidStoreUrl) });
-        }
-      })
-      .catch(() => {});
+    // Ask the native layer which build is installed rather than trusting a
+    // number typed into this file. One constant cannot be two versions at
+    // once -- Android and iOS ship from the same index.html on different
+    // version lines -- and the hand-kept one went stale, so it reported
+    // 1.8.0 on an Android 1.11 phone. App.getInfo() gives versionName on
+    // Android and CFBundleShortVersionString on iOS, which is exactly what
+    // app-versions.json is compared against.
+    const installedVersion = () => {
+      const CapApp = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.App;
+      if(!CapApp || !CapApp.getInfo) return Promise.resolve(null);
+      return CapApp.getInfo().then(i => (i && i.version) ? String(i.version) : null).catch(() => null);
+    };
+    installedVersion().then(v => {
+      if(cancelled) return;
+      const current = runningFromBundle ? v : "1.1";
+      // Make every later bug report carry the build it really came from.
+      window.STYLE_LORE_APP_VERSION = runningFromBundle ? (v || "native-unknown") : "1.1";
+      // No answer from the native layer: say nothing. Guessing here is how
+      // someone gets offered an "update" to a build older than their own.
+      if(!current) return null;
+      return fetch("/app-versions.json", { cache:"no-store" })
+        .then(r => r.ok ? r.json() : null)
+        .then(j => {
+          if(cancelled || !j || !j[platform]) return;
+          const latest = j[platform];
+          if(latest.version && compareVersions(latest.version, current) > 0){
+            setUpdate({ version: latest.version, notes: latest.notes || "", url: latest.url || (platform === "ios" ? j.iosStoreUrl : j.androidStoreUrl) });
+          }
+        });
+    }).catch(() => {});
     return () => { cancelled = true; };
   }, []);
   return update;
