@@ -3,9 +3,9 @@
   "androidStoreUrl": "https://play.google.com/store/apps/details?id=com.stylelore.app",
   "iosStoreUrl": "https://apps.apple.com/app/id6813713328",
   "android": {
-    "version": "1.11",
-    "versionCode": 14,
-    "notes": "Your body type arrives sooner \u2014 the quiz shows your result after the first set of questions. You can also browse the Community feed before making an account. Fixes: Premium not loading for some people, and photos from your camera roll failing to attach.",
+    "version": "1.12",
+    "versionCode": 15,
+    "notes": "Meet Lorey (LOR-ee), the Style-LORE stylist \u2014 same reads on your photos, now by name. You can also style your friends: open a look someone posted, tap \"Style them\", and build an outfit out of their own closet. It arrives as a comment on their post.",
     "url": "https://play.google.com/store/apps/details?id=com.stylelore.app"
   },
   "ios": {
