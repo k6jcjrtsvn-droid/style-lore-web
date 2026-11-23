@@ -329,6 +329,23 @@
   .ico{ fill:none; stroke:currentColor; stroke-width:1.5; width:1.25em; height:1.25em; }
   /* Placeholder tiles: a quiet mark, not a giant pink shirt. */
   .outfit-piece-blank .ico{ width:30px; height:30px; stroke-width:1.2; opacity:.55; }
+
+  /* "Style them" — picking pieces out of someone else's public closet, and
+     the suggestion as it appears inside a comment. */
+  .style-them-grid{ display:grid; grid-template-columns:repeat(3,1fr); gap:8px; }
+  .style-them-pick{ position:relative; display:block; width:100%; padding:0; border:2px solid var(--line); border-radius:12px;
+    background:var(--paper-raised); overflow:hidden; cursor:pointer; text-align:left; }
+  .style-them-pick.is-on{ border-color:var(--accent); }
+  .style-them-pick img{ display:block; width:100%; aspect-ratio:1/1; object-fit:cover; }
+  .style-them-pick .outfit-piece-blank{ display:flex; align-items:center; justify-content:center; width:100%; aspect-ratio:1/1; }
+  .style-them-desc{ font-size:11px; line-height:1.3; padding:5px 6px 6px; color:var(--ink-soft);
+    display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
+  .style-them-n{ position:absolute; top:6px; right:6px; min-width:20px; height:20px; border-radius:999px;
+    background:var(--accent); color:#fff; font-size:12px; font-weight:700; line-height:20px; text-align:center; }
+  .suggestion{ margin:6px 0 2px; padding:8px; border:1px solid var(--line-soft); border-radius:10px; background:var(--paper-raised); }
+  .suggestion-row{ display:flex; gap:6px; }
+  .suggestion-row img{ width:44px; height:44px; border-radius:8px; object-fit:cover; flex-shrink:0; }
+  .suggestion-note{ font-size:11px; letter-spacing:.08em; text-transform:uppercase; color:var(--accent); margin-bottom:6px; }
   .topbar-icon-btn svg{ width:19px; height:19px; stroke:currentColor; fill:none; stroke-width:1.6; }
   .topbar-icon-badge{
     position:absolute; top:2px; right:2px;
@@ -1276,7 +1293,7 @@
 <li><strong>Your colors</strong> — a seasonal palette with swatches big enough to hold up to a garment in a store.</li>
 <li><strong>Style-ME</strong> — describe a piece or snap a photo and get a verdict against your type before you buy it.</li>
 <li><strong>Your closet</strong> — log what you own, see today's outfit, and find the gaps.</li>
-<li><strong>Premium</strong> — outfits built for you from your own closet with a stylist's note on why each works, an AI stylist's read on any photo, an unlimited closet with a gap list and capsule builder, and every check saved. $4.99 a month or $39.99 a year, with a 7-day free trial the first time.</li>
+<li><strong>Premium</strong> — outfits built for you from your own closet with a stylist's note on why each works, a read on any photo from Lorey, the AI stylist, an unlimited closet with a gap list and capsule builder, and every check saved. $4.99 a month or $39.99 a year, with a 7-day free trial the first time.</li>
 </ul>
 </main>
 </div>
@@ -2959,7 +2976,7 @@ function HistoryList({ isPremium, onUpgrade, version }){
   if (!all.length) return null;
   const shown = isPremium ? all : all.slice(0, HISTORY_FREE_LIMIT);
   const hidden = all.length - shown.length;
-  const kindLabel = { text:"Text check", photo:"Photo check", ai:"AI Stylist" };
+  const kindLabel = { text:"Text check", photo:"Photo check", ai:"Lorey" };
   const remove = id => { removeHistory(id); setLocalVersion(v => v + 1); };
   const clearAll = () => { clearHistory(); setConfirmClear(false); setLocalVersion(v => v + 1); };
   return e("div", { style:{ marginTop:28 } },
@@ -4674,10 +4691,11 @@ const Api = {
   },
   // parentId (optional) makes this a reply to that comment instead of a new
   // top-level one; the server keeps threads one level deep.
-  async comment(id, visitorId, authToken, text, parentId){
+  async comment(id, visitorId, authToken, text, parentId, outfitItemIds){
     const r = await fetch("/api/posts/"+id+"/comments", {
       method:"POST", headers:{ "Content-Type":"application/json" },
-      body: JSON.stringify({ visitorId, authToken, text, parentId: parentId || 0 }),
+      body: JSON.stringify({ visitorId, authToken, text, parentId: parentId || 0,
+        outfitItemIds: (outfitItemIds && outfitItemIds.length) ? outfitItemIds : undefined }),
     });
     if(!r.ok) throw await apiError(r, "Couldn't post comment.");
     return r.json();
@@ -5004,7 +5022,7 @@ const Api = {
     const r = await fetch("/api/checker/photo", { method:"POST", body:fd });
     const body = await r.json().catch(()=>({}));
     if(!r.ok){
-      const err = new Error(body.error || "Couldn't run the AI Stylist right now — try again.");
+      const err = new Error(body.error || "Couldn't reach Lorey right now — try again.");
       err.code = body.code || null;
       throw err;
     }
@@ -5953,7 +5971,7 @@ function LandingBelowFold({ onQuiz }){
     e("h2", null, "Good to know"),
     e("div", { className:"landing-faq" },
       e("details", null, e("summary", null, "Is the quiz really free?"), e("p", null, "Yes. Your body type, style words and colors are free, and you can keep them without an account. So is logging your closet, building outfits, planning your week, and checking a garment before you buy it. An account is only for saving across devices, the closet sync and the community.")),
-      e("details", null, e("summary", null, "Is my photo uploaded anywhere?"), e("p", null, "Almost never, and never without you asking. The photo step of the quiz, the instant fit check, and cleaning up a closet photo's background all run on your own phone or computer — those pictures never leave your device. Two features do send one photo when you tap them and say so at the time: “Describe it for me” on a closet item, and the Premium AI Stylist read. Neither stores the photo.")),
+      e("details", null, e("summary", null, "Is my photo uploaded anywhere?"), e("p", null, "Almost never, and never without you asking. The photo step of the quiz, the instant fit check, and cleaning up a closet photo's background all run on your own phone or computer — those pictures never leave your device. Two features do send one photo when you tap them and say so at the time: “Describe it for me” on a closet item, and Lorey’s read, which is Premium. Neither stores the photo.")),
       e("details", null, e("summary", null, "Who can see what I post?"), e("p", null, "Community posts are visible to other Style-LORE members. Closet items stay private unless you mark one Public. When you write a post you can choose to make that one post shareable by link, which lets anyone open it — that is off unless you turn it on, it applies only to the post you are writing, and search engines are told not to list it.")),
       e("details", null, e("summary", null, "Can I plan what to wear?"), e("p", null, "Yes. Put pieces from your closet together, save the combination, and drop it onto a day in the week ahead. Today's outfit also reads the weather, so a rainy Tuesday gets a layer.")),
       e("details", null, e("summary", null, "Does it work for menswear?"), e("p", null, "Yes. Choose menswear, womenswear or both, and the questions, outfit ideas and shopping links follow suit.")),
@@ -7136,7 +7154,7 @@ function StyleQuizScreen({ kibbeResult, styleLanguageResult, onSaveKibbe, onSave
             onClick: () => setGenderLean(prev => prev === val ? null : val)
           }, label))
         ),
-        e("div", { className:"field-hint" }, "Words the questions, your shop links and the AI Stylist for what you actually buy — menswear, womenswear or both. Remembered on this device; change it here any time."),
+        e("div", { className:"field-hint" }, "Words the questions, your shop links and Lorey for what you actually buy — menswear, womenswear or both. Remembered on this device; change it here any time."),
         e("div", { className:"field-hint", style:{ marginTop:6 } }, "Why we don't ask your gender: body type is about lines and proportions, not who you are. We only need to know which racks you shop.")
       ),
       e("button", { className:"btn btn-accent btn-block", onClick:()=>setStage("style-quiz") }, "Start this part"),
@@ -8005,7 +8023,7 @@ function AiConsentSheet({ viewer, manage, onGranted, onClose }){
     : e(React.Fragment, null,
         e("p", { style:{ fontSize:14, lineHeight:1.6, marginBottom:12 } },
           "Two things in Style-LORE send one photo off your device when you tap them: the ",
-          e("b", null, "AI Stylist read"), " and ", e("b", null, "\u201cDescribe it for me\u201d"),
+          e("b", null, "Lorey's read"), " and ", e("b", null, "\u201cDescribe it for me\u201d"),
           " on a closet item. The photo goes to ", e("b", null, "Anthropic"),
           ", a third-party AI company, is used to answer that one request, and is not stored \u2014 by them or by us."),
         e("p", { style:{ fontSize:14, lineHeight:1.6, marginBottom:12 } },
@@ -8715,10 +8733,10 @@ function PaywallSheet({ reason, onClose, onPurchased, profile, webCheckout: webC
       ),
       e("p", { style:{ fontSize:14, color:"var(--ink-soft)", marginBottom:16 } }, reasonCopy),
       e("ul", { style:{ margin:"0 0 20px", paddingLeft:20, fontSize:13.5, color:"var(--ink-soft)", display:"flex", flexDirection:"column", gap:6 } },
-        e("li", null, e("strong", null, "AI Stylist"), " — send any photo and get specific feedback on the cut, the color and the fit, plus what to change."),
+        e("li", null, e("strong", null, "Lorey, your stylist"), " — send her any photo and get specific feedback on the cut, the color and the fit, plus what to change. Ask her follow-up questions about the same outfit."),
         e("li", null, e("strong", null, "Your whole wardrobe"), " — an unlimited closet, the gap read that tells you what to buy next, a capsule builder that finds the pieces making the most outfits, and outfits put together for you with a note on why each one works."),
         e("li", null, e("strong", null, "A shopping notebook"), " — every check and stylist read saved, so you never wonder what the verdict was."),
-        e("li", null, e("strong", null, "Still private"), " — your closet and quiz never leave your phone; only the photos you send to the AI Stylist do."),
+        e("li", null, e("strong", null, "Still private"), " — your closet and quiz never leave your phone; only the photos you send to Lorey do."),
         e("li", null, isNative ? "Cancel anytime from your phone's subscription settings." : "Cancel anytime — one click from your account, no calls, no emails.")
       ),
       plansContent,
@@ -8888,7 +8906,7 @@ function CheckerScreen({ blend, styleWordBlend, kibbeTypeName, topStyleWords, vi
       } else if(err.code === "premium_required"){
         if(onUpgrade) onUpgrade("checker");
       } else {
-        setAiError(err.message || "Couldn't run the AI Stylist right now — try again.");
+        setAiError(err.message || "Couldn't reach Lorey right now — try again.");
       }
     }finally{
       setAiBusy(false);
@@ -9061,20 +9079,23 @@ function CheckerScreen({ blend, styleWordBlend, kibbeTypeName, topStyleWords, vi
     // Always visible — with no photo yet, the button doubles as the photo
     // picker so nobody has to discover that a photo unlocks it.
     e("div", { className:"card", style:{ padding:16, marginBottom:16, borderColor:"var(--accent)" } },
-      e("div", { className:"eyebrow", style:{ marginBottom:4 } }, isPremium ? "AI Stylist" : hasFreeRead ? "AI Stylist · your first read is free" : "AI Stylist · Premium"),
-      e("div", { style:{ fontSize:15, fontWeight:600, marginBottom:6 } }, photoBlob ? "Want a stylist's read on this photo?" : "Want a stylist's read on a photo?"),
+      e("div", { className:"eyebrow", style:{ marginBottom:4 } }, isPremium ? "Lorey" : hasFreeRead ? "Lorey · your first read is free" : "Lorey · Premium"),
+      e("div", { style:{ fontSize:15, fontWeight:600, marginBottom:6 } }, photoBlob ? "Want Lorey's read on this photo?" : "Want Lorey's read on a photo?"),
+      // Said once, here, where she is introduced. Nowhere else — a product
+      // that keeps re-explaining its own mascot's name sounds unsure of it.
+      e("p", { className:"footnote", style:{ margin:"0 0 8px" } }, "Lorey (LOR-ee) is the Style-LORE stylist."),
       e("p", { style:{ fontSize:13.5, color:"var(--ink-soft)", marginBottom:12 } },
         (visitorId ? "" : "Create a free account and your first read is on us. ") +
         "Specific feedback on the cut, the color and the fit — and what to change if it's not working. " +
         (photoBlob ? "Uses the photo above; this is the one feature that sends it off your phone, to get the read." : "Add a photo of the piece, or of you wearing it — this is the one feature that sends it off your phone, to get the read.")),
       !photoBlob
         ? e("label", { className:"btn btn-accent btn-block", htmlFor:"checker-photo-input", style:{ cursor:"pointer" }, onClick: ev => pickWithNativeCamera(ev, pickCheckerPhoto) },
-            isPremium ? "Add a photo for your stylist read" : hasFreeRead && visitorId ? "Add a photo — your first read is free" : "Add a photo to get started")
+            isPremium ? "Add a photo for Lorey" : hasFreeRead && visitorId ? "Add a photo — your first read is free" : "Add a photo to get started")
         : e("button", {
             className:"btn btn-accent btn-block",
             disabled: aiBusy,
             onClick: () => runAiStylist()
-          }, aiBusy ? "Reading your photo…" : !visitorId ? "Sign in for a free read" : isPremium ? "Get my stylist read" : hasFreeRead ? "Try it free — one read on us" : "Unlock the AI Stylist"),
+          }, aiBusy ? "Reading your photo…" : !visitorId ? "Sign in for a free read" : isPremium ? "Ask Lorey" : hasFreeRead ? "Try it free — one read on us" : "Unlock Lorey"),
       !photoBlob && !isPremium ? e("button", { className:"btn-text", style:{ marginTop:8, padding:0, fontSize:12.5 }, onClick:()=>onUpgrade("checker") }, "See what Premium includes") : null,
       aiError ? e("div", { style:{ marginTop:10 } }, e(Banner, { kind:"error" }, aiError)) : null,
       aiResult ? e("div", { style:{ marginTop:14, paddingTop:14, borderTop:"1px solid var(--line-soft)" } },
@@ -9170,7 +9191,7 @@ function CheckerScreen({ blend, styleWordBlend, kibbeTypeName, topStyleWords, vi
     e(HistoryList, { isPremium, onUpgrade, version: historyVersion }),
 
     e("p", { className:"footnote", style:{ marginTop:8 } },
-      "Private by default: the text and photo checks run on your phone and nothing is uploaded. Verdicts are a quick read against your type, not a stylist's opinion — that's what the AI Stylist is for.")
+      "Private by default: the text and photo checks run on your phone and nothing is uploaded. Verdicts are a quick read against your type, not a stylist's opinion — that's what Lorey is for.")
   );
 }
 
@@ -10012,6 +10033,119 @@ function copyShareLink(postId, setStatus){
 // array is not rebuilt on every render of every post card.
 const HEART_SPARK_ANGLES = [0, 45, 90, 135, 180, 225, 270, 315];
 
+/* =====================================================================
+   STYLE THEM — suggest an outfit from someone else's public closet.
+
+   The cheap half of "style my friends". A suggestion is not a new object
+   with its own inbox, permissions and notifications: it is a COMMENT that
+   happens to carry up to four closet item ids. So it threads, it notifies,
+   it can be reported and hidden by the moderation path that already
+   exists, and a client that predates this still renders the words.
+
+   What it can reach is deliberately narrow. The picker reads
+   /api/closet?ownerId=<the post author>, which has always returned only
+   that account's PUBLIC items, and the server re-checks every id against
+   the same set before storing it (api/post_comments.php). Nothing here can
+   surface a hidden piece, a deleted one, or anybody else's wardrobe.
+
+   It is not a styling inbox, and that is the point: the person asked for
+   opinions by posting, and the opinion arrives where they asked.
+   ===================================================================== */
+function StyleThemSheet({ post, profile, onClose, onPosted }){
+  const dialogRef = useDialog(null);
+  useBackClose(onClose);
+  const [items, setItems] = useState(null);   // null = loading
+  const [loadErr, setLoadErr] = useState(null);
+  const [picked, setPicked] = useState([]);   // ordered item ids
+  const [note, setNote] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState(null);
+  const MAX = 4;
+
+  useEffect(() => {
+    let dead = false;
+    Api.getCloset(post.authorId)
+      .then(rows => { if(!dead) setItems(Array.isArray(rows) ? rows : []); })
+      .catch(() => { if(!dead) setLoadErr("Couldn't open their closet just now."); });
+    return () => { dead = true; };
+  }, [post.authorId]);
+
+  function toggle(id){
+    setErr(null);
+    setPicked(prev => prev.includes(id) ? prev.filter(x => x !== id)
+      : prev.length >= MAX ? prev : prev.concat([id]));
+  }
+
+  const byId = {};
+  (items || []).forEach(it => { byId[it.id] = it; });
+
+  async function send(){
+    if(!picked.length){ setErr("Pick at least one piece."); return; }
+    setBusy(true); setErr(null);
+    // The server requires text, and a bare list of garments makes a poor
+    // notification. Default to something that reads like a person.
+    const names = picked.map(id => (byId[id] && byId[id].description) || "").filter(Boolean);
+    const text = note.trim() || ("Styled you a look: " + names.join(" + ")).slice(0, 180);
+    try{
+      const updated = await Api.comment(post.id, profile.visitorId, profile.token, text, 0, picked);
+      track("outfit_suggestion_sent", { count: picked.length });
+      if(onPosted) onPosted(updated);
+      onClose();
+    }catch(e2){
+      onAuthError(e2);
+      setErr(e2.message || "Couldn't send that — try again.");
+      setBusy(false);
+    }
+  }
+
+  return e("div", { className:"sheet-backdrop" },
+    e("div", { className:"sheet", ref:dialogRef, role:"dialog", "aria-modal":"true" },
+      e("div", { className:"sheet-handle" }),
+      e("div", { className:"sheet-head" },
+        e("h2", { className:"display", style:{ fontSize:20, fontWeight:700 } }, "Style " + (post.authorName || "them")),
+        e("button", { type:"button", className:"btn-text", onClick:onClose }, "Cancel")
+      ),
+      e("p", { className:"screen-lede", style:{ marginBottom:14 } },
+        "Put together a look from what they've made public. It posts as a comment, so they'll see it with everything else."),
+
+      items === null && !loadErr ? e(Thinking, { label:"Opening their closet…" }) : null,
+      loadErr ? e(Banner, { kind:"error" }, loadErr) : null,
+      (items && items.length === 0) ? e(EmptyState, { icon:"closet" },
+        (post.authorName || "They") + " hasn't made any closet pieces public yet, so there's nothing to style with.") : null,
+
+      (items && items.length) ? e(React.Fragment, null,
+        e("div", { className:"eyebrow", style:{ marginBottom:8 } },
+          picked.length ? ("Picked " + picked.length + " of " + MAX) : ("Tap up to " + MAX + " pieces")),
+        e("div", { className:"style-them-grid" },
+          items.map(it => {
+            const on = picked.includes(it.id);
+            const n = picked.indexOf(it.id) + 1;
+            return e("button", {
+              key: it.id, type:"button",
+              className: "style-them-pick" + (on ? " is-on" : ""),
+              "aria-pressed": on ? "true" : "false",
+              onClick: () => toggle(it.id),
+            },
+              it.photo ? e("img", { src:it.photo, alt:"" }) : e("div", { className:"outfit-piece-blank" }, Icon("shirt")),
+              on ? e("span", { className:"style-them-n" }, n) : null,
+              e("div", { className:"style-them-desc" }, it.description || "Untitled piece")
+            );
+          })
+        ),
+        e("div", { className:"field", style:{ marginTop:14 } },
+          e("label", { htmlFor:"style-them-note" }, "Say why (optional)"),
+          e("input", { id:"style-them-note", type:"text", maxLength:180, value:note,
+            placeholder:"The straight trousers balance the soft top…",
+            onChange: ev => setNote(ev.target.value) })
+        ),
+        err ? e(Banner, { kind:"error" }, err) : null,
+        e("button", { className:"btn btn-accent btn-block", style:{ marginTop:12 }, disabled:busy || !picked.length, onClick:send },
+          busy ? "Sending…" : "Send the look")
+      ) : null
+    )
+  );
+}
+
 function PostCard({ post, profile, followingIds, onToggleFollow, onOpenProfile, onPatch, onRemove, startWithComments, focusCommentId, onSignIn }){
   // A guest can read the feed (see needsAccount in App). Everything that
   // writes asks for an account instead of throwing on a null profile.
@@ -10022,6 +10156,26 @@ function PostCard({ post, profile, followingIds, onToggleFollow, onOpenProfile, 
     if(onSignIn) onSignIn();
     return true;
   }
+  // "Style them": the picker, and the author's public closet so a
+  // suggestion already in the thread can be shown as garments rather than
+  // as a row of opaque ids.
+  const [showStyleThem, setShowStyleThem] = useState(false);
+  const [authorCloset, setAuthorCloset] = useState(null);
+  const hasSuggestion = (post.comments || []).some(c => (c.outfitItemIds || []).length);
+  useEffect(() => {
+    if(!hasSuggestion || authorCloset || !post.authorId) return;
+    let dead = false;
+    Api.getCloset(post.authorId)
+      .then(rows => { if(!dead) setAuthorCloset(Array.isArray(rows) ? rows : []); })
+      .catch(() => { if(!dead) setAuthorCloset([]); });
+    return () => { dead = true; };
+  }, [hasSuggestion, post.authorId]);
+  const closetById = {};
+  (authorCloset || []).forEach(it => { closetById[it.id] = it; });
+  // Styling yourself is not a thing, and a post with no author id predates
+  // author tracking and has no closet to open.
+  const canStyleThem = !!(profile && post.authorId && post.authorId !== me.visitorId);
+  function openStyleThem(){ if(requireAccount()) return; setShowStyleThem(true); }
   const [showComments, setShowComments] = useState(!!startWithComments);
   // The comment being replied to: { id, authorName }. null = a new top-level
   // comment, which is what the composer does when nothing is selected.
@@ -10239,6 +10393,12 @@ function PostCard({ post, profile, followingIds, onToggleFollow, onOpenProfile, 
         ),
         likeCount || ""),
       e("button", { className:"post-action", onClick:()=>setShowComments(!showComments) }, Icon("comment"), (post.comments||[]).length || ""),
+      // Styling someone is an offer, not a demand, so it sits with the other
+      // reactions rather than shouting from the top of the card.
+      canStyleThem
+        ? e("button", { className:"post-action", onClick:openStyleThem, "aria-label":"Style them from their closet" },
+            Icon("shirt"), "Style them")
+        : null,
       isOwnPost
         ? e("div", { style:{ marginLeft:"auto", display:"flex", gap:16 } },
             // Only on your own post, and only if you ticked "shareable by
@@ -10271,7 +10431,7 @@ function PostCard({ post, profile, followingIds, onToggleFollow, onOpenProfile, 
     showComments ? e("div", { className:"comment-list" },
       threadComments(post.comments).map(node => e(CommentThread, {
         key: node.comment.id != null ? ("c"+node.comment.id) : ("i"+node.index),
-        node, profile, focusCommentId, focusRef,
+        node, profile, focusCommentId, focusRef, closetById,
         // No Reply button for a guest: it would open a reply banner with no
         // box under it, now that the composer is members-only.
         onReply: isGuest ? null : startReply, onOpenProfile, onReportComment: reportComment,
@@ -10301,7 +10461,14 @@ function PostCard({ post, profile, followingIds, onToggleFollow, onOpenProfile, 
             e("button", { className:"btn-text", disabled:commentBusy || !commentText.trim(), onClick:submitComment },
               commentBusy ? "Sending…" : (replyTo ? "Reply" : "Send"))
           )
-    ) : null
+    ) : null,
+    showStyleThem ? e(StyleThemSheet, {
+      post, profile,
+      onClose: () => setShowStyleThem(false),
+      // The server hands back the post with the new comment on it, so the
+      // suggestion shows without waiting for the next 8s feed poll.
+      onPosted: updated => { if(onPatch && updated) onPatch(updated); setShowComments(true); },
+    }) : null
   );
 }
 
@@ -10323,7 +10490,7 @@ function threadComments(comments){
   return roots;
 }
 
-function CommentThread({ node, profile, focusCommentId, focusRef, onReply, onOpenProfile, onReportComment, isReply }){
+function CommentThread({ node, profile, focusCommentId, focusRef, closetById, onReply, onOpenProfile, onReportComment, isReply }){
   const c = node.comment;
   const isFocus = focusCommentId != null && c.id != null && String(c.id) === String(focusCommentId);
   // Per-comment reporting. Guideline 1.2 wants the report control on the
@@ -10344,6 +10511,24 @@ function CommentThread({ node, profile, focusCommentId, focusRef, onReply, onOpe
       className: "comment-item" + (isReply ? " is-reply" : "") + (isFocus ? " is-focus" : ""),
       ref: isFocus ? focusRef : null,
     },
+      (() => {
+        const ids = c.outfitItemIds || [];
+        if(!ids.length) return null;
+        // An id that no longer resolves has been made private again or
+        // deleted. Dropping it silently is the point: a suggestion must
+        // never outlive the consent that made the piece visible.
+        const pieces = ids.map(id => (closetById || {})[id]).filter(Boolean);
+        if(!pieces.length) return null;
+        return e("div", { className:"suggestion" },
+          e("div", { className:"suggestion-note" }, "Styled for you"),
+          e("div", { className:"suggestion-row" },
+            pieces.map(it => it.photo
+              ? e("img", { key:it.id, src:it.photo, alt:it.description || "", title:it.description || "" })
+              : e("div", { key:it.id, className:"outfit-piece-blank", style:{ width:44, height:44, borderRadius:8 } }, Icon("shirt"))
+            )
+          )
+        );
+      })(),
       e("div", { className:"comment-row" },
         (onOpenProfile && c.authorId && (!profile || c.authorId !== profile.visitorId))
           ? e("button", { className:"btn-text", style:{ padding:0, fontWeight:600, fontSize:13 },
@@ -10368,7 +10553,7 @@ function CommentThread({ node, profile, focusCommentId, focusRef, onReply, onOpe
     ),
     node.replies.map(child => e(CommentThread, {
       key: child.comment.id != null ? ("c"+child.comment.id) : ("i"+child.index),
-      node: child, profile, focusCommentId, focusRef, onReply, onOpenProfile, onReportComment, isReply: true,
+      node: child, profile, focusCommentId, focusRef, closetById, onReply, onOpenProfile, onReportComment, isReply: true,
     }))
   );
 }
@@ -12530,7 +12715,7 @@ function App(){
     }) : null,
     upgradeNotice ? e("div", { className:"toast", role:"status", onClick:()=>setUpgradeNotice(null) },
       upgradeNotice === "done"
-        ? (isPremium ? "You're Premium — welcome. The AI Stylist and your full closet are unlocked." : "Payment received — Premium switches on within a few seconds. Tap to dismiss.")
+        ? (isPremium ? "You're Premium — welcome. Lorey and your full closet are unlocked." : "Payment received — Premium switches on within a few seconds. Tap to dismiss.")
         : "Checkout cancelled — nothing was charged.") : null
   );
 }

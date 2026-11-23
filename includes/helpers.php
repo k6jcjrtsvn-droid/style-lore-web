@@ -871,6 +871,25 @@ function ensure_comment_threads_schema(PDO $pdo): void {
     } catch (Throwable $e) { error_log('ensure_comment_threads_schema: ' . $e->getMessage()); }
 }
 
+/* Outfit suggestions ride on comments rather than on a table of their own.
+ * A suggestion IS a comment -- it threads, it notifies, it can be reported
+ * and hidden by the same moderation path, and an old client that does not
+ * know about the column still renders the words. The column holds the post
+ * author's OWN closet item ids (client_id), comma separated, validated at
+ * write time in api/post_comments.php. */
+function ensure_comment_outfit_schema(PDO $pdo): void {
+    static $done = false; if ($done) return; $done = true;
+    try {
+        $pdo->exec('ALTER TABLE comments ADD COLUMN IF NOT EXISTS outfit_item_ids VARCHAR(400) NULL');
+    } catch (Throwable $e) { error_log('ensure_comment_outfit_schema: ' . $e->getMessage()); }
+}
+
+/** The ids in a suggestion, as an array. Stored comma separated. */
+function outfit_ids_to_array(?string $raw): array {
+    if ($raw === null || trim($raw) === '') return [];
+    return array_values(array_filter(array_map('trim', explode(',', $raw)), fn($x) => $x !== ''));
+}
+
 function ensure_closet_tips_table(PDO $pdo): void {
     static $done = false; if ($done) return; $done = true;
     try {
@@ -1216,7 +1235,7 @@ function post_to_public(PDO $pdo, array $row, ?string $viewerId = null): array {
     $commentBlockSql = blocked_filter_sql($blocked, 'author_id');
     try {
         $commentsStmt = $pdo->prepare(
-            'SELECT id, parent_id, author_id, author_name, text, created_at FROM comments
+            'SELECT id, parent_id, author_id, author_name, text, created_at, outfit_item_ids FROM comments
              WHERE post_id = ? AND hidden = 0' . $commentBlockSql . ' ORDER BY id ASC'
         );
         $commentsStmt->execute(array_merge([$row['id']], $blocked));
@@ -1237,6 +1256,9 @@ function post_to_public(PDO $pdo, array $row, ?string $viewerId = null): array {
             'authorName' => display_name($pdo, $c['author_id'] ?? null, (string)$c['author_name']),
             'text' => $c['text'],
             'createdAt' => (int)$c['created_at'],
+            // Absent on the fallback select and on every comment written
+            // before this existed, so the client must treat [] as normal.
+            'outfitItemIds' => outfit_ids_to_array($c['outfit_item_ids'] ?? null),
         ];
     }, $commentRows);
 

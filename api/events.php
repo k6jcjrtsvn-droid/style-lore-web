@@ -34,6 +34,9 @@ const EVENT_NAMES = [
     // Where people leave for a store, and whether a signed-out visitor
     // getting into the feed is worth the change that let them.
     'store_badge_tap', 'community_guest_view',
+    // Does anyone actually style anybody else? The whole bet of the
+    // "Style them" feature is that they will.
+    'outfit_suggestion_sent',
 ];
 
 $pdo = db();

@@ -9,6 +9,14 @@ $text = trim((string)($body['text'] ?? ''));
 // Replying to a comment rather than to the post itself. 0/absent = a new
 // top-level comment, which is what every client sent before threading.
 $parentId = isset($body['parentId']) ? (int)$body['parentId'] : 0;
+// An outfit suggestion: closet item ids picked from the POST AUTHOR's own
+// public closet. Optional, and validated below -- never trusted as sent.
+$outfitIds = $body['outfitItemIds'] ?? null;
+if (!is_array($outfitIds)) $outfitIds = [];
+$outfitIds = array_values(array_unique(array_filter(array_map(
+    fn($x) => mb_substr(trim((string)$x), 0, 64), $outfitIds
+), fn($x) => $x !== '')));
+if (count($outfitIds) > 4) $outfitIds = array_slice($outfitIds, 0, 4);
 
 if (!$visitorId || !$text) {
     error_response('Missing visitorId or text.', 400);
@@ -16,6 +24,7 @@ if (!$visitorId || !$text) {
 
 $pdo = db();
 ensure_comment_threads_schema($pdo);
+ensure_comment_outfit_schema($pdo);
 ensure_block_schema($pdo);
 // Ownership check — only a logged-in account can comment, and the name
 // shown is the one on their profile, not whatever the client sent.
@@ -61,10 +70,45 @@ if ($parentId > 0) {
 }
 $storedParentId = $parentRow ? (int)$parentRow['id'] : null;
 
+/* THE SECURITY BOUNDARY for outfit suggestions.
+ *
+ * You may only suggest pieces that the post's author has ALREADY made
+ * public. Every id is checked against that author's own closet, public and
+ * not deleted -- so this exposes nothing that /api/closet?ownerId= does not
+ * already hand out, and it is impossible to point a suggestion at somebody
+ * else's wardrobe, at a hidden item, or at a deleted one.
+ *
+ * A post with no author id (older rows) can never carry a suggestion,
+ * because there is no closet to validate against.
+ *
+ * Failing validation drops the IDS, not the comment: someone who typed a
+ * sentence still gets their sentence. */
+$postAuthorId = (string)($post['author_id'] ?? '');
+if ($outfitIds && $postAuthorId !== '') {
+    try {
+        $place = implode(',', array_fill(0, count($outfitIds), '?'));
+        $own = $pdo->prepare(
+            "SELECT client_id FROM closet_items
+              WHERE account_id = ? AND visibility = 'public' AND deleted_at IS NULL
+                AND client_id IN ($place)"
+        );
+        $own->execute(array_merge([$postAuthorId], $outfitIds));
+        $allowed = array_column($own->fetchAll(), 'client_id');
+        // Keep the author's chosen order, drop anything that did not check out.
+        $outfitIds = array_values(array_filter($outfitIds, fn($x) => in_array($x, $allowed, true)));
+    } catch (Throwable $e) {
+        error_log('outfit suggestion validation: ' . $e->getMessage());
+        $outfitIds = [];
+    }
+} else {
+    $outfitIds = [];
+}
+$outfitCsv = $outfitIds ? implode(',', $outfitIds) : null;
+
 $newCommentId = null;
 try {
-    $ins = $pdo->prepare('INSERT INTO comments (post_id, parent_id, author_id, author_name, text, created_at) VALUES (?, ?, ?, ?, ?, ?)');
-    $ins->execute([$postId, $storedParentId, $visitorId, $authorName, mb_substr($text, 0, 180), current_time_ms()]);
+    $ins = $pdo->prepare('INSERT INTO comments (post_id, parent_id, author_id, author_name, text, created_at, outfit_item_ids) VALUES (?, ?, ?, ?, ?, ?, ?)');
+    $ins->execute([$postId, $storedParentId, $visitorId, $authorName, mb_substr($text, 0, 180), current_time_ms(), $outfitCsv]);
     $newCommentId = (int)$pdo->lastInsertId();
 } catch (PDOException $e) {
     // comments.parent_id / author_id missing (ensure_comment_threads_schema
