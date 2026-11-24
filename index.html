@@ -923,6 +923,7 @@
   .lorey-mic.is-on{ background:var(--accent); border-color:var(--accent); color:#fff;
     animation:lorey-listen 1.3s ease-in-out infinite; }
   .lorey-mic[disabled]{ opacity:.45; cursor:default; }
+  .lorey-mic.is-busy{ opacity:1; }
   .lorey-mic:focus-visible{ outline:2px solid var(--accent); outline-offset:2px; }
   @keyframes lorey-listen{ 0%,100%{ box-shadow:0 0 0 0 rgba(185,134,122,.55); }
                            50%{ box-shadow:0 0 0 7px rgba(185,134,122,0); } }
@@ -933,6 +934,7 @@
   .lorey-speaker .ico{ width:14px; height:14px; flex:0 0 auto; }
   .lorey-speaker.is-off{ opacity:.6; }
   .lorey-speaker:focus-visible{ outline:2px solid var(--accent); outline-offset:2px; }
+  .lorey-controls{ display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
   .suggestion-worn{ display:flex; gap:12px; align-items:center; }
   .suggestion-worn .suggestion-row{ flex:1; min-width:0; }
   .fig-card{ display:flex; gap:14px; align-items:center; }
@@ -3175,11 +3177,94 @@ const LoreyVoice = (function(){
     });
   }
 
-  /* ---- listening ---- */
+  /* ---- listening ----
+
+     Two ways in, and which one a device gets is not a preference, it is
+     what the browser has. Chrome recognises speech itself, on the device,
+     for free. Apple does not implement it at all, and on iOS every
+     browser is WebKit underneath, so Safari, Chrome and Firefox on an
+     iPhone are equally deaf. Those record a short clip and post it to
+     api/lorey_listen.php, which answers 404 until a key is configured —
+     so the button appears exactly where it can actually work. */
   function Recognition(){
     return window.SpeechRecognition || window.webkitSpeechRecognition || null;
   }
+  function canRecord(){
+    return !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia && window.MediaRecorder);
+  }
+  let serverEars = null;                 // null = not asked yet
+  function serverListen(){
+    if(serverEars !== null) return Promise.resolve(serverEars);
+    let cached = null;
+    try{ cached = sessionStorage.getItem("lore_lorey_server_ears"); }catch(err){}
+    if(cached === "1" || cached === "0"){ serverEars = cached === "1"; return Promise.resolve(serverEars); }
+    return fetch("api/lorey_listen.php?probe=1", { cache:"no-store" })
+      .then(r => r.ok ? r.json() : null)
+      .then(d => {
+        serverEars = !!(d && d.ok);
+        try{ sessionStorage.setItem("lore_lorey_server_ears", serverEars ? "1" : "0"); }catch(err){}
+        return serverEars;
+      })
+      .catch(() => { serverEars = false; return false; });
+  }
+  /* True when the browser can do it here and now. The server route is
+     asked about separately because it needs a round trip. */
   function canListen(){ return !!Recognition(); }
+  function mayListen(){ return !!Recognition() || canRecord(); }
+
+  /* Record, post, get words back. Returns the same handle shape as
+     listen() so the button does not care which route it got. */
+  function listenViaServer(handlers, auth){
+    if(!canRecord()){ if(handlers.onError) handlers.onError("unsupported"); return null; }
+    let rec = null, stream = null, chunks = [], stopped = false;
+    const shut = () => { if(stream) stream.getTracks().forEach(t => t.stop()); stream = null; };
+    const handle = {
+      stop(){ if(rec && rec.state === "recording"){ try{ rec.stop(); }catch(err){} } else { stopped = true; } },
+      abort(){ stopped = true; if(rec && rec.state === "recording"){ try{ rec.stop(); }catch(err){} } shut();
+               if(handlers.onEnd) handlers.onEnd(""); },
+    };
+    navigator.mediaDevices.getUserMedia({ audio:true }).then(st => {
+      stream = st;
+      if(stopped){ shut(); if(handlers.onEnd) handlers.onEnd(""); return; }
+      // Let the browser pick the container it actually supports: Safari
+      // gives mp4, Chrome gives webm, and both are fine on the far end.
+      try{ rec = new MediaRecorder(st); }catch(err){ rec = null; }
+      if(!rec){ shut(); if(handlers.onError) handlers.onError("unsupported");
+                if(handlers.onEnd) handlers.onEnd(""); return; }
+      rec.ondataavailable = ev => { if(ev.data && ev.data.size) chunks.push(ev.data); };
+      rec.onstop = () => {
+        shut();
+        const blob = new Blob(chunks, { type: (rec.mimeType || "audio/webm") });
+        chunks = [];
+        if(blob.size < 1024){ if(handlers.onEnd) handlers.onEnd(""); return; }
+        if(handlers.onThinking) handlers.onThinking(true);
+        fetch("api/lorey_listen.php?visitorId=" + encodeURIComponent(auth.visitorId || "")
+              + "&authToken=" + encodeURIComponent(auth.authToken || ""), {
+          method:"POST", headers:{ "Content-Type": blob.type }, body: blob
+        })
+        .then(r => r.json().catch(() => null).then(d => ({ ok:r.ok, d:d })))
+        .then(res => {
+          if(handlers.onThinking) handlers.onThinking(false);
+          const said = res.ok && res.d && res.d.text ? String(res.d.text) : "";
+          if(!said && handlers.onError) handlers.onError((res.d && res.d.code) || "empty");
+          if(said && handlers.onText) handlers.onText(said);
+          if(handlers.onEnd) handlers.onEnd(said);
+        })
+        .catch(() => {
+          if(handlers.onThinking) handlers.onThinking(false);
+          if(handlers.onError) handlers.onError("network");
+          if(handlers.onEnd) handlers.onEnd("");
+        });
+      };
+      rec.start();
+      if(stopped){ try{ rec.stop(); }catch(err){} }
+    })
+    .catch(() => {
+      if(handlers.onError) handlers.onError("not-allowed");
+      if(handlers.onEnd) handlers.onEnd("");
+    });
+    return handle;
+  }
 
   function listen(handlers){
     const SR = Recognition();
@@ -3208,7 +3293,9 @@ const LoreyVoice = (function(){
   }
 
   return {
-    can: can, canListen: canListen, unlock: unlock,
+    can: can, canListen: canListen, mayListen: mayListen,
+    canRecord: canRecord, serverListen: serverListen, listenViaServer: listenViaServer,
+    unlock: unlock,
     muted: muted, setMuted: setMuted,
     speak: speak, stop: stop,
     live: () => speaking,
@@ -3415,17 +3502,19 @@ function LoreyStage({ size, speaking, thinking, listening, onTap, label }){
    not. The mic is open for exactly as long as a finger is on the button,
    which is the only arrangement that is honest to explain and the only
    one worth defending to a store reviewer. */
-function LoreyMic({ onText, onDone, onListening, disabled }){
+function LoreyMic({ onText, onDone, onListening, disabled, idleLabel, auth }){
   const rec = useRef(null);
   const [on, setOn] = useState(false);
+  const [busy, setBusy] = useState(false);
   const [denied, setDenied] = useState(false);
 
   const start = () => {
-    if(on || disabled) return;
+    if(on || busy || disabled) return;
     LoreyVoice.unlock();
     LoreyVoice.stop();            // she stops talking the moment you do
-    const r = LoreyVoice.listen({
+    const handlers = {
       onText: t => { if(onText) onText(t); },
+      onThinking: setBusy,
       onError: code => {
         if(code === "not-allowed" || code === "service-not-allowed") setDenied(true);
       },
@@ -3434,7 +3523,12 @@ function LoreyMic({ onText, onDone, onListening, disabled }){
         if(onListening) onListening(false);
         if(final && onDone) onDone(final);
       },
-    });
+    };
+    // Chrome hears you itself. An iPhone cannot, so it records and posts
+    // the clip instead — same button, same gesture, different plumbing.
+    const r = LoreyVoice.canListen()
+      ? LoreyVoice.listen(handlers)
+      : LoreyVoice.listenViaServer(handlers, auth || {});
     if(!r) return;
     rec.current = r; setOn(true);
     if(onListening) onListening(true);
@@ -3448,9 +3542,11 @@ function LoreyMic({ onText, onDone, onListening, disabled }){
 
   return e("button", {
     type:"button",
-    className:"lorey-mic" + (on ? " is-on" : ""),
-    disabled: !!disabled,
-    "aria-label": on ? "Listening — let go to send" : "Hold to talk to Lorey",
+    className:"lorey-mic" + (on ? " is-on" : "") + (busy ? " is-busy" : ""),
+    disabled: !!disabled || busy,
+    "aria-label": on ? "Listening — let go to send"
+                     : disabled ? (idleLabel || "Hold to talk to Lorey")
+                     : "Hold to talk to Lorey",
     "aria-pressed": on,
     title: denied ? "Your browser blocked the microphone" : "Hold to talk",
     onMouseDown: start, onMouseUp: end, onMouseLeave: end,
@@ -3461,7 +3557,8 @@ function LoreyMic({ onText, onDone, onListening, disabled }){
     onKeyUp: ev => { if(ev.key === " " || ev.key === "Enter"){ ev.preventDefault(); end(); } },
   },
     Icon("mic"),
-    e("span", null, on ? "Listening…" : denied ? "Mic blocked" : "Hold to talk")
+    e("span", null, on ? "Listening…" : busy ? "Getting that…"
+                       : denied ? "Mic blocked" : (idleLabel || "Hold to talk"))
   );
 }
 
@@ -10645,6 +10742,16 @@ function CheckerScreen({ blend, styleWordBlend, kibbeTypeName, topStyleWords, vi
   // mouth runs for as long as that answer takes to read rather than on a
   // fixed timer.
   const [loreySaying, setLoreySaying] = useState(null);
+  // Chrome knows straight away. A browser without speech recognition has
+  // to ask whether the server can hear for it, which is one request, once
+  // per session, cached either way.
+  const [canTalkToHer, setCanTalkToHer] = useState(() => LoreyVoice.canListen());
+  useEffect(() => {
+    if(LoreyVoice.canListen() || !LoreyVoice.canRecord()) return;
+    let gone = false;
+    LoreyVoice.serverListen().then(ok => { if(!gone && ok) setCanTalkToHer(true); });
+    return () => { gone = true; };
+  }, []);
   // Everything she says goes through one place, so there is no way to add
   // a line of dialogue later and forget to give it a voice.
   useEffect(() => { if(loreySaying) LoreyVoice.speak(loreySaying); }, [loreySaying]);
@@ -10959,7 +11066,23 @@ function CheckerScreen({ blend, styleWordBlend, kibbeTypeName, topStyleWords, vi
           // Said once, here, where she is introduced. Nowhere else — a
           // product that keeps re-explaining its own mascot's name sounds
           // unsure of it.
-          e("p", { className:"footnote", style:{ margin:0 } }, "Lorey (LOR-ee) is the Style-LORE stylist.")
+          e("p", { className:"footnote", style:{ margin:"0 0 8px" } }, "Lorey (LOR-ee) is the Style-LORE stylist."),
+          // Her voice and your microphone live next to her face, which is
+          // where someone looks for them. They used to sit inside the
+          // Premium ask row behind a photo, which is to say nowhere.
+          e("div", { className:"lorey-controls" },
+            e(LoreySpeaker, null),
+            canTalkToHer
+              ? e(LoreyMic, {
+                  disabled: aiAskBusy || !isPremium || !photoBlob || !aiResult,
+                  idleLabel: !isPremium ? "Premium" : (!photoBlob || !aiResult) ? "Add a photo first" : "Hold to talk",
+                  auth: { visitorId: visitorId, authToken: authToken },
+                  onListening: setLoreyListening,
+                  onText: setAiAskDraft,
+                  onDone: said => { setAiAskDraft(said); askStylist(said); },
+                })
+              : null
+          )
         )
       ),
       e("p", { style:{ fontSize:13.5, color:"var(--ink-soft)", marginBottom:12 } },
@@ -11061,17 +11184,6 @@ function CheckerScreen({ blend, styleWordBlend, kibbeTypeName, topStyleWords, vi
                 ),
                 e("div", { style:{ display:"flex", alignItems:"center", gap:10, marginTop:8, flexWrap:"wrap" } },
                   e("button", { className:"btn btn-ghost btn-sm", disabled: aiAskBusy || !aiAskDraft.trim(), onClick: () => askStylist() }, aiAskBusy ? "Asking…" : "Ask"),
-                  // Hold it, say it, let go. The transcript lands in the box
-                  // as you speak so you can see she heard you right.
-                  LoreyVoice.canListen()
-                    ? e(LoreyMic, {
-                        disabled: aiAskBusy || !photoBlob || !aiResult,
-                        onListening: setLoreyListening,
-                        onText: setAiAskDraft,
-                        onDone: said => { setAiAskDraft(said); askStylist(said); },
-                      })
-                    : null,
-                  e(LoreySpeaker, null)
                 ),
                 e("div", { className:"footnote", style:{ marginTop:6 } },
                   LoreyVoice.canListen()

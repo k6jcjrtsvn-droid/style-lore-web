@@ -78,6 +78,39 @@ define('CRON_KEY', '');
 define('ANTHROPIC_API_KEY', '');
 define('ANTHROPIC_MODEL', 'claude-sonnet-5');
 
+// ---------------------------------------------------------------------
+// LOREY'S EARS — turning speech into text for browsers that cannot.
+//
+// Chrome recognises speech itself, on the device, for free, and needs
+// nothing here. Apple does not implement it at all, and on iOS every
+// browser is WebKit underneath, so on an iPhone there is no speech
+// recognition in the browser whatsoever. For those, api/lorey_listen.php
+// takes a short recording and transcribes it server-side.
+//
+// Leave this blank and that endpoint answers 404 to the client's probe,
+// which is exactly how the app decides whether to offer hold-to-talk on
+// a device that cannot do it locally. Nothing breaks, the button simply
+// does not appear there, and typing works as it always has. Fill it in
+// and every iPhone gets the microphone on the next page load — no app
+// release, no store review.
+//
+// This is an ElevenLabs key (Scribe / speech-to-text). It is billed per
+// second of audio, so api/lorey_listen.php is Premium-only and rate
+// limited, and the clip is capped at about twenty seconds.
+define('LOREY_STT_KEY', '');
+
+// ---------------------------------------------------------------------
+// LOREY'S VOICE — optional, and not wired to a provider yet.
+//
+// She speaks today using the synthesiser built into the device: free,
+// offline, nothing to leak, and it sounds like one. api/lorey_voice.php
+// does not exist yet; when it does, the client already knows to look for
+// it (it probes once per session and caches the answer), so a real voice
+// becomes a server deployment rather than an app update. That path also
+// gives much better lip-sync, because her jaw can run on the actual
+// waveform instead of an envelope.
+define('LOREY_TTS_KEY', '');
+
 // The most this month's AI calls may cost US, in dollars, before the AI
 // features start refusing politely. 0 removes the ceiling entirely.
 //
