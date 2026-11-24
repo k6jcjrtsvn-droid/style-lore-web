@@ -1968,33 +1968,78 @@ const BROW_SHAPES = [ {id:"b1",name:"Straight"}, {id:"b2",name:"Arched"}, {id:"b
 const BODY_SLIDERS = [
   { id:"height",    name:"Height" },
   { id:"shoulders", name:"Shoulders" },
+  { id:"chest",     name:"Chest" },
   { id:"torso",     name:"Torso" },
   { id:"waist",     name:"Waist" },
   { id:"hips",      name:"Hips" },
   { id:"legs",      name:"Legs" },
+  { id:"knees",     name:"Knee height" },
   { id:"arms",      name:"Arms" },
+  { id:"hands",     name:"Hands" },
+  { id:"feet",      name:"Feet" },
+  { id:"neck",      name:"Neck" },
 ];
+
+/* The face gets the same treatment as the body: every feature is a
+   number the person can move, not a pick from a short list. The shape
+   lists stay for things that are genuinely different shapes rather than
+   more or less of one thing. */
+const FACE_SLIDERS = [
+  { id:"headSize",   name:"Head size" },
+  { id:"forehead",   name:"Forehead" },
+  { id:"cheeks",     name:"Cheekbones" },
+  { id:"jaw",        name:"Jaw width" },
+  { id:"chin",       name:"Chin length" },
+  { id:"eyeSize",    name:"Eye size" },
+  { id:"eyeSpace",   name:"Eye spacing" },
+  { id:"eyeTilt",    name:"Eye tilt" },
+  { id:"browThick",  name:"Brow weight" },
+  { id:"browHeight", name:"Brow height" },
+  { id:"noseWidth",  name:"Nose width" },
+  { id:"noseLength", name:"Nose length" },
+  { id:"mouthWidth", name:"Mouth width" },
+  { id:"lips",       name:"Lip fullness" },
+  { id:"ears",       name:"Ears" },
+];
+
+const FACE_DEFAULTS = {
+  headSize:.5, forehead:.5, cheeks:.5, jaw:.5, chin:.5,
+  eyeSize:.5, eyeSpace:.5, eyeTilt:.5, browThick:.5, browHeight:.5,
+  noseWidth:.5, noseLength:.5, mouthWidth:.5, lips:.5, ears:.5,
+};
 
 /* Kibbe families give the starting shape. The person can change every
    one of these afterwards -- this is a first guess from the quiz they
    already took, not a verdict about their body. */
 const FAMILY_BODY = {
-  dramatic: { height:.88, shoulders:.68, torso:.42, waist:.34, hips:.34, legs:.74, arms:.62 },
-  natural:  { height:.70, shoulders:.82, torso:.52, waist:.52, hips:.48, legs:.56, arms:.58 },
-  classic:  { height:.52, shoulders:.50, torso:.50, waist:.46, hips:.50, legs:.50, arms:.50 },
-  gamine:   { height:.26, shoulders:.44, torso:.38, waist:.40, hips:.38, legs:.34, arms:.40 },
-  romantic: { height:.34, shoulders:.32, torso:.58, waist:.62, hips:.70, legs:.36, arms:.44 },
+  dramatic: { height:.88, shoulders:.68, chest:.40, torso:.42, waist:.34, hips:.34, legs:.74, knees:.52, arms:.62, hands:.52, feet:.52, neck:.66 },
+  natural:  { height:.70, shoulders:.82, chest:.52, torso:.52, waist:.52, hips:.48, legs:.56, knees:.50, arms:.58, hands:.60, feet:.60, neck:.44 },
+  classic:  { height:.52, shoulders:.50, chest:.50, torso:.50, waist:.46, hips:.50, legs:.50, knees:.50, arms:.50, hands:.50, feet:.50, neck:.50 },
+  gamine:   { height:.26, shoulders:.44, chest:.40, torso:.38, waist:.40, hips:.38, legs:.34, knees:.46, arms:.40, hands:.40, feet:.40, neck:.42 },
+  romantic: { height:.34, shoulders:.32, chest:.66, torso:.58, waist:.62, hips:.70, legs:.36, knees:.48, arms:.44, hands:.42, feet:.42, neck:.38 },
+};
+
+/* The face leans with the Kibbe family too, so a figure arrives looking
+   like the result the person already got rather than like a stranger.
+   All of it is still theirs to move afterwards. */
+const FAMILY_FACE = {
+  dramatic: { headSize:.40, forehead:.56, cheeks:.72, jaw:.60, chin:.66, eyeSize:.44, eyeSpace:.44, eyeTilt:.62, browThick:.56, browHeight:.44, noseWidth:.42, noseLength:.62, mouthWidth:.54, lips:.40, ears:.48 },
+  natural:  { headSize:.56, forehead:.50, cheeks:.60, jaw:.72, chin:.46, eyeSize:.50, eyeSpace:.60, eyeTilt:.48, browThick:.62, browHeight:.52, noseWidth:.62, noseLength:.50, mouthWidth:.62, lips:.48, ears:.56 },
+  classic:  { headSize:.50, forehead:.50, cheeks:.50, jaw:.50, chin:.50, eyeSize:.50, eyeSpace:.50, eyeTilt:.50, browThick:.50, browHeight:.50, noseWidth:.50, noseLength:.50, mouthWidth:.50, lips:.50, ears:.50 },
+  gamine:   { headSize:.62, forehead:.56, cheeks:.56, jaw:.40, chin:.36, eyeSize:.64, eyeSpace:.46, eyeTilt:.58, browThick:.44, browHeight:.56, noseWidth:.42, noseLength:.38, mouthWidth:.46, lips:.46, ears:.44 },
+  romantic: { headSize:.54, forehead:.46, cheeks:.40, jaw:.34, chin:.36, eyeSize:.62, eyeSpace:.52, eyeTilt:.46, browThick:.42, browHeight:.56, noseWidth:.44, noseLength:.42, mouthWidth:.50, lips:.74, ears:.46 },
 };
 
 const FIGURE_FAMILIES = Object.fromEntries(KIBBE_TYPES.map(t => [t.id, t.family]));
 
 function defaultFigureFor(kibbeTypeId, families){
   const fam = (families || FIGURE_FAMILIES)[kibbeTypeId] || "classic";
-  const body = Object.assign({}, FAMILY_BODY[fam] || FAMILY_BODY.classic);
   return {
     skin: "s3", hair: "short", hairColor: "h2", eyes: "e1",
     nose: "n1", mouth: "m1", brow: "b1",
-    body: body,
+    body: Object.assign({}, FAMILY_BODY[fam] || FAMILY_BODY.classic),
+    face: Object.assign({}, FACE_DEFAULTS, FAMILY_FACE[fam] || FAMILY_FACE.classic),
+    wear: {},
   };
 }
 
@@ -2014,7 +2059,26 @@ function normalizeFigure(raw, kibbeTypeId, families){
   if(raw.body && typeof raw.body === "object"){
     BODY_SLIDERS.forEach(s => { const n = num(raw.body[s.id]); if(n !== null) body[s.id] = n; });
   }
+  const face = Object.assign({}, base.face);
+  if(raw.face && typeof raw.face === "object"){
+    FACE_SLIDERS.forEach(s => { const n = num(raw.face[s.id]); if(n !== null) face[s.id] = n; });
+  }
+  // Drawn clothing the person picked, as opposed to photographed pieces
+  // out of their own closet. Both can be worn; a real photo wins the slot.
+  const wear = {};
+  if(raw.wear && typeof raw.wear === "object"){
+    WEAR_SLOTS.forEach(slot => {
+      const chosen = raw.wear[slot.id];
+      if(chosen && typeof chosen === "object"){
+        const style = (slot.styles.find(x => x.id === chosen.style) || {}).id;
+        const col = (GARMENT_COLORS.find(c => c.id === chosen.color) || {}).id;
+        if(style) wear[slot.id] = { style: style, color: col || GARMENT_COLORS[0].id };
+      }
+    });
+  }
   return {
+    face: face,
+    wear: wear,
     skin:      pick(SKIN_TONES,   raw.skin,      base.skin),
     hair:      pick(HAIR_STYLES,  raw.hair,      base.hair),
     hairColor: pick(HAIR_COLORS,  raw.hairColor, base.hairColor),
@@ -2026,6 +2090,50 @@ function normalizeFigure(raw, kibbeTypeId, families){
   };
 }
 
+
+/* ---- the drawn wardrobe ---------------------------------------------
+   Separate from the closet. A closet piece is a photograph of something
+   the person owns; these are drawn clothes they can put on the figure
+   for the fun of it. Both can be worn at once -- a real photo always
+   wins the slot it occupies, because a picture of your own jacket beats
+   a drawing of a jacket.
+   -------------------------------------------------------------------- */
+const GARMENT_COLORS = [
+  { id:"c1",  hex:"#2A2622" }, { id:"c2",  hex:"#4A4F5C" }, { id:"c3",  hex:"#3E5C76" },
+  { id:"c4",  hex:"#6E8CA0" }, { id:"c5",  hex:"#7D9D7A" }, { id:"c6",  hex:"#C2B49A" },
+  { id:"c7",  hex:"#E8DED1" }, { id:"c8",  hex:"#FFFFFF" }, { id:"c9",  hex:"#B9867A" },
+  { id:"c10", hex:"#A14B5B" }, { id:"c11", hex:"#8C5A2B" }, { id:"c12", hex:"#D4A24C" },
+  { id:"c13", hex:"#6B4C8C" }, { id:"c14", hex:"#2F6B6B" },
+];
+
+const WEAR_SLOTS = [
+  { id:"top", name:"Tops", styles:[
+    { id:"tee", name:"Tee" }, { id:"blouse", name:"Blouse" }, { id:"sweater", name:"Sweater" },
+    { id:"tank", name:"Tank" }, { id:"shirt", name:"Button-up" }, { id:"crop", name:"Crop" } ] },
+  { id:"bottom", name:"Bottoms", styles:[
+    { id:"jeans", name:"Jeans" }, { id:"trousers", name:"Trousers" }, { id:"skirt", name:"Skirt" },
+    { id:"maxi", name:"Long skirt" }, { id:"shorts", name:"Shorts" }, { id:"leggings", name:"Leggings" } ] },
+  { id:"dress", name:"Dresses", styles:[
+    { id:"shift", name:"Shift" }, { id:"wrap", name:"Wrap" }, { id:"aline", name:"A-line" }, { id:"gown", name:"Gown" } ] },
+  { id:"outerwear", name:"Jackets", styles:[
+    { id:"blazer", name:"Blazer" }, { id:"coat", name:"Coat" }, { id:"bomber", name:"Bomber" },
+    { id:"cardigan", name:"Cardigan" }, { id:"trench", name:"Trench" } ] },
+  { id:"shoes", name:"Shoes", styles:[
+    { id:"flats", name:"Flats" }, { id:"heels", name:"Heels" }, { id:"boots", name:"Boots" },
+    { id:"sneakers", name:"Sneakers" }, { id:"sandals", name:"Sandals" }, { id:"loafers", name:"Loafers" } ] },
+  { id:"glasses", name:"Glasses", styles:[
+    { id:"round", name:"Round" }, { id:"square", name:"Square" }, { id:"cat", name:"Cat-eye" },
+    { id:"aviator", name:"Aviator" }, { id:"readers", name:"Readers" } ] },
+  { id:"hat", name:"Hats", styles:[
+    { id:"beanie", name:"Beanie" }, { id:"beret", name:"Beret" }, { id:"cap", name:"Cap" }, { id:"brim", name:"Wide brim" } ] },
+  { id:"gloves", name:"Gloves", styles:[
+    { id:"short", name:"Short" }, { id:"long", name:"Opera" } ] },
+  { id:"earrings", name:"Earrings", styles:[
+    { id:"studs", name:"Studs" }, { id:"hoops", name:"Hoops" }, { id:"drops", name:"Drops" } ] },
+  { id:"lips", name:"Lipstick", styles:[
+    { id:"nude", name:"Nude" }, { id:"rose", name:"Rose" }, { id:"red", name:"Red" },
+    { id:"berry", name:"Berry" }, { id:"gloss", name:"Gloss" } ] },
+];
 
 /* ---- Lorey -----------------------------------------------------------
    The Style-LORE stylist, drawn with the same system as everyone else.
@@ -2047,14 +2155,15 @@ const LOREY_FIGURE = {
    the sliders so the garments always land on the body, whatever shape
    it is. Changing a slider moves the clothes with it.
    -------------------------------------------------------------------- */
-function figureGeometry(b){
+function figureGeometry(b, f){
   const lerp = (a, z, t) => a + (z - a) * t;
   const cx = 100;
+  const F = f || FACE_DEFAULTS;
 
   // A head this size puts the figure at roughly 7.5-8 heads tall, which
   // is what a fashion plate uses. The old 23-27 made it about 6 -- the
   // heroic/cartoon range, however carefully the rest is drawn.
-  const headR   = lerp(19, 22, 1 - b.height * .5);
+  const headR   = lerp(19, 22, 1 - b.height * .5) * lerp(.88, 1.14, F.headSize);
   const headCy  = 48;
   const chin    = headCy + headR * 1.30;
   const neckY   = chin + lerp(9, 15, b.height);
@@ -2064,23 +2173,28 @@ function figureGeometry(b){
   const waistY   = shoulderY + torsoLen;
   const hipY     = waistY + lerp(30, 46, 1 - b.legs * .4);
   const legLen   = lerp(132, 178, b.legs);
-  const kneeY    = hipY + legLen * .46;
+  const kneeFrac = lerp(.40, .54, b.knees == null ? .5 : b.knees);
+  const kneeY    = hipY + legLen * kneeFrac;
   const ankleY   = hipY + legLen;
 
   // Kept deliberately narrow: at the wide end of every slider the whole
   // figure still sits inside about 120 of the 200 units, so clothes have
   // somewhere to go and two figures fit side by side without colliding.
   const shoulderW = lerp(21, 37, b.shoulders);
+  const chestW    = lerp(14, 29, b.chest == null ? .5 : b.chest);
   const waistW    = lerp(12.5, 25, b.waist);
   const hipW      = lerp(17, 33, b.hips);
   const armW      = lerp(4.2, 7.6, b.arms);
   const armGap    = 2.2;                               // air between arm and ribcage
-  const neckW     = headR * lerp(.30, .40, b.shoulders);
+  const neckW     = headR * lerp(.26, .46, b.neck == null ? .5 : b.neck);
   const thighW    = Math.max(11, hipW * lerp(.66, .80, b.hips));
   const ankleW    = Math.max(6, thighW * .52);
+  const handR     = armW * lerp(.85, 1.55, b.hands == null ? .5 : b.hands);
+  const footL     = ankleW * lerp(1.5, 2.6, b.feet == null ? .5 : b.feet);
 
   return { cx, headR, headCy, chin, neckY, shoulderY, waistY, hipY, kneeY, ankleY,
-           shoulderW, waistW, hipW, armW, armGap, neckW, thighW, ankleW };
+           shoulderW, chestW, waistW, hipW, armW, armGap, neckW, thighW, ankleW,
+           handR, footL, face: F };
 }
 
 /* The body outline: shoulders -> waist -> hips as one closed path, so
@@ -2089,10 +2203,13 @@ function figureGeometry(b){
    slope, not a corner -- a flat top edge is what makes a figure read as
    a rectangle with a head on it. */
 function torsoPath(g){
-  const { cx, shoulderY, waistY, hipY, shoulderW, waistW, hipW, neckW } = g;
+  const { cx, shoulderY, waistY, hipY, shoulderW, chestW, waistW, hipW, neckW } = g;
   const shoulderDrop = 7;                       // how far the shoulder falls from neck to point
   const ribY = shoulderY + (waistY - shoulderY) * .42;
-  const ribW = waistW + (shoulderW - waistW) * .55;
+  // The ribcage/bust width is its own slider, not just a midpoint
+  // between shoulder and waist -- which is why "chest" did nothing until
+  // the test walked every slider and found two that moved no pixels.
+  const ribW = chestW == null ? waistW + (shoulderW - waistW) * .55 : chestW;
   return [
     "M", cx - neckW, shoulderY - 4,
     "C", cx - shoulderW * .62, shoulderY - 3, cx - shoulderW, shoulderY + 1, cx - shoulderW, shoulderY + shoulderDrop,
@@ -2163,7 +2280,7 @@ function topPath(g, long){
   const { cx, shoulderY, waistY, hipY, shoulderW, waistW, hipW, neckW } = g;
   const m = EASE;
   const ribY = shoulderY + (waistY - shoulderY) * .42;
-  const ribW = waistW + (shoulderW - waistW) * .55 + m;
+  const ribW = (g.chestW == null ? waistW + (shoulderW - waistW) * .55 : g.chestW) + m;
   const endY = long ? hipY + 6 : waistY + 10;
   const endW = (long ? hipW : waistW + 2) + m;
   const sh = shoulderW + m;
@@ -2205,7 +2322,7 @@ function dressPath(g){
   const { cx, shoulderY, waistY, hipY, kneeY, shoulderW, waistW, hipW, neckW } = g;
   const m = EASE;
   const ribY = shoulderY + (waistY - shoulderY) * .42;
-  const ribW = waistW + (shoulderW - waistW) * .55 + m;
+  const ribW = (g.chestW == null ? waistW + (shoulderW - waistW) * .55 : g.chestW) + m;
   const hemY = kneeY - 4;
   const hemW = hipW + m + 7;            // a little flare, not a bell
   const sh = shoulderW + m;
@@ -2233,7 +2350,7 @@ function coatPath(g, side){
   const hemY = hipY + (kneeY - hipY) * .52;
   const sh = shoulderW + m;
   const ribY = shoulderY + (waistY - shoulderY) * .42;
-  const ribW = waistW + (shoulderW - waistW) * .55 + m;
+  const ribW = (g.chestW == null ? waistW + (shoulderW - waistW) * .55 : g.chestW) + m;
   const hemOuter = cx + s * (hipW + m + 4);
   const lapelTop = cx + s * (neckW + 1);
   const lapelHem = cx + s * (hipW * .62);
@@ -2397,20 +2514,30 @@ function hairPaths(style, g){
    balloon with features painted on. */
 function headPath(g){
   const { cx, headCy, headR } = g;
+  const F = g.face || FACE_DEFAULTS;
+  const L = (a, z, t) => a + (z - a) * t;
   const r = headR;
+  // Every landmark on the skull is a slider now: how tall the forehead
+  // is, how wide the cheekbones sit, how square the jaw, how long the
+  // chin. Moving one moves the outline, not a decal on top of it.
+  const topW   = L(.66, .92, F.forehead);
+  const tmpW   = L(.88, 1.08, F.forehead);
+  const chkW   = L(.80, 1.08, F.cheeks);
+  const jawW   = L(.58, .96, F.jaw);
+  const chinL  = L(1.12, 1.50, F.chin);
   const top = headCy - r * 1.06;
   const temple = headCy - r * .40;
   const cheek = headCy + r * .34;
   const jaw = headCy + r * .86;
-  const chinY = headCy + r * 1.30;
+  const chinY = headCy + r * chinL;
   return [
     "M", cx, top,
-    "C", cx + r * .74, top, cx + r * 1.00, temple - r * .26, cx + r * 1.00, temple,
-    "C", cx + r * 1.00, cheek - r * .18, cx + r * .93, cheek, cx + r * .86, cheek + r * .10,
-    "C", cx + r * .78, jaw - r * .06, cx + r * .50, jaw + r * .26, cx, chinY,
-    "C", cx - r * .50, jaw + r * .26, cx - r * .78, jaw - r * .06, cx - r * .86, cheek + r * .10,
-    "C", cx - r * .93, cheek, cx - r * 1.00, cheek - r * .18, cx - r * 1.00, temple,
-    "C", cx - r * 1.00, temple - r * .26, cx - r * .74, top, cx, top,
+    "C", cx + r * topW, top, cx + r * tmpW, temple - r * .26, cx + r * tmpW, temple,
+    "C", cx + r * tmpW, cheek - r * .18, cx + r * chkW, cheek, cx + r * (chkW * .92), cheek + r * .10,
+    "C", cx + r * jawW, jaw - r * .06, cx + r * (jawW * .62), jaw + r * .26, cx, chinY,
+    "C", cx - r * (jawW * .62), jaw + r * .26, cx - r * jawW, jaw - r * .06, cx - r * (chkW * .92), cheek + r * .10,
+    "C", cx - r * chkW, cheek, cx - r * tmpW, cheek - r * .18, cx - r * tmpW, temple,
+    "C", cx - r * tmpW, temple - r * .26, cx - r * topW, top, cx, top,
     "Z",
   ].join(" ");
 }
@@ -2424,20 +2551,25 @@ function eyeShape(g, side){
   // An eye is about a fifth of the face's width, and the eye line sits
   // near the middle of the head -- not high on it, which is what made
   // these read as a doll's.
-  const ex = cx + s * headR * .355;
+  const F = g.face || FACE_DEFAULTS;
+  const L = (a, z, t) => a + (z - a) * t;
+  const ex = cx + s * headR * L(.30, .42, F.eyeSpace);
   const ey = headCy + headR * .10;
-  const w = headR * .235, h = headR * .125;
+  const scale = L(.78, 1.30, F.eyeSize);
+  const w = headR * .235 * scale, h = headR * .125 * scale;
+  const tilt = (F.eyeTilt - .5) * h * 1.6 * s;   // outer corner up or down
   return {
     ex: ex, ey: ey, w: w, h: h,
+    tilt: tilt,
     almond: [
-      "M", ex - w, ey,
-      "C", ex - w * .52, ey - h * 1.32, ex + w * .52, ey - h * 1.22, ex + w, ey - h * .12,
-      "C", ex + w * .54, ey + h * 1.16, ex - w * .54, ey + h * 1.20, ex - w, ey,
+      "M", ex - w, ey + (s > 0 ? 0 : tilt),
+      "C", ex - w * .52, ey - h * 1.32, ex + w * .52, ey - h * 1.22, ex + w, ey - h * .12 + (s > 0 ? tilt : 0),
+      "C", ex + w * .54, ey + h * 1.16, ex - w * .54, ey + h * 1.20, ex - w, ey + (s > 0 ? 0 : tilt),
       "Z",
     ].join(" "),
     lid: [
-      "M", ex - w, ey,
-      "C", ex - w * .52, ey - h * 1.40, ex + w * .52, ey - h * 1.30, ex + w, ey - h * .12,
+      "M", ex - w, ey + (s > 0 ? 0 : tilt),
+      "C", ex - w * .52, ey - h * 1.40, ex + w * .52, ey - h * 1.30, ex + w, ey - h * .12 + (s > 0 ? tilt : 0),
     ].join(" "),
   };
 }
@@ -2445,7 +2577,9 @@ function eyeShape(g, side){
 function nosePath(id, g){
   const { cx, headCy, headR } = g;
   const y = headCy + headR * .44;
-  const r = headR, w = r * .13, drop = r * .30;
+  const F = g.face || FACE_DEFAULTS;
+  const L = (a, z, t) => a + (z - a) * t;
+  const r = headR, w = r * .13 * L(.70, 1.45, F.noseWidth), drop = r * .30 * L(.70, 1.40, F.noseLength);
   switch(id){
     case "n2": return ["M", cx - w * .7, y - drop, "C", cx - w * 1.5, y - drop * .1, cx - w * 1.2, y + drop * .45, cx + w * .4, y + drop * .40].join(" ");
     case "n3": return ["M", cx - w * 1.3, y - drop, "C", cx - w * 2.2, y - drop * .1, cx - w * 1.7, y + drop * .5, cx + w * 1.3, y + drop * .45].join(" ");
@@ -2456,21 +2590,26 @@ function nosePath(id, g){
 
 function mouthPath(id, g){
   const { cx, headCy, headR } = g;
+  const F = g.face || FACE_DEFAULTS;
+  const L = (a, z, t) => a + (z - a) * t;
+  const mw = L(.74, 1.34, F.mouthWidth), mf = L(.68, 1.55, F.lips);
   const y = headCy + headR * .80;
   switch(id){
-    case "m2": return ["M", cx - 7, y, "C", cx - 3, y - 3.4, cx + 3, y - 3.4, cx + 7, y, "C", cx + 3, y + 4.4, cx - 3, y + 4.4, cx - 7, y, "Z"].join(" ");
-    case "m3": return ["M", cx - 9.5, y, "C", cx - 4, y - 2.4, cx + 4, y - 2.4, cx + 9.5, y, "C", cx + 4, y + 3, cx - 4, y + 3, cx - 9.5, y, "Z"].join(" ");
-    case "m4": return ["M", cx - 7.5, y - 1.5, "C", cx - 3, y + 4.5, cx + 3, y + 4.5, cx + 7.5, y - 1.5, "C", cx + 3, y + 1.5, cx - 3, y + 1.5, cx - 7.5, y - 1.5, "Z"].join(" ");
-    default:   return ["M", cx - 6.5, y, "C", cx - 2.5, y - 2.2, cx + 2.5, y - 2.2, cx + 6.5, y, "C", cx + 2.5, y + 2.8, cx - 2.5, y + 2.8, cx - 6.5, y, "Z"].join(" ");
+    case "m2": return ["M", cx - 7*mw, y, "C", cx - 3*mw, y - 3.4*mf, cx + 3*mw, y - 3.4*mf, cx + 7*mw, y, "C", cx + 3*mw, y + 4.4*mf, cx - 3*mw, y + 4.4*mf, cx - 7*mw, y, "Z"].join(" ");
+    case "m3": return ["M", cx - 9.5*mw, y, "C", cx - 4*mw, y - 2.4*mf, cx + 4*mw, y - 2.4*mf, cx + 9.5*mw, y, "C", cx + 4*mw, y + 3*mf, cx - 4*mw, y + 3*mf, cx - 9.5*mw, y, "Z"].join(" ");
+    case "m4": return ["M", cx - 7.5*mw, y - 1.5*mf, "C", cx - 3*mw, y + 4.5*mf, cx + 3*mw, y + 4.5*mf, cx + 7.5*mw, y - 1.5*mf, "C", cx + 3*mw, y + 1.5*mf, cx - 3*mw, y + 1.5*mf, cx - 7.5*mw, y - 1.5*mf, "Z"].join(" ");
+    default:   return ["M", cx - 6.5*mw, y, "C", cx - 2.5*mw, y - 2.2*mf, cx + 2.5*mw, y - 2.2*mf, cx + 6.5*mw, y, "C", cx + 2.5*mw, y + 2.8*mf, cx - 2.5*mw, y + 2.8*mf, cx - 6.5*mw, y, "Z"].join(" ");
   }
 }
 
 function browPath(id, g, side){
   const { cx, headCy, headR } = g;
   const s = side === "l" ? -1 : 1;
-  const ex = cx + s * headR * .355;
-  const y = headCy - headR * .20;
-  const w = headR * .27;
+  const F = g.face || FACE_DEFAULTS;
+  const L = (a, z, t) => a + (z - a) * t;
+  const ex = cx + s * headR * L(.30, .42, F.eyeSpace);
+  const y = headCy - headR * L(.10, .32, F.browHeight);
+  const w = headR * .27 * L(.84, 1.18, F.eyeSize);
   const u = headR * .06;                    // arch height, scaled to the head
   switch(id){
     case "b2": return ["M", ex - w, y + u * 1.1, "C", ex - w * .3, y - u * 1.5, ex + w * .4, y - u * 1.1, ex + w, y + u * .5].join(" ");
@@ -2509,7 +2648,16 @@ function renderFigure(h, opts){
   const skin = byId(SKIN_TONES, fig.skin);
   const hairCol = byId(HAIR_COLORS, fig.hairColor).hex;
   const eyeCol = byId(EYE_COLORS, fig.eyes).hex;
-  const g = figureGeometry(fig.body);
+  const g = figureGeometry(fig.body, fig.face);
+  const FA = g.face;
+  const L = (a, z, t) => a + (z - a) * t;
+  const wear = fig.wear || {};
+  const wearCol = slot => {
+    const w = wear[slot];
+    const c = w && GARMENT_COLORS.find(x => x.id === w.color);
+    return c ? c.hex : "#B9867A";
+  };
+  const wearStyle = slot => (wear[slot] || {}).style || null;
 
   const defs = [];
   const kids = [];
@@ -2591,6 +2739,21 @@ function renderFigure(h, opts){
   kids.push(limb("arm-r", armPath(g, "r")));
   kids.push(limb("leg-l", legPath(g, "l")));
   kids.push(limb("leg-r", legPath(g, "r")));
+  // Hands and feet. At this scale a hand is a shape, not five fingers --
+  // individual fingers would be under a pixel wide on a phone. The
+  // slider changes how big and blunt or long and fine they read.
+  [-1, 1].forEach(s => {
+    const wx = g.cx + s * (g.shoulderW + g.armGap + g.armW * .35);
+    const wy = g.hipY + 16;
+    kids.push(h("ellipse", { key:"hand" + s, cx:wx, cy:wy + g.handR * .85,
+      rx:g.handR * .72, ry:g.handR * 1.15, fill:limbFill, stroke:dark, strokeWidth:.5, strokeOpacity:.32 }));
+    const fx = g.cx + s * (g.ankleW * .55);
+    kids.push(h("path", { key:"foot" + s,
+      d:["M", fx - s * g.ankleW * .7, g.ankleY - 2, "L", fx + s * g.footL * .55, g.ankleY + 1,
+         "Q", fx + s * g.footL * .62, g.ankleY + 6, fx + s * g.footL * .40, g.ankleY + 7,
+         "L", fx - s * g.ankleW * .8, g.ankleY + 7, "Z"].join(" "),
+      fill:limbFill, stroke:dark, strokeWidth:.5, strokeOpacity:.32 }));
+  });
   // Knees and ankles: two faint creases are the difference between a leg
   // and a tapered tube.
   [-1, 1].forEach(s => {
@@ -2624,6 +2787,15 @@ function renderFigure(h, opts){
       rx:g.headR * .30, ry:g.headR * .16, fill:"#C06B5E", opacity:.07 }));
   });
 
+  // Ears, behind the hair so a cap hides them like real hair does.
+  [-1, 1].forEach(s => {
+    const er = g.headR * L(.16, .30, FA.ears);
+    kids.push(h("ellipse", { key:"ear" + s, cx:g.cx + s * g.headR * .99, cy:g.headCy + g.headR * .20,
+      rx:er * .62, ry:er, fill:mid, stroke:dark, strokeWidth:.5, strokeOpacity:.32 }));
+    kids.push(h("ellipse", { key:"earin" + s, cx:g.cx + s * g.headR * 1.00, cy:g.headCy + g.headR * .20,
+      rx:er * .30, ry:er * .52, fill:dark, opacity:.22 }));
+  });
+
   ["l", "r"].forEach(side => {
     const s = side === "l" ? -1 : 1;
     const E = eyeShape(g, side);
@@ -2649,7 +2821,8 @@ function renderFigure(h, opts){
       d:["M", E.ex - E.w * .86, E.ey - E.h * 1.55, "Q", E.ex, E.ey - E.h * 2.5, E.ex + E.w * .90, E.ey - E.h * 1.30].join(" "),
       fill:"none", stroke:dark, strokeWidth:.55, strokeOpacity:.35, strokeLinecap:"round" }));
     kids.push(h("path", { key:"brow" + side, d:browPath(fig.brow, g, side),
-      fill:"none", stroke:mix(hairCol, "#000000", .12), strokeWidth:g.headR * .058,
+      fill:"none", stroke:mix(hairCol, "#000000", .12),
+      strokeWidth:g.headR * L(.032, .095, FA.browThick),
       strokeOpacity:.88, strokeLinecap:"round" }));
   });
 
@@ -2685,25 +2858,25 @@ function renderFigure(h, opts){
   // --- clothes ------------------------------------------------------
   // Order is the order you put them on.
   const wide = Math.max(g.shoulderW, g.hipW) + halo + 8;
-  const wear = parts => { if(parts) parts.forEach(x => kids.push(x)); };
+  const putOn = parts => { if(parts) parts.forEach(x => kids.push(x)); };
   if(pieces.dress){
-    wear(garment("dress", pieces.dress, dressPath(g),
+    putOn(garment("dress", pieces.dress, dressPath(g),
       box(g.cx - wide, g.shoulderY - 6, g.cx + wide, g.kneeY)));
   } else {
-    if(pieces.bottom) wear(garment("bottom", pieces.bottom, bottomPath(g, true),
+    if(pieces.bottom) putOn(garment("bottom", pieces.bottom, bottomPath(g, true),
       box(g.cx - g.hipW - halo, g.waistY - 4, g.cx + g.hipW + halo, g.ankleY - 6)));
-    if(pieces.top) wear(garment("top", pieces.top, topPath(g, false),
+    if(pieces.top) putOn(garment("top", pieces.top, topPath(g, false),
       box(g.cx - g.shoulderW - halo, g.shoulderY - 6, g.cx + g.shoulderW + halo, g.waistY + 12)));
   }
   if(pieces.shoes){
     const sy = g.ankleY - 15, sy2 = g.ankleY + 10;
-    wear(garment("shoe-l", pieces.shoes, shoePath(g, "l"), box(g.cx - g.ankleW - 11, sy, g.cx, sy2)));
-    wear(garment("shoe-r", pieces.shoes, shoePath(g, "r"), box(g.cx, sy, g.cx + g.ankleW + 11, sy2)));
+    putOn(garment("shoe-l", pieces.shoes, shoePath(g, "l"), box(g.cx - g.ankleW - 11, sy, g.cx, sy2)));
+    putOn(garment("shoe-r", pieces.shoes, shoePath(g, "r"), box(g.cx, sy, g.cx + g.ankleW + 11, sy2)));
   }
   if(pieces.outerwear){
     const cw = g.hipW + halo + 7, cy2 = g.hipY + (g.kneeY - g.hipY) * .52;
-    wear(garment("coat-l", pieces.outerwear, coatPath(g, "l"), box(g.cx - cw, g.shoulderY - 6, g.cx, cy2)));
-    wear(garment("coat-r", pieces.outerwear, coatPath(g, "r"), box(g.cx, g.shoulderY - 6, g.cx + cw, cy2)));
+    putOn(garment("coat-l", pieces.outerwear, coatPath(g, "l"), box(g.cx - cw, g.shoulderY - 6, g.cx, cy2)));
+    putOn(garment("coat-r", pieces.outerwear, coatPath(g, "r"), box(g.cx, g.shoulderY - 6, g.cx + cw, cy2)));
   }
 
   // crop:"head" reuses the identical drawing as a round avatar, so a
@@ -2788,6 +2961,21 @@ const FIGURE_TABS = [
   { id:"body", name:"Body" },
 ];
 
+/* One slider row. Every feature of the figure is one of these, which is
+   the design: a person moves a thing, rather than picking the nearest of
+   five presets. */
+function FigSlider({ label, value, onChange }){
+  return e("label", { className:"fig-slider" },
+    e("span", null, label),
+    e("input", {
+      type:"range", min:0, max:100, step:1,
+      value: Math.round((value == null ? .5 : value) * 100),
+      onChange: ev => onChange(Number(ev.target.value) / 100),
+      "aria-label": label,
+    })
+  );
+}
+
 function Swatches({ list, value, onPick, label }){
   return e("div", { className:"fig-swatches", role:"group", "aria-label":label },
     list.map(x => e("button", {
@@ -2816,6 +3004,7 @@ function FigureEditor({ figure, kibbeTypeId, palette, pieces, onChange, onSave, 
   const fig = figure;
   const set = patch => onChange(Object.assign({}, fig, patch));
   const setBody = (k, v) => onChange(Object.assign({}, fig, { body: Object.assign({}, fig.body, { [k]: v }) }));
+  const setFace = (k, v) => onChange(Object.assign({}, fig, { face: Object.assign({}, fig.face, { [k]: v }) }));
 
   return e("div", { className:"sheet-backdrop" },
     e("div", { className:"sheet", ref:dialogRef, role:"dialog", "aria-modal":"true" },
@@ -2859,21 +3048,20 @@ function FigureEditor({ figure, kibbeTypeId, palette, pieces, onChange, onSave, 
             e("div", { className:"eyebrow fig-label" }, "Nose"),
             e(Chips, { list:NOSE_SHAPES, value:fig.nose, onPick:v => set({ nose:v }), label:"Nose shape" }),
             e("div", { className:"eyebrow fig-label" }, "Mouth"),
-            e(Chips, { list:MOUTH_SHAPES, value:fig.mouth, onPick:v => set({ mouth:v }), label:"Mouth shape" })
+            e(Chips, { list:MOUTH_SHAPES, value:fig.mouth, onPick:v => set({ mouth:v }), label:"Mouth shape" }),
+            e("div", { className:"eyebrow fig-label" }, "Shape it"),
+            FACE_SLIDERS.map(sl => e(FigSlider, { key:sl.id, label:sl.name,
+              value: fig.face[sl.id], onChange: v => setFace(sl.id, v) })),
+            e("button", { type:"button", className:"btn-text", style:{ padding:0, marginTop:4 },
+              onClick:() => onChange(Object.assign({}, fig, { face: defaultFigureFor(kibbeTypeId).face })) },
+              "Reset my face to my type")
           ) : null,
 
           tab === "body" ? e("div", { key:"body" },
             e("p", { className:"footnote", style:{ margin:"0 0 10px" } },
               "These start from your " + ((KIBBE_BY_ID[kibbeTypeId] || {}).name || "quiz") + " result. Move anything you like."),
-            BODY_SLIDERS.map(s => e("label", { key:s.id, className:"fig-slider" },
-              e("span", null, s.name),
-              e("input", {
-                type:"range", min:0, max:100, step:1,
-                value: Math.round((fig.body[s.id] != null ? fig.body[s.id] : .5) * 100),
-                onChange: ev => setBody(s.id, Number(ev.target.value) / 100),
-                "aria-label":s.name,
-              })
-            )),
+            BODY_SLIDERS.map(sl => e(FigSlider, { key:sl.id, label:sl.name,
+              value: fig.body[sl.id], onChange: v => setBody(sl.id, v) })),
             e("button", { type:"button", className:"btn-text", style:{ padding:0, marginTop:4 },
               onClick:() => onChange(Object.assign({}, fig, { body: defaultFigureFor(kibbeTypeId).body })) },
               "Reset to my type")

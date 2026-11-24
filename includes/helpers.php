@@ -749,7 +749,12 @@ function weekly_tip_for_type(array $tips, string $typeName, int $week): ?array {
 /** The figure (avatar) a person built for themselves. Additive, idempotent. */
 function ensure_figure_column(PDO $pdo): void {
     static $done = false; if ($done) return; $done = true;
-    try { $pdo->exec('ALTER TABLE profiles ADD COLUMN IF NOT EXISTS figure_json VARCHAR(700) DEFAULT NULL'); }
+    try {
+        $pdo->exec('ALTER TABLE profiles ADD COLUMN IF NOT EXISTS figure_json VARCHAR(1800) DEFAULT NULL');
+        // Widened when the figure grew from 7 numbers to 27 plus a
+        // wardrobe. MODIFY is a no-op when it is already this wide.
+        $pdo->exec('ALTER TABLE profiles MODIFY COLUMN figure_json VARCHAR(1800) DEFAULT NULL');
+    }
     catch (Throwable $e) { error_log('ensure_figure_column: ' . $e->getMessage()); }
 }
 
@@ -762,7 +767,7 @@ function ensure_figure_column(PDO $pdo): void {
  */
 function sanitize_figure(?string $raw): ?string {
     if ($raw === null || $raw === '') return null;
-    if (strlen($raw) > 2000) return null;                 // nothing legitimate is this big
+    if (strlen($raw) > 6000) return null;                 // nothing legitimate is this big
     $in = json_decode($raw, true);
     if (!is_array($in)) return null;
 
@@ -775,7 +780,22 @@ function sanitize_figure(?string $raw): ?string {
         'mouth'     => ['m1','m2','m3','m4'],
         'brow'      => ['b1','b2','b3'],
     ];
-    $sliders = ['height','shoulders','torso','waist','hips','legs','arms'];
+    $sliders = ['height','shoulders','chest','torso','waist','hips','legs','knees','arms','hands','feet','neck'];
+    $faceSliders = ['headSize','forehead','cheeks','jaw','chin','eyeSize','eyeSpace','eyeTilt',
+                    'browThick','browHeight','noseWidth','noseLength','mouthWidth','lips','ears'];
+    $wearSlots = [
+        'top'       => ['tee','blouse','sweater','tank','shirt','crop'],
+        'bottom'    => ['jeans','trousers','skirt','maxi','shorts','leggings'],
+        'dress'     => ['shift','wrap','aline','gown'],
+        'outerwear' => ['blazer','coat','bomber','cardigan','trench'],
+        'shoes'     => ['flats','heels','boots','sneakers','sandals','loafers'],
+        'glasses'   => ['round','square','cat','aviator','readers'],
+        'hat'       => ['beanie','beret','cap','brim'],
+        'gloves'    => ['short','long'],
+        'earrings'  => ['studs','hoops','drops'],
+        'lips'      => ['nude','rose','red','berry','gloss'],
+    ];
+    $garmentColors = ['c1','c2','c3','c4','c5','c6','c7','c8','c9','c10','c11','c12','c13','c14'];
 
     $out = [];
     foreach ($allowed as $key => $values) {
@@ -794,10 +814,41 @@ function sanitize_figure(?string $raw): ?string {
         }
     }
     if ($body) $out['body'] = $body;
+
+    $face = [];
+    if (isset($in['face']) && is_array($in['face'])) {
+        foreach ($faceSliders as $k) {
+            if (!array_key_exists($k, $in['face'])) continue;
+            $n = $in['face'][$k];
+            if (!is_int($n) && !is_float($n) && !(is_string($n) && is_numeric($n))) continue;
+            $n = (float)$n;
+            if (!is_finite($n)) continue;
+            $face[$k] = round(max(0.0, min(1.0, $n)), 3);
+        }
+    }
+    if ($face) $out['face'] = $face;
+
+    // Drawn clothing the person chose. Same whitelist discipline as the
+    // rest: a style must be one this slot offers and a colour one of the
+    // fourteen, or the whole slot is dropped.
+    $wear = [];
+    if (isset($in['wear']) && is_array($in['wear'])) {
+        foreach ($wearSlots as $slot => $styles) {
+            $w = $in['wear'][$slot] ?? null;
+            if (!is_array($w)) continue;
+            $style = $w['style'] ?? null;
+            $color = $w['color'] ?? null;
+            if (!is_string($style) || !in_array($style, $styles, true)) continue;
+            if (!is_string($color) || !in_array($color, $garmentColors, true)) $color = $garmentColors[0];
+            $wear[$slot] = ['style' => $style, 'color' => $color];
+        }
+    }
+    if ($wear) $out['wear'] = $wear;
+
     if (!$out) return null;
 
     $json = json_encode($out);
-    return ($json !== false && strlen($json) <= 700) ? $json : null;
+    return ($json !== false && strlen($json) <= 1800) ? $json : null;
 }
 
 function ensure_color_result_column(PDO $pdo): void {
