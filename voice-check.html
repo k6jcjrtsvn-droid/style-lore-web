@@ -1,0 +1,181 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<title>Voice check — Style-LORE</title>
+<style>
+  :root{ --ink:#2E1620; --soft:#6B5159; --line:#E7DAD5; --accent:#B9867A; --paper:#FBF7F4; }
+  *{ box-sizing:border-box; }
+  body{ margin:0; background:var(--paper); color:var(--ink); padding:20px 16px 48px;
+        font:15px/1.55 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; }
+  h1{ font:700 21px/1.25 Georgia,serif; margin:0 0 4px; }
+  p.sub{ color:var(--soft); font-size:13px; margin:0 0 20px; }
+  .row{ display:flex; gap:10px; align-items:flex-start; padding:11px 0; border-bottom:1px solid var(--line); }
+  .k{ flex:0 0 46%; color:var(--soft); font-size:13px; }
+  .v{ flex:1; font-weight:600; font-size:13.5px; word-break:break-word; }
+  .yes{ color:#1F7A4D; } .no{ color:#B3261E; }
+  button{ width:100%; margin:18px 0 0; padding:14px; border:0; border-radius:999px;
+          background:var(--accent); color:#fff; font:600 15px system-ui; cursor:pointer; }
+  button.ghost{ background:#fff; color:var(--ink); border:1px solid var(--line); }
+  #verdict{ margin:22px 0 0; padding:14px 15px; border-radius:12px; background:#fff;
+            border:1px solid var(--line); font-size:14px; }
+  #verdict b{ display:block; margin-bottom:5px; }
+  pre{ background:#fff; border:1px solid var(--line); border-radius:10px; padding:11px;
+       font-size:11.5px; overflow:auto; margin:14px 0 0; }
+</style></head>
+<body>
+<h1>Voice check</h1>
+<p class="sub">This page is not the app. It asks your browser what it can do and shows the answer, so we stop guessing.</p>
+<div id="rows"></div>
+<button id="say">Tap to hear her speak</button>
+<button id="mic" class="ghost">Tap to test the microphone</button>
+<div id="verdict"></div>
+<pre id="raw"></pre>
+
+<script>
+(function(){
+  var R = document.getElementById('rows');
+  function row(k, v, good){
+    var d = document.createElement('div'); d.className = 'row';
+    d.innerHTML = '<div class="k"></div><div class="v"></div>';
+    d.children[0].textContent = k;
+    d.children[1].textContent = v;
+    if(good === true)  d.children[1].className = 'v yes';
+    if(good === false) d.children[1].className = 'v no';
+    R.appendChild(d);
+    return d.children[1];
+  }
+
+  var SR  = window.SpeechRecognition || window.webkitSpeechRecognition || null;
+  var rec = !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia && window.MediaRecorder);
+  var syn = !!window.speechSynthesis;
+  var out = { ua: navigator.userAgent, SR: !!SR, rec: rec, syn: syn };
+
+  row('Browser', (function(){
+    var u = navigator.userAgent;
+    if(/SamsungBrowser/i.test(u)) return 'Samsung Internet';
+    if(/EdgA|Edg/i.test(u))       return 'Edge';
+    if(/FxiOS|Firefox/i.test(u))  return 'Firefox';
+    if(/Brave/i.test(u) || (navigator.brave && navigator.brave.isBrave)) return 'Brave';
+    if(/DuckDuckGo/i.test(u))     return 'DuckDuckGo';
+    if(/CriOS/i.test(u))          return 'Chrome on iOS (WebKit underneath)';
+    if(/Chrome/i.test(u))         return 'Chrome';
+    if(/Safari/i.test(u))         return 'Safari';
+    return 'Unknown';
+  })());
+  row('Can the browser hear you?', SR ? 'Yes — speech recognition is here' : 'No — this browser has none', !!SR);
+  row('Can it record audio?', rec ? 'Yes' : 'No', rec);
+  row('Can it speak?', syn ? 'Yes' : 'No', syn);
+
+  var voiceCell = row('Voices installed', 'checking…');
+  var pickCell  = row('She would sound like', 'checking…');
+  var WANTED = ["samantha","serena","allison","ava","susan","karen","moira","tessa",
+                "victoria","zira","aria","jenny","google us english","female"];
+  function voices(){
+    var list = [];
+    try{ list = window.speechSynthesis.getVoices() || []; }catch(e){}
+    out.voiceCount = list.length;
+    out.voices = list.map(function(v){ return v.name + ' (' + v.lang + ')'; }).slice(0, 12);
+    voiceCell.textContent = list.length ? list.length + ' found' : 'none yet';
+    var en = list.filter(function(v){ return /^en(-|_|$)/i.test(v.lang || ''); });
+    var pool = en.length ? en : list, picked = null;
+    for(var i = 0; i < WANTED.length && !picked; i++){
+      picked = pool.filter(function(v){ return (v.name||'').toLowerCase().indexOf(WANTED[i]) > -1; })[0] || null;
+    }
+    if(!picked) picked = pool.filter(function(v){ return v.localService; })[0] || pool[0] || null;
+    out.picked = picked ? picked.name : null;
+    pickCell.textContent = picked ? picked.name : 'the system default';
+    document.getElementById('raw').textContent = JSON.stringify(out, null, 1);
+  }
+  if(syn){ voices(); try{ window.speechSynthesis.addEventListener('voiceschanged', voices); }catch(e){} }
+
+  var appCell = row('App version your phone has', 'checking…');
+  fetch('index.html?cb=' + Date.now(), { cache:'no-store' })
+    .then(function(r){ return r.text(); })
+    .then(function(t){
+      var has3 = t.indexOf('function withVoices(') > -1;
+      var has2 = t.indexOf('className:"lorey-controls"') > -1;
+      var has1 = t.indexOf('const LoreyVoice = (function(){') > -1;
+      out.appFresh = has3 ? 'newest' : has2 ? 'one behind' : has1 ? 'two behind' : 'no voice code at all';
+      appCell.textContent = out.appFresh + ' (fetched fresh)';
+      appCell.className = 'v ' + (has2 ? 'yes' : 'no');
+      document.getElementById('raw').textContent = JSON.stringify(out, null, 1);
+    })
+    .catch(function(){ appCell.textContent = 'could not check'; });
+
+  var sttCell = row('Server transcription', 'checking…');
+  fetch('api/lorey_listen.php?probe=1', { cache:'no-store' })
+    .then(function(r){ return r.ok ? r.json() : null; })
+    .then(function(d){
+      var on = !!(d && d.ok);
+      out.serverStt = on;
+      sttCell.textContent = on ? 'switched on' : 'off (no key set)';
+      sttCell.className = 'v ' + (on ? 'yes' : 'no');
+      verdict();
+    })
+    .catch(function(){ sttCell.textContent = 'off'; verdict(); });
+
+  function verdict(){
+    var v = document.getElementById('verdict'), msg;
+    if(SR)              msg = '<b>The microphone should work here.</b> Your browser can hear you by itself, at no cost. If the button is missing in the app, it is the app that is wrong, not the browser.';
+    else if(out.serverStt && rec) msg = '<b>The microphone should work here.</b> Your browser cannot hear you, so the app records a clip and sends it to be transcribed.';
+    else if(rec)        msg = '<b>This is why there is no microphone button.</b> Your browser has no speech recognition of its own, and server transcription is switched off. Set LOREY_STT_KEY on the server and it will appear — or use Chrome.';
+    else                msg = '<b>This browser cannot do voice input at all.</b> No speech recognition and no audio recording. Typing is the only way in here.';
+    v.innerHTML = msg;
+  }
+
+  document.getElementById('say').onclick = function(){
+    if(!syn){ alert('This browser cannot speak.'); return; }
+    try{ window.speechSynthesis.cancel(); }catch(e){}
+    var u = new SpeechSynthesisUtterance(
+      "Hi, I'm Lorey. If you can hear this, her voice works on your phone.");
+    var list = [];
+    try{ list = window.speechSynthesis.getVoices() || []; }catch(e){}
+    var en = list.filter(function(v){ return /^en(-|_|$)/i.test(v.lang || ''); });
+    var pool = en.length ? en : list, picked = null;
+    for(var i = 0; i < WANTED.length && !picked; i++){
+      picked = pool.filter(function(v){ return (v.name||'').toLowerCase().indexOf(WANTED[i]) > -1; })[0] || null;
+    }
+    if(picked){ u.voice = picked; u.lang = picked.lang; }
+    u.onstart = function(){ document.getElementById('say').textContent = 'Speaking…'; };
+    u.onend   = function(){ document.getElementById('say').textContent = 'Say it again'; };
+    u.onerror = function(e){ document.getElementById('say').textContent = 'Failed: ' + (e && e.error); };
+    window.speechSynthesis.speak(u);
+  };
+
+  document.getElementById('mic').onclick = function(){
+    var b = document.getElementById('mic');
+    if(SR){
+      var r2 = new SR(); r2.lang = 'en-US'; r2.interimResults = true;
+      b.textContent = 'Listening — say something…';
+      r2.onresult = function(ev){
+        var s = '';
+        for(var i = 0; i < ev.results.length; i++) s += ev.results[i][0].transcript;
+        b.textContent = 'Heard: ' + s;
+      };
+      r2.onerror = function(ev){ b.textContent = 'Mic error: ' + ev.error; };
+      r2.onend   = function(){ if(b.textContent.indexOf('Heard') !== 0) b.textContent = 'Nothing heard — tap to retry'; };
+      try{ r2.start(); }catch(e){ b.textContent = 'Could not start: ' + e.message; }
+      return;
+    }
+    if(!rec){ b.textContent = 'This browser cannot record audio.'; return; }
+    b.textContent = 'Asking for the microphone…';
+    navigator.mediaDevices.getUserMedia({ audio:true })
+      .then(function(st){
+        b.textContent = 'Microphone granted — recording 3 seconds…';
+        var mr = new MediaRecorder(st), chunks = [];
+        mr.ondataavailable = function(e){ if(e.data.size) chunks.push(e.data); };
+        mr.onstop = function(){
+          st.getTracks().forEach(function(t){ t.stop(); });
+          var blob = new Blob(chunks, { type: mr.mimeType || 'audio/webm' });
+          b.textContent = 'Recorded ' + Math.round(blob.size / 1024) + ' KB as ' + blob.type
+                        + (out.serverStt ? ' — server would transcribe this.' : ' — but transcription is off.');
+        };
+        mr.start(); setTimeout(function(){ try{ mr.stop(); }catch(e){} }, 3000);
+      })
+      .catch(function(err){ b.textContent = 'Microphone refused: ' + err.name; });
+  };
+})();
+</script>
+</body></html>

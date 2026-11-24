@@ -197,6 +197,25 @@ RewriteRule ^includes/ - [F,L]
     </FilesMatch>
 </IfModule>
 
+# The app itself must never be cached. index.html IS Style-LORE — the whole
+# UI is inside it — and it was going out with no Cache-Control header at all,
+# only an ETag, which leaves it to the browser to decide whether to look
+# again. Mobile Chrome frequently decides not to, so a deploy would land on
+# the server and simply not reach a phone that already had a copy: you press
+# deploy, nothing changes, and there is nothing to see in any log. The HTML
+# is small and gzipped; revalidating it on every load costs a round trip and
+# buys the guarantee that what we shipped is what people are running.
+<IfModule mod_headers.c>
+    <FilesMatch "\.(html)$">
+        Header set Cache-Control "no-cache, must-revalidate"
+    </FilesMatch>
+    # app-versions.json drives the in-app update card; a cached copy would
+    # keep telling people they are current when they are not.
+    <FilesMatch "^app-versions\.json$">
+        Header set Cache-Control "no-cache, must-revalidate"
+    </FilesMatch>
+</IfModule>
+
 # Sensible caching for static assets.
 <IfModule mod_expires.c>
     ExpiresActive On
