@@ -3009,6 +3009,7 @@ const LoreyVoice = (function(){
   let level = 0, speaking = false, raf = 0;
   let ctx = null, analyser = null, bins = null, node = null;
   let utter = null, unlocked = false, onDone = null;
+  let who = {};                     // visitorId / authToken, set by the screen
   let wordAt = 0, seed = 1;
 
   function can(){ return typeof window !== "undefined" && !!window.speechSynthesis; }
@@ -3119,7 +3120,8 @@ const LoreyVoice = (function(){
   }
 
   function speakServer(text, done){
-    return fetch("api/lorey_voice.php", {
+    return fetch("api/lorey_voice.php?visitorId=" + encodeURIComponent(who.visitorId || "")
+                 + "&authToken=" + encodeURIComponent(who.authToken || ""), {
       method:"POST", headers:{ "Content-Type":"application/json" },
       body: JSON.stringify({ text: text })
     })
@@ -3314,6 +3316,7 @@ const LoreyVoice = (function(){
 
   return {
     can: can, canListen: canListen, mayListen: mayListen,
+    identify: function(v, t){ who = { visitorId:v, authToken:t }; },
     canRecord: canRecord, serverListen: serverListen, listenViaServer: listenViaServer,
     unlock: unlock,
     muted: muted, setMuted: setMuted,
@@ -3558,8 +3561,14 @@ function LoreyMic({ onText, onDone, onListening, disabled, idleLabel, auth }){
       onText: t => { heard.current = t; if(onText) onText(t); },
       onThinking: b => { setBusy(b); if(b) { clearTimeout(timer.current); timer.current = 0; } },
       onError: code => {
-        if(code === "not-allowed" || code === "service-not-allowed") setDenied(true);
-        // An errored recogniser may never fire onend at all.
+        // "aborted" and "no-speech" are ordinary — they happen every time
+        // you let go without saying anything, and calling that "blocked"
+        // sent people to their browser settings to fix nothing at all.
+        if(code === "not-allowed" || code === "service-not-allowed"){
+          setDenied(code);
+        } else if(code === "network"){
+          setDenied("network");
+        }
         clearTimeout(timer.current);
         timer.current = setTimeout(() => finish(""), 400);
       },
@@ -3613,7 +3622,10 @@ function LoreyMic({ onText, onDone, onListening, disabled, idleLabel, auth }){
                      : disabled ? (idleLabel || "Hold to talk to Lorey")
                      : "Hold to talk to Lorey",
     "aria-pressed": on,
-    title: denied ? "Your browser blocked the microphone" : "Hold to talk",
+    title: denied === "not-allowed" ? "Your browser is blocking the microphone for this site — allow it in the padlock menu in the address bar"
+         : denied === "service-not-allowed" ? "Your device's speech service refused — some Android builds need Google app voice input switched on"
+         : denied === "network" ? "The speech service could not be reached"
+         : "Hold to talk",
     onPointerDown: press,
     onPointerUp: release,
     onPointerCancel: release,
@@ -3623,7 +3635,10 @@ function LoreyMic({ onText, onDone, onListening, disabled, idleLabel, auth }){
   },
     Icon("mic"),
     e("span", null, on ? "Listening…" : busy ? "Getting that…"
-                       : denied ? "Mic blocked" : (idleLabel || "Hold to talk"))
+                       : denied === "not-allowed" ? "Allow the mic"
+                       : denied === "service-not-allowed" ? "Speech service off"
+                       : denied === "network" ? "No connection"
+                       : (idleLabel || "Hold to talk"))
   );
 }
 
@@ -10819,6 +10834,7 @@ function CheckerScreen({ blend, styleWordBlend, kibbeTypeName, topStyleWords, vi
   }, []);
   // Everything she says goes through one place, so there is no way to add
   // a line of dialogue later and forget to give it a voice.
+  useEffect(() => { LoreyVoice.identify(visitorId, authToken); }, [visitorId, authToken]);
   useEffect(() => { if(loreySaying) LoreyVoice.speak(loreySaying); }, [loreySaying]);
   // Leaving the screen should stop her mid-sentence, not let her carry on
   // talking into a page that is no longer there.
