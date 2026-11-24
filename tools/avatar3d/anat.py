@@ -8,12 +8,60 @@ def _n(v):
     L=math.sqrt(sum(x*x for x in v)) or 1.0
     return [x/L for x in v]
 
+# Landmarks are found ONCE, on the neutral mesh, and kept as VERTEX INDICES.
+# Finding them again on each morphed body is what kept breaking: an extreme
+# target moves the geometry enough that the armpit scan latches onto a hip or
+# the fingertip search onto a knee, and then the arm axis points at the floor
+# and the figure tears itself apart. The armpit is the same vertex on every
+# body — only its position moves — so identify it once and look it up after.
+_REF = None
+
+def reference(verts, idxs):
+    """Measure the neutral body once; everything else reads these indices."""
+    global _REF
+    if _REF is not None: return _REF
+    B = Body(verts, idxs, _measure=True)
+    def nearest(pt, pred=None):
+        best=None; bd=1e18
+        for i in idxs:
+            p=verts[i]
+            if pred and not pred(p): continue
+            d=sum((p[j]-pt[j])**2 for j in range(3))
+            if d<bd: bd=d; best=i
+        return best
+    _REF = {
+        'shoulder': { s: nearest([s*B.sx, B.sy, B.sz], lambda p,s=s: p[0]*s>0) for s in (1,-1) },
+        'tip':      { s: B.tipIdx[s] for s in B.tipIdx },
+        'cls':      B.classify(),
+        'neckFrac': (B.neckY-B.bot)/B.h,
+    }
+    return _REF
+
+
 class Body:
-    def __init__(self, verts, idxs):
+    def __init__(self, verts, idxs, _measure=False):
         self.v=verts; self.idx=idxs
         B=[verts[i] for i in idxs]
         ys=[p[1] for p in B]
         self.top=max(ys); self.bot=min(ys); self.h=self.top-self.bot
+        if not _measure and _REF is not None:
+            # Read the landmarks off the reference vertices, wherever the
+            # morph targets have moved them to.
+            self.axis={}; self.tipIdx=dict(_REF['tip'])
+            sp={s2: verts[_REF['shoulder'][s2]] for s2 in _REF['shoulder']}
+            self.sx=sum(abs(p[0]) for p in sp.values())/len(sp)
+            self.sy=sum(p[1] for p in sp.values())/len(sp)
+            self.sz=sum(p[2] for p in sp.values())/len(sp)
+            for s2,ti in _REF['tip'].items():
+                S=[sp[s2][0], sp[s2][1], sp[s2][2]]
+                t=verts[ti]
+                d=[t[j]-S[j] for j in range(3)]
+                L=math.sqrt(sum(x*x for x in d)) or 1.0
+                self.axis[s2]=(S,[x/L for x in d],L)
+            self.cls=dict(_REF['cls'])
+            self.neckY=self.bot + _REF['neckFrac']*self.h
+            self.neck=(0.0, self.sy + 0.30, self.sz + 0.12)
+            return
         # the armpit: at shoulder height the arm is a separate cluster from
         # the torso, and the gap between them is the only landmark that
         # survives every morph target.
@@ -39,10 +87,10 @@ class Body:
         # length comes out as 3.6 on one figure and 14.0 on the next, which
         # puts the sleeve cut somewhere around the knee. Take the farthest
         # vertex from the shoulder among those clearly outboard of the armpit.
-        self.axis={}
+        self.axis={}; self.tipIdx={}
         for side in (1,-1):
             S=[side*self.sx, self.sy, self.sz]
-            tip=None; best=-1
+            tip=None; tipi=None; best=-1
             for i in idxs:
                 p=verts[i]
                 if p[0]*side <= 0: continue
@@ -53,8 +101,9 @@ class Body:
                 # pointing at the floor and nothing rotates at all.
                 if self.frac(p) < 0.46: continue
                 d2=sum((p[j]-S[j])**2 for j in range(3))
-                if d2 > best: best=d2; tip=p
+                if d2 > best: best=d2; tip=p; tipi=i
             if tip is None: continue
+            self.tipIdx[side]=tipi
             d=[tip[j]-S[j] for j in range(3)]
             raw=math.sqrt(sum(x*x for x in d)) or 1.0
             d=[x/raw for x in d]              # normalise by its OWN length,

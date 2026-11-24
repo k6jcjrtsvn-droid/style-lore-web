@@ -132,10 +132,19 @@ def simple(verts, groups):
     return {'position':[c for v in P for c in v],'normal':[c for v in N for c in v],
             'index':[i for f in TT for i in f],'n':len(P)}
 
+_REF_MIX=[('macrodetails/caucasian-female-young',.50),
+          ('macrodetails/african-female-young',.28),
+          ('macrodetails/asian-female-young',.22)]
+def ensure_reference():
+    ref=[list(p) for p in RAW]; apply(ref, _REF_MIX)
+    anat.reference(ref, BODYIDX)
+
 def build(spec):
+    ensure_reference()
     v=[list(p) for p in RAW]
     apply(v, spec['mix'])
-    B=anat.Body(v, BODYIDX); B.classify()
+    B=anat.Body(v, BODYIDX)
+    if not hasattr(B,'cls'): B.classify()
     anat.arms_down(B, 34.0)
     B2=anat.Body(v, BODYIDX); B2.cls=B.cls        # heights after posing
     P,TT,src=part(v,{'body'})

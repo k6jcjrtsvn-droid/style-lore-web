@@ -53,6 +53,37 @@ way — 469 targets in all, every one of them CC0.
    has vertices on both sides of every boundary, so it gets dropped, and the
    garment ends up notched at exactly the seam a real shirt is made of.
 
+## Kibbe drives the starting shape
+
+`kibbe.py`. The app already models a Kibbe result as a blend over five
+families plus a yin/yang modifier (`KIBBE_TARGETS` in index.html), so the body
+is built the same way rather than as thirteen hand-made presets: every type is
+covered, blends between them behave sensibly, and a new type costs nothing.
+The avatar cannot disagree with the quiz, because it is reading the quiz's own
+numbers.
+
+Measured across the thirteen, the system behaves: Dramatic is tallest (16.9)
+with the narrowest hip; Gamine is shortest (15.5); Natural has the widest
+shoulder; Romantic the fullest hip; Classic sits in the middle of all of them.
+
+**Render every avatar at one fixed scale.** Framing each figure to fill its
+canvas hides the single most important thing the read is telling you — how
+long the vertical line is — by normalising height away.
+
+## Landmarks are vertex indices, not measurements
+
+This is the thing that took four separate bugs to learn. Every landmark used
+to be re-measured on each morphed body, and an extreme target would move the
+geometry enough that the armpit scan latched onto a hip, or the fingertip
+search onto a knee, and then the arm axis pointed at the floor and the figure
+tore itself apart.
+
+The armpit is the *same vertex* on every body — only its position moves. So
+`anat.reference()` measures the neutral mesh once and stores vertex indices;
+every other body looks them up. That removed the whole class of failure at a
+stroke, and all thirteen Kibbe types went from one-in-thirteen catastrophic to
+thirteen-for-thirteen clean.
+
 ## Not done
 
 - Ragged hems and a small shoulder notch: boundaries still follow face
