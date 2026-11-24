@@ -9151,7 +9151,13 @@ function AddItemSheet({ onAdd, onClose, viewer }){
     describedRef.current = false;
     setDescribe(d => d === "off" ? "off" : "idle");
     setBg("idle"); setBgError(null); setOriginalPhoto(null);
-    downscaleImage(file, 480, 0.72).then(setPhotoPreview)
+    // 900px, not 480. A closet photo is no longer only a 44px thumbnail:
+    // it fills a garment on the figure and it opens full screen from a
+    // "Styled for you" suggestion. At 480 a 3x phone was upscaling it
+    // roughly 2.4x, which is exactly as soft as it looked. 900 at 0.82
+    // is about 2.5x the bytes and sharp on every phone sold; the closet
+    // already has quota handling and server sync behind it for the rest.
+    downscaleImage(file, 900, 0.82).then(setPhotoPreview)
       .catch(() => setPhotoError("Couldn't read that photo — try another."));
   }
 
