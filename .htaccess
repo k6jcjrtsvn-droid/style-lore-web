@@ -185,11 +185,14 @@ RewriteRule ^includes/ - [F,L]
 <IfModule mod_mime.c>
     AddType application/wasm .wasm
     AddType application/octet-stream .onnx
+    # Lorey's head. Without a type of its own Apache guesses, and a guess
+    # of text/plain makes the browser re-encode the bytes on the way in.
+    AddType application/octet-stream .bin
 </IfModule>
 # Both are version-pinned content that never changes in place -- a year is
 # safe, and it means the ~16 MB is fetched exactly once per device.
 <IfModule mod_headers.c>
-    <FilesMatch "\.(wasm|onnx)$">
+    <FilesMatch "\.(wasm|onnx|bin)$">
         Header set Cache-Control "public, max-age=31536000, immutable"
     </FilesMatch>
 </IfModule>

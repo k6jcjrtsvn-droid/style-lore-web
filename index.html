@@ -905,6 +905,10 @@
   .lorey-portrait{ flex:0 0 auto; width:76px; height:76px; border-radius:50%; overflow:hidden;
     background:var(--accent-soft); border:1px solid var(--line-soft); }
   .lorey-portrait .style-figure{ display:block; }
+  /* Lorey in 3D fills the same circle; the drawn figure holds the spot
+     until the mesh lands, and keeps it if WebGL is missing. */
+  .lorey-art{ position:relative; display:block; line-height:0; }
+  .lorey-art canvas{ display:block; width:100%; height:100%; }
   .lorey-tap{ display:block; padding:0; border:0; background:none; cursor:pointer; line-height:0;
     border-radius:50%; }
   .lorey-tap:focus-visible{ outline:2px solid var(--accent); outline-offset:3px; }
@@ -3021,20 +3025,116 @@ function useLoreyExpression({ speaking, thinking, listening }){
   return expr;
 }
 
+/* --------------------------------------------------------------------
+   LOREY, MODELLED
+
+   The same face as a real head rather than a drawing: MakeHuman's CC0
+   base mesh, shaped and painted at build time, drawn by a small WebGL
+   renderer in assets/lorey3d.js (no three.js — 18 KB of our own code
+   instead of 600). Both files are fetched the first time someone opens
+   the stylist and never on the critical path, and the drawn figure
+   holds her place until they arrive. If the device has no WebGL, or
+   the files are blocked, the drawing simply stays: nobody sees a hole.
+   -------------------------------------------------------------------- */
+let lorey3dScript = null;
+function loadLorey3D(){
+  if(lorey3dScript) return lorey3dScript;
+  lorey3dScript = new Promise((resolve, reject) => {
+    if(window.LoreyMesh){ resolve(window.LoreyMesh); return; }
+    const tag = document.createElement("script");
+    tag.src = "assets/lorey3d.js"; tag.async = true;
+    tag.onload = () => window.LoreyMesh ? resolve(window.LoreyMesh)
+                                      : reject(new Error("lorey3d did not define itself"));
+    tag.onerror = () => reject(new Error("lorey3d blocked"));
+    document.head.appendChild(tag);
+  });
+  return lorey3dScript;
+}
+
+/* The drawing and the model run off the same numbers, so whatever makes
+   one of them more alive makes the other one too. */
+function loreyMorphs(x){
+  const m = x.mouth || 0;
+  const shut = m > 0 && m < .40 ? (.40 - m) : 0;
+  return {
+    blinkL: x.blink || 0,
+    blinkR: x.blink || 0,
+    jawOpen:  m * .50,
+    lipsPart: m * .80,
+    mouthWide: m > .45 ? (m - .45) * .55 : 0,
+    pucker: shut * .55,
+    mouthNarrow: shut * .45,
+    smile: .16 + (x.brow || 0) * .10,
+    browUp: (x.brow || 0) * .80,
+    squint: (x.blink || 0) * .12,
+    gazeX: x.gazeX || 0, gazeY: x.gazeY || 0,
+    tilt: x.tilt || 0, lean: x.lean || 0,
+  };
+}
+
+function Lorey3D({ size, expr, onReady }){
+  const host = useRef(null);
+  const live = useRef(expr);
+  const [on, setOn] = useState(false);
+  live.current = expr;
+  useEffect(() => {
+    let gone = false, raf = 0, stage = null;
+    loadLorey3D()
+      .then(L => {
+        if(gone) throw new Error("unmounted");
+        if(!L.available()) throw new Error("no webgl");
+        return L.create(host.current, { url:"assets/lorey3d-v1.bin" });
+      })
+      .then(s => {
+        if(gone){ s.dispose(); return; }
+        stage = s;
+        s.resize(size, size);
+        setOn(true);
+        if(onReady) onReady(true);
+        const tick = () => {
+          s.setExpr(loreyMorphs(live.current || {}));
+          s.render();
+          raf = requestAnimationFrame(tick);
+        };
+        raf = requestAnimationFrame(tick);
+      })
+      .catch(() => { if(!gone && onReady) onReady(false); });
+    return () => {
+      gone = true;
+      if(raf) cancelAnimationFrame(raf);
+      if(stage) stage.dispose();
+    };
+  }, []);
+  // Hidden until there is something on it, so a device without WebGL
+  // leaves no empty box next to the drawing.
+  return e("canvas", { ref:host, "aria-hidden":"true",
+                       style:{ display: on ? "block" : "none" } });
+}
+
 /* The stage: Lorey at a size you can see, animated, and tappable. */
 function LoreyStage({ size, speaking, thinking, listening, onTap, label }){
   const expr = useLoreyExpression({ speaking, thinking, listening });
+  // null while we find out whether this device can draw her; then true or
+  // false for good. Only one of the two ever shows.
+  const [modelled, setModelled] = useState(null);
+  const s = size || 96;
+  const name = label || "Lorey, the Style-LORE stylist";
   const fig = normalizeFigure(LOREY_FIGURE, null);
-  const art = e(StyleFigure, {
-    figure: fig,
-    pieces: { top: { description: "top" } },
-    palette: ["#B9867A"],
-    crop: "portrait",
-    size: size || 96,
-    expr: expr,
-    className: "style-figure lorey-figure",
-    label: label || "Lorey, the Style-LORE stylist",
-  });
+  const art = e("span", { className:"lorey-art", style:{ width:s, height:s },
+                          role:"img", "aria-label":name },
+    e(Lorey3D, { size:s, expr:expr, onReady:setModelled,
+                 key:"lorey3d" }),
+    modelled === true ? null : e(StyleFigure, {
+      figure: fig,
+      pieces: { top: { description: "top" } },
+      palette: ["#B9867A"],
+      crop: "portrait",
+      size: s,
+      expr: expr,
+      className: "style-figure lorey-figure",
+      label: name,
+    })
+  );
   if(!onTap) return art;
   return e("button", {
     type:"button", className:"lorey-tap",
