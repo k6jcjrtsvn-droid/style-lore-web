@@ -3524,41 +3524,86 @@ function LoreyStage({ size, speaking, thinking, listening, onTap, label }){
    one worth defending to a store reviewer. */
 function LoreyMic({ onText, onDone, onListening, disabled, idleLabel, auth }){
   const rec = useRef(null);
+  const live = useRef(false);      // synchronous; `on` is state and lags
+  const heard = useRef("");
+  const timer = useRef(0);
   const [on, setOn] = useState(false);
   const [busy, setBusy] = useState(false);
   const [denied, setDenied] = useState(false);
 
+  // Exactly once, however we got here. The button used to stick on
+  // "Listening…" because every path out of it assumed onend would arrive:
+  // it does not when the recogniser has already stopped itself, and it does
+  // not after some errors. Now nothing is trusted to end the turn except
+  // this, and three different things can call it.
+  const finish = said => {
+    if(!live.current) return;
+    live.current = false;
+    clearTimeout(timer.current); timer.current = 0;
+    rec.current = null;
+    setOn(false); setBusy(false);
+    if(onListening) onListening(false);
+    const text = (said || heard.current || "").trim();
+    heard.current = "";
+    if(text && onDone) onDone(text);
+  };
+
   const start = () => {
-    if(on || busy || disabled) return;
+    if(live.current || busy || disabled) return;
+    live.current = true;           // before anything async, so a doubled
+    heard.current = "";            // press cannot open a second recogniser
     LoreyVoice.unlock();
-    LoreyVoice.stop();            // she stops talking the moment you do
+    LoreyVoice.stop();             // she stops talking the moment you do
     const handlers = {
-      onText: t => { if(onText) onText(t); },
-      onThinking: setBusy,
+      onText: t => { heard.current = t; if(onText) onText(t); },
+      onThinking: b => { setBusy(b); if(b) { clearTimeout(timer.current); timer.current = 0; } },
       onError: code => {
         if(code === "not-allowed" || code === "service-not-allowed") setDenied(true);
+        // An errored recogniser may never fire onend at all.
+        clearTimeout(timer.current);
+        timer.current = setTimeout(() => finish(""), 400);
       },
-      onEnd: final => {
-        rec.current = null; setOn(false);
-        if(onListening) onListening(false);
-        if(final && onDone) onDone(final);
-      },
+      onEnd: finish,
     };
-    // Chrome hears you itself. An iPhone cannot, so it records and posts
-    // the clip instead — same button, same gesture, different plumbing.
     const r = LoreyVoice.canListen()
       ? LoreyVoice.listen(handlers)
       : LoreyVoice.listenViaServer(handlers, auth || {});
-    if(!r) return;
-    rec.current = r; setOn(true);
+    if(!r){ live.current = false; return; }
+    rec.current = r;
+    setOn(true);
     if(onListening) onListening(true);
-  };
-  const end = () => {
-    if(!rec.current) return;
-    try{ rec.current.stop(); }catch(err){}
+    // Nothing holds the microphone for more than twenty seconds.
+    timer.current = setTimeout(() => stop(), 20000);
   };
 
-  useEffect(() => () => { if(rec.current){ try{ rec.current.abort(); }catch(err){} } }, []);
+  const stop = () => {
+    if(!live.current) return;
+    if(rec.current){ try{ rec.current.stop(); }catch(err){} }
+    clearTimeout(timer.current);
+    // If onend never comes, end the turn anyway and keep what was heard.
+    timer.current = setTimeout(() => finish(heard.current), 1400);
+  };
+
+  useEffect(() => () => {
+    clearTimeout(timer.current);
+    if(rec.current){ try{ rec.current.abort(); }catch(err){} }
+    live.current = false;
+  }, []);
+
+  // Pointer events only. A touch screen fires touchstart AND a simulated
+  // mousedown, so handling both opened the microphone twice: the second
+  // recogniser replaced the first, and when the first one ended it cleared
+  // the button while the second kept the microphone open — which is the
+  // other half of why it stuck.
+  const press = ev => {
+    ev.preventDefault();
+    try{ ev.currentTarget.setPointerCapture(ev.pointerId); }catch(err){}
+    start();
+  };
+  const release = ev => {
+    try{ ev.currentTarget.releasePointerCapture(ev.pointerId); }catch(err){}
+    stop();
+  };
 
   return e("button", {
     type:"button",
@@ -3569,12 +3614,12 @@ function LoreyMic({ onText, onDone, onListening, disabled, idleLabel, auth }){
                      : "Hold to talk to Lorey",
     "aria-pressed": on,
     title: denied ? "Your browser blocked the microphone" : "Hold to talk",
-    onMouseDown: start, onMouseUp: end, onMouseLeave: end,
-    onTouchStart: ev => { ev.preventDefault(); start(); },
-    onTouchEnd: ev => { ev.preventDefault(); end(); },
-    // Keyboard: space or enter holds it open while the key is down.
+    onPointerDown: press,
+    onPointerUp: release,
+    onPointerCancel: release,
+    onLostPointerCapture: () => stop(),
     onKeyDown: ev => { if((ev.key === " " || ev.key === "Enter") && !ev.repeat){ ev.preventDefault(); start(); } },
-    onKeyUp: ev => { if(ev.key === " " || ev.key === "Enter"){ ev.preventDefault(); end(); } },
+    onKeyUp: ev => { if(ev.key === " " || ev.key === "Enter"){ ev.preventDefault(); stop(); } },
   },
     Icon("mic"),
     e("span", null, on ? "Listening…" : busy ? "Getting that…"
@@ -10865,6 +10910,13 @@ function CheckerScreen({ blend, styleWordBlend, kibbeTypeName, topStyleWords, vi
     try{
       const result = await Api.checkPhoto({ visitorId, authToken, photoBlob, kibbeTypeName, topStyleWords, correction });
       setAiResult(result);
+      // Say it. A stylist who hands you a written report and stares at you
+      // is not the thing we built. Same sentence the follow-up thread uses
+      // as her opening turn, so what she says and what she "remembers"
+      // saying cannot drift apart.
+      setLoreySaying([result.item ? "Reading this as " + result.item + "." : "",
+                      result.headline, result.detail, result.suggestion]
+                     .filter(Boolean).join(" "));
       if(!isPremium && onFreeAiReadUsed) onFreeAiReadUsed();
       const source = photoHiRes || photoPreview;
       const thumb = await thumbFromDataUrl(source);
