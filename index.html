@@ -878,6 +878,37 @@
 .premium-list{ margin:10px 0 12px; padding-left:18px; font-size:13.5px; line-height:1.45; color:var(--ink); }
 .premium-list li{ margin:3px 0; }
 .toast{ position:fixed; left:16px; right:16px; bottom:calc(84px + env(safe-area-inset-bottom)); z-index:60; background:var(--ink); color:#fff; padding:13px 16px; border-radius:var(--radius-m); font-size:13.5px; line-height:1.45; box-shadow:0 10px 30px -10px rgba(0,0,0,.4); }
+  /* ---- the figure ------------------------------------------------- */
+  .style-figure{ display:block; max-width:100%; height:auto; }
+  .fig-edit{ display:flex; gap:14px; align-items:flex-start; margin:4px 0 14px; }
+  .fig-edit-preview{ flex:0 0 auto; background:var(--paper-raised); border:1px solid var(--line-soft);
+    border-radius:var(--radius-m); padding:6px; }
+  .fig-edit-controls{ flex:1; min-width:0; }
+  .fig-tabs{ display:flex; gap:6px; margin-bottom:10px; }
+  .fig-tab{ flex:1; padding:7px 4px; font-size:12.5px; font-weight:600; border-radius:999px;
+    border:1px solid var(--line); background:none; color:var(--ink-soft); cursor:pointer; }
+  .fig-tab.is-on{ background:var(--accent); border-color:var(--accent); color:#fff; }
+  .fig-label{ margin:10px 0 6px; }
+  .fig-label:first-child{ margin-top:0; }
+  .fig-swatches{ display:flex; flex-wrap:wrap; gap:7px; }
+  .fig-swatch{ width:30px; height:30px; border-radius:50%; border:2px solid var(--line);
+    padding:0; cursor:pointer; }
+  .fig-swatch.is-on{ border-color:var(--ink); box-shadow:0 0 0 2px var(--paper), 0 0 0 4px var(--accent); }
+  .fig-chips{ display:flex; flex-wrap:wrap; gap:6px; }
+  .fig-chip{ padding:6px 11px; font-size:12.5px; border-radius:999px; border:1px solid var(--line);
+    background:none; color:var(--ink); cursor:pointer; }
+  .fig-chip.is-on{ background:var(--accent-soft); border-color:var(--accent); color:var(--accent); font-weight:600; }
+  .fig-slider{ display:flex; align-items:center; gap:10px; margin-bottom:7px; font-size:12.5px; }
+  .fig-slider span{ flex:0 0 72px; color:var(--ink-soft); }
+  .fig-slider input{ flex:1; min-width:0; accent-color:var(--accent); }
+  .suggestion-worn{ display:flex; gap:12px; align-items:center; }
+  .suggestion-worn .suggestion-row{ flex:1; min-width:0; }
+  .fig-card{ display:flex; gap:14px; align-items:center; }
+  .fig-card-body{ flex:1; min-width:0; }
+  @media (max-width:360px){
+    .fig-edit{ gap:10px; }
+    .fig-swatch{ width:27px; height:27px; }
+  }
   .outfit-row{ display:flex; gap:10px; overflow-x:auto; padding-bottom:4px; scrollbar-width:none; }
   .outfit-row::-webkit-scrollbar{ display:none; }
   .outfit-piece{ flex:0 0 108px; }
@@ -1861,6 +1892,747 @@ const AMAZON_ASSOCIATE_TAG = "stylelore-20";
    an idea of the lines, never a figure to measure yourself against. The
    picture follows the wardrobe preference; "both" shows the pair. Missing
    files (an old app bundle, offline) just hide the image. */
+/* ==================================================================
+   THE FIGURE  —  a person's avatar, drawn as SVG and dressed from
+   their own closet.
+   ================================================================== */
+/* ------------------------------------------------------------------
+   The figure: a person's avatar, drawn as SVG, dressable from their
+   own closet.
+
+   Why SVG and not a 3D avatar: this file ships inside the iOS and
+   Android binaries. A figure here costs bytes, not megabytes, renders
+   at any size on any phone with no WebGL, needs no new dependency,
+   no CDN and no CSP change, and it is editable with plain numbers
+   that fit in a database column. The whole catalogue below is about
+   8 KB.
+
+   Nothing here is random: every part is a value the person chose, or
+   a default derived from their Kibbe type, so two people who picked
+   the same options get the same figure on every device.
+   ------------------------------------------------------------------ */
+
+/* Skin, hair and eye options. Ordered light -> deep, and deliberately
+   wide: a styling app that can only draw one kind of person is worse
+   than no figure at all. */
+const SKIN_TONES = [
+  { id:"s1", hex:"#F7DFCB", shade:"#E8C5A9" },
+  { id:"s2", hex:"#F2CDAA", shade:"#DFB189" },
+  { id:"s3", hex:"#E6B88E", shade:"#CE9A6C" },
+  { id:"s4", hex:"#D29A6E", shade:"#B57C52" },
+  { id:"s5", hex:"#B87A4F", shade:"#99603A" },
+  { id:"s6", hex:"#965B36", shade:"#7A4527" },
+  { id:"s7", hex:"#6F4027", shade:"#58301C" },
+  { id:"s8", hex:"#4A2A1A", shade:"#381F12" },
+];
+
+const HAIR_COLORS = [
+  { id:"h1", hex:"#2B2320" }, { id:"h2", hex:"#4A3326" }, { id:"h3", hex:"#6E4A2E" },
+  { id:"h4", hex:"#8E6239" }, { id:"h5", hex:"#B98A4B" }, { id:"h6", hex:"#D9B278" },
+  { id:"h7", hex:"#A33C28" }, { id:"h8", hex:"#8E8C8A" }, { id:"h9", hex:"#C9C5C1" },
+  { id:"h10", hex:"#6B4C8C" }, { id:"h11", hex:"#2F6B6B" }, { id:"h12", hex:"#B5456E" },
+];
+
+const EYE_COLORS = [
+  { id:"e1", hex:"#4A3326" }, { id:"e2", hex:"#6E4A2E" }, { id:"e3", hex:"#8A7A4E" },
+  { id:"e4", hex:"#5F7D5A" }, { id:"e5", hex:"#4F7694" }, { id:"e6", hex:"#6E6A74" },
+];
+
+/* Hair is drawn, not photographed, so each style is a path function of
+   the head box. Keeping them as functions (rather than fixed paths)
+   means hair still fits when the head changes size. */
+const HAIR_STYLES = [
+  { id:"short",   name:"Short" },
+  { id:"crop",    name:"Cropped" },
+  { id:"bob",     name:"Bob" },
+  { id:"long",    name:"Long" },
+  { id:"curls",   name:"Curls" },
+  { id:"coils",   name:"Coils" },
+  { id:"updo",    name:"Up" },
+  { id:"braids",  name:"Braids" },
+  { id:"wavy",    name:"Wavy" },
+  { id:"bald",    name:"None" },
+];
+
+const NOSE_SHAPES = [ {id:"n1",name:"Straight"}, {id:"n2",name:"Soft"}, {id:"n3",name:"Wide"}, {id:"n4",name:"Upturned"} ];
+const MOUTH_SHAPES = [ {id:"m1",name:"Neutral"}, {id:"m2",name:"Full"}, {id:"m3",name:"Wide"}, {id:"m4",name:"Smile"} ];
+const BROW_SHAPES = [ {id:"b1",name:"Straight"}, {id:"b2",name:"Arched"}, {id:"b3",name:"Soft"} ];
+
+/* Body sliders. 0..1 each, 0.5 is the middle of the range. These are
+   proportions, not sizes or measurements -- the figure is a drawing of
+   a line, which is what Kibbe is actually about. */
+const BODY_SLIDERS = [
+  { id:"height",    name:"Height" },
+  { id:"shoulders", name:"Shoulders" },
+  { id:"torso",     name:"Torso" },
+  { id:"waist",     name:"Waist" },
+  { id:"hips",      name:"Hips" },
+  { id:"legs",      name:"Legs" },
+  { id:"arms",      name:"Arms" },
+];
+
+/* Kibbe families give the starting shape. The person can change every
+   one of these afterwards -- this is a first guess from the quiz they
+   already took, not a verdict about their body. */
+const FAMILY_BODY = {
+  dramatic: { height:.88, shoulders:.68, torso:.42, waist:.34, hips:.34, legs:.74, arms:.62 },
+  natural:  { height:.70, shoulders:.82, torso:.52, waist:.52, hips:.48, legs:.56, arms:.58 },
+  classic:  { height:.52, shoulders:.50, torso:.50, waist:.46, hips:.50, legs:.50, arms:.50 },
+  gamine:   { height:.26, shoulders:.44, torso:.38, waist:.40, hips:.38, legs:.34, arms:.40 },
+  romantic: { height:.34, shoulders:.32, torso:.58, waist:.62, hips:.70, legs:.36, arms:.44 },
+};
+
+const FIGURE_FAMILIES = Object.fromEntries(KIBBE_TYPES.map(t => [t.id, t.family]));
+
+function defaultFigureFor(kibbeTypeId, families){
+  const fam = (families || FIGURE_FAMILIES)[kibbeTypeId] || "classic";
+  const body = Object.assign({}, FAMILY_BODY[fam] || FAMILY_BODY.classic);
+  return {
+    skin: "s3", hair: "short", hairColor: "h2", eyes: "e1",
+    nose: "n1", mouth: "m1", brow: "b1",
+    body: body,
+  };
+}
+
+/* Everything that comes back from the server or localStorage goes
+   through this. A figure is rendered in other people's browsers, so an
+   unknown value must become a known one rather than reaching the DOM. */
+function normalizeFigure(raw, kibbeTypeId, families){
+  const base = defaultFigureFor(kibbeTypeId, families || FIGURE_FAMILIES);
+  if(!raw || typeof raw !== "object") return base;
+  const pick = (list, v, fb) => (list.some(x => x.id === v) ? v : fb);
+  const num = v => {
+    const n = typeof v === "number" ? v : parseFloat(v);
+    if(!isFinite(n)) return null;
+    return Math.max(0, Math.min(1, n));
+  };
+  const body = Object.assign({}, base.body);
+  if(raw.body && typeof raw.body === "object"){
+    BODY_SLIDERS.forEach(s => { const n = num(raw.body[s.id]); if(n !== null) body[s.id] = n; });
+  }
+  return {
+    skin:      pick(SKIN_TONES,   raw.skin,      base.skin),
+    hair:      pick(HAIR_STYLES,  raw.hair,      base.hair),
+    hairColor: pick(HAIR_COLORS,  raw.hairColor, base.hairColor),
+    eyes:      pick(EYE_COLORS,   raw.eyes,      base.eyes),
+    nose:      pick(NOSE_SHAPES,  raw.nose,      base.nose),
+    mouth:     pick(MOUTH_SHAPES, raw.mouth,     base.mouth),
+    brow:      pick(BROW_SHAPES,  raw.brow,      base.brow),
+    body: body,
+  };
+}
+
+/* ---- geometry ------------------------------------------------------
+   One viewBox, 0 0 200 480. Every measurement below is derived from
+   the sliders so the garments always land on the body, whatever shape
+   it is. Changing a slider moves the clothes with it.
+   -------------------------------------------------------------------- */
+function figureGeometry(b){
+  const lerp = (a, z, t) => a + (z - a) * t;
+  const cx = 100;
+
+  const headR   = lerp(23, 27, 1 - b.height * .5);     // smaller frame -> relatively bigger head
+  const headCy  = 56;
+  const chin    = headCy + headR * 1.18;
+  const neckY   = chin + lerp(8, 16, b.height);
+  const shoulderY = neckY + 6;
+
+  const torsoLen = lerp(74, 104, b.torso);
+  const waistY   = shoulderY + torsoLen;
+  const hipY     = waistY + lerp(30, 46, 1 - b.legs * .4);
+  const legLen   = lerp(132, 178, b.legs);
+  const kneeY    = hipY + legLen * .46;
+  const ankleY   = hipY + legLen;
+
+  // Kept deliberately narrow: at the wide end of every slider the whole
+  // figure still sits inside about 120 of the 200 units, so clothes have
+  // somewhere to go and two figures fit side by side without colliding.
+  const shoulderW = lerp(21, 37, b.shoulders);
+  const waistW    = lerp(12.5, 25, b.waist);
+  const hipW      = lerp(17, 33, b.hips);
+  const armW      = lerp(4.2, 7.6, b.arms);
+  const armGap    = 2.2;                               // air between arm and ribcage
+  const neckW     = lerp(5.5, 7.5, b.shoulders);
+  const thighW    = Math.max(11, hipW * lerp(.66, .80, b.hips));
+  const ankleW    = Math.max(6, thighW * .52);
+
+  return { cx, headR, headCy, chin, neckY, shoulderY, waistY, hipY, kneeY, ankleY,
+           shoulderW, waistW, hipW, armW, armGap, neckW, thighW, ankleW };
+}
+
+/* The body outline: shoulders -> waist -> hips as one closed path, so
+   the silhouette reads as a single line rather than stacked boxes. */
+/* The torso is one closed line from neck to hip. The shoulder is a
+   slope, not a corner -- a flat top edge is what makes a figure read as
+   a rectangle with a head on it. */
+function torsoPath(g){
+  const { cx, shoulderY, waistY, hipY, shoulderW, waistW, hipW, neckW } = g;
+  const shoulderDrop = 7;                       // how far the shoulder falls from neck to point
+  const ribY = shoulderY + (waistY - shoulderY) * .42;
+  const ribW = waistW + (shoulderW - waistW) * .55;
+  return [
+    "M", cx - neckW, shoulderY - 4,
+    "C", cx - shoulderW * .62, shoulderY - 3, cx - shoulderW, shoulderY + 1, cx - shoulderW, shoulderY + shoulderDrop,
+    "C", cx - ribW, ribY, cx - waistW - 1.5, waistY - 14, cx - waistW, waistY,
+    "C", cx - waistW - 1, waistY + 12, cx - hipW, hipY - 20, cx - hipW, hipY,
+    "L", cx + hipW, hipY,
+    "C", cx + hipW, hipY - 20, cx + waistW + 1, waistY + 12, cx + waistW, waistY,
+    "C", cx + waistW + 1.5, waistY - 14, cx + ribW, ribY, cx + shoulderW, shoulderY + shoulderDrop,
+    "C", cx + shoulderW, shoulderY + 1, cx + shoulderW * .62, shoulderY - 3, cx + neckW, shoulderY - 4,
+    "Z",
+  ].join(" ");
+}
+
+function legPath(g, side){
+  const { cx, hipY, kneeY, ankleY, thighW, ankleW } = g;
+  const s = side === "l" ? -1 : 1;
+  const inner = cx + s * 2;
+  const outer = cx + s * thighW;
+  const kneeOuter = cx + s * (thighW * .72);
+  const kneeInner = cx + s * (thighW * .18);
+  const ankOuter = cx + s * ankleW;
+  const ankInner = cx + s * (ankleW * .18);
+  return [
+    "M", inner, hipY, "L", outer, hipY,
+    "C", outer, hipY + 40, kneeOuter, kneeY - 24, kneeOuter, kneeY,
+    "C", kneeOuter, kneeY + 40, ankOuter, ankleY - 30, ankOuter, ankleY,
+    "L", ankInner, ankleY,
+    "C", ankInner, ankleY - 30, kneeInner, kneeY + 40, kneeInner, kneeY,
+    "C", kneeInner, kneeY - 24, inner, hipY + 40, inner, hipY,
+    "Z",
+  ].join(" ");
+}
+
+/* Arms hang with a gap at the ribs, so the silhouette has daylight in
+   it. Without the gap the arms merge into the torso and the whole
+   figure flattens into one block. */
+function armPath(g, side){
+  const { cx, shoulderY, waistY, hipY, shoulderW, armW, armGap } = g;
+  const s = side === "l" ? -1 : 1;
+  const outerTop = cx + s * (shoulderW + armW * .55);
+  const innerTop = cx + s * (shoulderW - armW * .45);
+  const elbowOut = cx + s * (shoulderW + armGap + armW);
+  const elbowIn  = cx + s * (shoulderW + armGap);
+  const wristOut = cx + s * (shoulderW + armGap + armW * .80);
+  const wristIn  = cx + s * (shoulderW + armGap - armW * .08);
+  const wristY = hipY + 16;
+  return [
+    "M", innerTop, shoulderY + 3,
+    "L", outerTop, shoulderY + 4,
+    "C", elbowOut, waistY - 26, elbowOut, waistY + 18, wristOut, wristY,
+    "L", wristIn, wristY,
+    "C", elbowIn, waistY + 18, elbowIn, waistY - 26, innerTop, shoulderY + 3,
+    "Z",
+  ].join(" ");
+}
+
+/* ---- garments ------------------------------------------------------
+   A garment is a shape on the body filled with the person's own photo
+   of that garment, clipped to the shape. That is the whole trick: a
+   photo pasted on a figure looks like a photo pasted on a figure, but
+   a photo poured into the shape of a top reads as a top.
+   -------------------------------------------------------------------- */
+/* Garments trace the torso line with a couple of units of ease, so a
+   top looks worn rather than draped over. M is that ease. */
+const EASE = 2.4;
+
+function topPath(g, long){
+  const { cx, shoulderY, waistY, hipY, shoulderW, waistW, hipW, neckW } = g;
+  const m = EASE;
+  const ribY = shoulderY + (waistY - shoulderY) * .42;
+  const ribW = waistW + (shoulderW - waistW) * .55 + m;
+  const endY = long ? hipY + 6 : waistY + 10;
+  const endW = (long ? hipW : waistW + 2) + m;
+  const sh = shoulderW + m;
+  return [
+    "M", cx - neckW - 1, shoulderY - 5,
+    "C", cx - sh * .62, shoulderY - 4, cx - sh, shoulderY, cx - sh, shoulderY + 7,
+    "C", cx - ribW, ribY, cx - endW - 1, endY - 22, cx - endW, endY,
+    "L", cx + endW, endY,
+    "C", cx + endW + 1, endY - 22, cx + ribW, ribY, cx + sh, shoulderY + 7,
+    "C", cx + sh, shoulderY, cx + sh * .62, shoulderY - 4, cx + neckW + 1, shoulderY - 5,
+    "Z",
+  ].join(" ");
+}
+
+function bottomPath(g, full){
+  const { cx, waistY, hipY, kneeY, ankleY, waistW, hipW, thighW, ankleW } = g;
+  const m = EASE;
+  const hemY = full ? ankleY - 8 : kneeY + 8;
+  const hemW = (full ? ankleW + 3.5 : thighW + 1) + m;
+  const topY = waistY - 2;
+  const wW = waistW + m, hW = hipW + m;
+  // A notch at the crotch so trousers read as two legs, not a skirt.
+  const crotchY = hipY + (hemY - hipY) * .16;
+  return [
+    "M", cx - wW, topY,
+    "C", cx - hW, hipY - 18, cx - hW, hipY - 4, cx - hW, hipY + 2,
+    "C", cx - hW + 1, hemY - 44, cx - hemW, hemY - 26, cx - hemW, hemY,
+    "L", cx - hemW * .16, hemY,
+    "L", cx - 1.5, crotchY,
+    "L", cx + hemW * .16, hemY,
+    "L", cx + hemW, hemY,
+    "C", cx + hemW, hemY - 26, cx + hW - 1, hemY - 44, cx + hW, hipY + 2,
+    "C", cx + hW, hipY - 4, cx + hW, hipY - 18, cx + wW, topY,
+    "Z",
+  ].join(" ");
+}
+
+function dressPath(g){
+  const { cx, shoulderY, waistY, hipY, kneeY, shoulderW, waistW, hipW, neckW } = g;
+  const m = EASE;
+  const ribY = shoulderY + (waistY - shoulderY) * .42;
+  const ribW = waistW + (shoulderW - waistW) * .55 + m;
+  const hemY = kneeY - 4;
+  const hemW = hipW + m + 7;            // a little flare, not a bell
+  const sh = shoulderW + m;
+  return [
+    "M", cx - neckW - 1, shoulderY - 5,
+    "C", cx - sh * .62, shoulderY - 4, cx - sh, shoulderY, cx - sh, shoulderY + 7,
+    "C", cx - ribW, ribY, cx - waistW - m - 1, waistY - 14, cx - waistW - m, waistY,
+    "C", cx - hipW - m, hipY - 4, cx - hemW, hemY - 46, cx - hemW, hemY,
+    "L", cx + hemW, hemY,
+    "C", cx + hemW, hemY - 46, cx + hipW + m, hipY - 4, cx + waistW + m, waistY,
+    "C", cx + waistW + m + 1, waistY - 14, cx + ribW, ribY, cx + sh, shoulderY + 7,
+    "C", cx + sh, shoulderY, cx + sh * .62, shoulderY - 4, cx + neckW + 1, shoulderY - 5,
+    "Z",
+  ].join(" ");
+}
+
+/* Outerwear hangs open: two panels down the sides, so whatever is worn
+   underneath still shows. */
+/* Outerwear hangs open: one panel per side, with the centre left clear
+   so whatever is worn underneath still reads. */
+function coatPath(g, side){
+  const { cx, shoulderY, waistY, hipY, kneeY, shoulderW, waistW, hipW, neckW } = g;
+  const s = side === "l" ? -1 : 1;
+  const m = EASE + 2.2;                     // a coat sits over the top
+  const hemY = hipY + (kneeY - hipY) * .52;
+  const sh = shoulderW + m;
+  const ribY = shoulderY + (waistY - shoulderY) * .42;
+  const ribW = waistW + (shoulderW - waistW) * .55 + m;
+  const hemOuter = cx + s * (hipW + m + 4);
+  const lapelTop = cx + s * (neckW + 1);
+  const lapelHem = cx + s * (hipW * .62);
+  return [
+    "M", lapelTop, shoulderY - 5,
+    "C", cx + s * sh * .62, shoulderY - 4, cx + s * sh, shoulderY, cx + s * sh, shoulderY + 7,
+    "C", cx + s * ribW, ribY, hemOuter, hipY, hemOuter, hemY,
+    "L", lapelHem, hemY,
+    "C", lapelHem, hipY, cx + s * (neckW + 6), waistY - 10, lapelTop, shoulderY - 5,
+    "Z",
+  ].join(" ");
+}
+
+function shoePath(g, side){
+  const { cx, ankleY, ankleW } = g;
+  const s = side === "l" ? -1 : 1;
+  const inner = cx + s * (ankleW * .14);
+  const outer = cx + s * (ankleW + 1.5);
+  const toe = cx + s * (ankleW + 9);
+  const topY = ankleY - 14;
+  const soleY = ankleY + 9;
+  return [
+    "M", inner, topY, "L", outer, topY,
+    "C", outer, ankleY, toe, soleY - 7, toe, soleY,
+    "L", inner, soleY, "Z",
+  ].join(" ");
+}
+
+/* ---- hair ---------------------------------------------------------- */
+function hairPaths(style, g){
+  const { cx, headCy, headR } = g;
+  const r = headR, top = headCy - r, cy = headCy;
+  const P = [];
+  switch(style){
+    case "bald": break;
+    case "crop":
+      P.push(["M", cx - r * .98, cy - r * .18, "C", cx - r * 1.04, top - r * .34, cx + r * 1.04, top - r * .34, cx + r * .98, cy - r * .18,
+              "C", cx + r * .7, cy - r * .62, cx - r * .7, cy - r * .62, cx - r * .98, cy - r * .18, "Z"].join(" "));
+      break;
+    case "short":
+      P.push(["M", cx - r * 1.06, cy + r * .2, "C", cx - r * 1.12, top - r * .4, cx + r * 1.12, top - r * .4, cx + r * 1.06, cy + r * .2,
+              "C", cx + r * .92, cy - r * .3, cx + r * .62, cy - r * .56, cx, cy - r * .56,
+              "C", cx - r * .62, cy - r * .56, cx - r * .92, cy - r * .3, cx - r * 1.06, cy + r * .2, "Z"].join(" "));
+      break;
+    case "bob":
+      P.push(["M", cx - r * 1.14, cy + r * .72, "C", cx - r * 1.22, top - r * .42, cx + r * 1.22, top - r * .42, cx + r * 1.14, cy + r * .72,
+              "C", cx + r * .96, cy + r * .5, cx + r * .9, cy - r * .1, cx + r * .74, cy - r * .42,
+              "C", cx + r * .3, cy - r * .72, cx - r * .3, cy - r * .72, cx - r * .74, cy - r * .42,
+              "C", cx - r * .9, cy - r * .1, cx - r * .96, cy + r * .5, cx - r * 1.14, cy + r * .72, "Z"].join(" "));
+      break;
+    case "long":
+      P.push(["M", cx - r * 1.12, cy + r * 3.6, "C", cx - r * 1.4, cy + r * .6, cx - r * 1.2, top - r * .44, cx, top - r * .44,
+              "C", cx + r * 1.2, top - r * .44, cx + r * 1.4, cy + r * .6, cx + r * 1.12, cy + r * 3.6,
+              "C", cx + r * .86, cy + r * 3.3, cx + r * .82, cy + r * .5, cx + r * .76, cy - r * .36,
+              "C", cx + r * .3, cy - r * .74, cx - r * .3, cy - r * .74, cx - r * .76, cy - r * .36,
+              "C", cx - r * .82, cy + r * .5, cx - r * .86, cy + r * 3.3, cx - r * 1.12, cy + r * 3.6, "Z"].join(" "));
+      break;
+    case "wavy":
+      P.push(["M", cx - r * 1.2, cy + r * 2.9, "C", cx - r * 1.5, cy + r * 1.2, cx - r * 1.26, top - r * .46, cx, top - r * .46,
+              "C", cx + r * 1.26, top - r * .46, cx + r * 1.5, cy + r * 1.2, cx + r * 1.2, cy + r * 2.9,
+              "C", cx + r * 1.0, cy + r * 2.2, cx + r * 1.1, cy + r * 1.1, cx + r * .78, cy - r * .34,
+              "C", cx + r * .3, cy - r * .74, cx - r * .3, cy - r * .74, cx - r * .78, cy - r * .34,
+              "C", cx - r * 1.1, cy + r * 1.1, cx - r * 1.0, cy + r * 2.2, cx - r * 1.2, cy + r * 2.9, "Z"].join(" "));
+      break;
+    case "updo":
+      P.push(["M", cx - r * 1.04, cy - r * .1, "C", cx - r * 1.1, top - r * .36, cx + r * 1.1, top - r * .36, cx + r * 1.04, cy - r * .1,
+              "C", cx + r * .7, cy - r * .56, cx - r * .7, cy - r * .56, cx - r * 1.04, cy - r * .1, "Z"].join(" "));
+      P.push(["M", cx - r * .40, top - r * .18, "a", r * .40, r * .40, 0, 1, 1, r * .80, 0,
+              "a", r * .40, r * .40, 0, 1, 1, -(r * .80), 0, "Z"].join(" "));
+      break;
+    case "curls":
+    case "coils": {
+      const tight = style === "coils";
+      const ring = tight ? r * .26 : r * .34;
+      const spread = tight ? 1.16 : 1.26;
+      P.push(["M", cx - r * spread, cy + r * .1, "C", cx - r * spread, top - r * .6, cx + r * spread, top - r * .6, cx + r * spread, cy + r * .1,
+              "C", cx + r * .7, cy - r * .5, cx - r * .7, cy - r * .5, cx - r * spread, cy + r * .1, "Z"].join(" "));
+      const n = tight ? 11 : 9;
+      for(let i = 0; i < n; i++){
+        const a = Math.PI + (Math.PI * (i + .5)) / n;
+        const px = cx + Math.cos(a) * r * spread * .92;
+        const py = cy + Math.sin(a) * r * spread * .92;
+        P.push(["M", px - ring, py, "a", ring, ring, 0, 1, 1, ring * 2, 0, "a", ring, ring, 0, 1, 1, -(ring * 2), 0, "Z"].join(" "));
+      }
+      break;
+    }
+    case "braids":
+      P.push(["M", cx - r * 1.04, cy - r * .06, "C", cx - r * 1.1, top - r * .38, cx + r * 1.1, top - r * .38, cx + r * 1.04, cy - r * .06,
+              "C", cx + r * .7, cy - r * .54, cx - r * .7, cy - r * .54, cx - r * 1.04, cy - r * .06, "Z"].join(" "));
+      [-1, 1].forEach(s => {
+        P.push(["M", cx + s * r * .92, cy - r * .1,
+                "C", cx + s * r * 1.16, cy + r * 1.0, cx + s * r * .86, cy + r * 1.8, cx + s * r * 1.02, cy + r * 2.7,
+                "L", cx + s * r * .66, cy + r * 2.7,
+                "C", cx + s * r * .52, cy + r * 1.8, cx + s * r * .74, cy + r * 1.0, cx + s * r * .58, cy - r * .1, "Z"].join(" "));
+      });
+      break;
+  }
+  return P;
+}
+
+function nosePath(id, g){
+  const { cx, headCy, headR } = g;
+  const y = headCy + headR * .22;
+  switch(id){
+    case "n2": return ["M", cx - 2, y - 5, "C", cx - 3.5, y + 1, cx - 2.5, y + 3.5, cx + 1.5, y + 3].join(" ");
+    case "n3": return ["M", cx - 4, y - 5, "C", cx - 6, y + 1.5, cx - 4, y + 4, cx + 3.5, y + 3.5].join(" ");
+    case "n4": return ["M", cx - 1.5, y - 5, "C", cx - 3, y + 1, cx - 1, y + 4, cx + 3, y + 1.5].join(" ");
+    default:   return ["M", cx - 1, y - 6, "L", cx - 2.5, y + 2.5, "L", cx + 2, y + 2.5].join(" ");
+  }
+}
+
+function mouthPath(id, g){
+  const { cx, headCy, headR } = g;
+  const y = headCy + headR * .56;
+  switch(id){
+    case "m2": return ["M", cx - 7, y, "C", cx - 3, y - 3.4, cx + 3, y - 3.4, cx + 7, y, "C", cx + 3, y + 4.4, cx - 3, y + 4.4, cx - 7, y, "Z"].join(" ");
+    case "m3": return ["M", cx - 9.5, y, "C", cx - 4, y - 2.4, cx + 4, y - 2.4, cx + 9.5, y, "C", cx + 4, y + 3, cx - 4, y + 3, cx - 9.5, y, "Z"].join(" ");
+    case "m4": return ["M", cx - 7.5, y - 1.5, "C", cx - 3, y + 4.5, cx + 3, y + 4.5, cx + 7.5, y - 1.5, "C", cx + 3, y + 1.5, cx - 3, y + 1.5, cx - 7.5, y - 1.5, "Z"].join(" ");
+    default:   return ["M", cx - 6.5, y, "C", cx - 2.5, y - 2.2, cx + 2.5, y - 2.2, cx + 6.5, y, "C", cx + 2.5, y + 2.8, cx - 2.5, y + 2.8, cx - 6.5, y, "Z"].join(" ");
+  }
+}
+
+function browPath(id, g, side){
+  const { cx, headCy, headR } = g;
+  const s = side === "l" ? -1 : 1;
+  const ex = cx + s * headR * .42;
+  const y = headCy - headR * .26;
+  const w = headR * .3;
+  switch(id){
+    case "b2": return ["M", ex - w, y + 1.6, "C", ex - w * .3, y - 3.2, ex + w * .4, y - 2.6, ex + w, y + .6].join(" ");
+    case "b3": return ["M", ex - w, y + 1, "C", ex - w * .2, y - 1.4, ex + w * .4, y - 1.2, ex + w, y + .4].join(" ");
+    default:   return ["M", ex - w, y, "L", ex + w, y - .8].join(" ");
+  }
+}
+
+/* The figure renderer.
+
+   Written against an injected element factory `h(tag, attrs, children)`
+   so the exact code that gets tested here is the code that ships: the
+   app passes React.createElement, the test harness passes a string
+   builder. One drawing, two callers. */
+
+
+const byId = (list, id) => list.find(x => x.id === id) || list[0];
+
+/* pieces: { top, bottom, dress, outerwear, shoes } -> closet items
+   ({ photo, description }) or null. A piece with no photo still gets
+   drawn, in the person's colour-season accent, so a logged garment
+   with no picture is not invisible. */
+function renderFigure(h, opts){
+  const o = opts || {};
+  const fig = o.figure;
+  const pieces = o.pieces || {};
+  const uid = o.uid || "f";
+  const size = o.size || 320;
+  const accent = o.accent || "#B9867A";
+  // Garments with no photo are drawn in the person's own colour season,
+  // a different swatch per slot, so a closet logged without pictures
+  // still reads as separate clothes rather than one coloured mass.
+  const palette = (o.palette && o.palette.length) ? o.palette : [accent];
+  const SLOT_SWATCH = { top:0, bottom:3, dress:1, outerwear:2, shoes:5 };
+  const slotColor = slot => palette[(SLOT_SWATCH[slot.replace(/-[lr]$/, "")] || 0) % palette.length];
+  const skin = byId(SKIN_TONES, fig.skin);
+  const hairCol = byId(HAIR_COLORS, fig.hairColor).hex;
+  const eyeCol = byId(EYE_COLORS, fig.eyes).hex;
+  const g = figureGeometry(fig.body);
+
+  const defs = [];
+  const kids = [];
+  const id = n => uid + "-" + n;
+
+  /* A garment photo becomes a pattern, sized to the garment's own box
+     so the picture fills the shape instead of tiling across it. */
+  function fillFor(slot, item, box){
+    if(item && item.photo){
+      // The pattern tile is positioned in user space, but everything
+      // INSIDE it is measured from the tile's own origin. Giving the
+      // image the absolute y as well pushes it clean out of its tile,
+      // which renders as an empty shape -- the bug that made every
+      // garment come out as an outline.
+      defs.push(h("pattern", {
+        key:"p" + slot, id:id(slot), patternUnits:"userSpaceOnUse",
+        x:box.x, y:box.y, width:box.w, height:box.h,
+      }, [
+        h("image", { key:"i", href:item.photo, "xlinkHref":item.photo,
+                     x:0, y:0, width:box.w, height:box.h,
+                     preserveAspectRatio:"xMidYMid slice" }),
+      ]));
+      return "url(#" + id(slot) + ")";
+    }
+    return item ? slotColor(slot) : null;
+  }
+
+  const garment = (slot, item, d, box, extra) => {
+    const fill = fillFor(slot, item, box);
+    if(!fill) return null;
+    return h("path", Object.assign({
+      key:slot, d:d, fill:fill,
+      stroke:"rgba(42,38,34,.30)", strokeWidth:1.3, strokeLinejoin:"round",
+    }, extra || {}));
+  };
+
+  // A tight box around each garment, so the photo fills that garment
+  // rather than being stretched across the whole canvas and cropped.
+  const box = (x0, y0, x1, y1) => ({ x:x0, y:y0, w:Math.max(1, x1 - x0), h:Math.max(1, y1 - y0) });
+  const halo = 3;
+
+  // --- body ---------------------------------------------------------
+  kids.push(h("path", { key:"arm-l", d:armPath(g, "l"), fill:skin.hex, stroke:skin.shade, strokeWidth:1 }));
+  kids.push(h("path", { key:"arm-r", d:armPath(g, "r"), fill:skin.hex, stroke:skin.shade, strokeWidth:1 }));
+  kids.push(h("path", { key:"leg-l", d:legPath(g, "l"), fill:skin.hex, stroke:skin.shade, strokeWidth:1 }));
+  kids.push(h("path", { key:"leg-r", d:legPath(g, "r"), fill:skin.hex, stroke:skin.shade, strokeWidth:1 }));
+  kids.push(h("path", { key:"torso", d:torsoPath(g), fill:skin.hex, stroke:skin.shade, strokeWidth:1 }));
+  kids.push(h("path", { key:"neck",
+    d:["M", g.cx - g.neckW, g.chin - 6, "L", g.cx + g.neckW, g.chin - 6,
+       "L", g.cx + g.neckW * .92, g.shoulderY - 1, "L", g.cx - g.neckW * .92, g.shoulderY - 1, "Z"].join(" "),
+    fill:skin.shade }));
+
+  // --- head ---------------------------------------------------------
+  kids.push(h("ellipse", { key:"head", cx:g.cx, cy:g.headCy, rx:g.headR, ry:g.headR * 1.14,
+                           fill:skin.hex, stroke:skin.shade, strokeWidth:1 }));
+  const eyeY = g.headCy - g.headR * .02;
+  const eyeDx = g.headR * .42;
+  [-1, 1].forEach(s => {
+    kids.push(h("ellipse", { key:"eyew" + s, cx:g.cx + s * eyeDx, cy:eyeY, rx:4.4, ry:3.1, fill:"#FFFDF8" }));
+    kids.push(h("circle",  { key:"eye" + s,  cx:g.cx + s * eyeDx, cy:eyeY, r:2.5, fill:eyeCol }));
+    kids.push(h("circle",  { key:"pup" + s,  cx:g.cx + s * eyeDx, cy:eyeY, r:1.1, fill:"#1C1A18" }));
+    kids.push(h("path", { key:"brow" + s, d:browPath(fig.brow, g, s < 0 ? "l" : "r"),
+                          fill:"none", stroke:hairCol, strokeWidth:2, strokeLinecap:"round" }));
+  });
+  kids.push(h("path", { key:"nose", d:nosePath(fig.nose, g), fill:"none",
+                        stroke:skin.shade, strokeWidth:1.5, strokeLinecap:"round", strokeLinejoin:"round" }));
+  kids.push(h("path", { key:"mouth", d:mouthPath(fig.mouth, g), fill:"#B5706B", opacity:.85 }));
+
+  hairPaths(fig.hair, g).forEach((d, i) => {
+    kids.push(h("path", { key:"hair" + i, d:d, fill:hairCol }));
+  });
+
+  // --- clothes ------------------------------------------------------
+  // Order is the order you put them on.
+  const wide = Math.max(g.shoulderW, g.hipW) + halo + 8;
+  if(pieces.dress){
+    kids.push(garment("dress", pieces.dress, dressPath(g),
+      box(g.cx - wide, g.shoulderY - 6, g.cx + wide, g.kneeY)));
+  } else {
+    if(pieces.bottom) kids.push(garment("bottom", pieces.bottom, bottomPath(g, true),
+      box(g.cx - g.hipW - halo, g.waistY - 4, g.cx + g.hipW + halo, g.ankleY - 6)));
+    if(pieces.top) kids.push(garment("top", pieces.top, topPath(g, false),
+      box(g.cx - g.shoulderW - halo, g.shoulderY - 6, g.cx + g.shoulderW + halo, g.waistY + 12)));
+  }
+  if(pieces.shoes){
+    const sy = g.ankleY - 15, sy2 = g.ankleY + 10;
+    kids.push(garment("shoe-l", pieces.shoes, shoePath(g, "l"), box(g.cx - g.ankleW - 11, sy, g.cx, sy2)));
+    kids.push(garment("shoe-r", pieces.shoes, shoePath(g, "r"), box(g.cx, sy, g.cx + g.ankleW + 11, sy2)));
+  }
+  if(pieces.outerwear){
+    const cw = g.hipW + halo + 7, cy2 = g.hipY + (g.kneeY - g.hipY) * .52;
+    kids.push(garment("coat-l", pieces.outerwear, coatPath(g, "l"), box(g.cx - cw, g.shoulderY - 6, g.cx, cy2)));
+    kids.push(garment("coat-r", pieces.outerwear, coatPath(g, "r"), box(g.cx, g.shoulderY - 6, g.cx + cw, cy2)));
+  }
+
+  // crop:"head" reuses the identical drawing as a round avatar, so a
+  // person's avatar and their full figure can never show two different
+  // people. Framed on the head only -- a circle containing a whole body
+  // is a thumbnail, not a face.
+  const headCrop = (o.crop === "head");
+  const vb = headCrop
+    ? [g.cx - g.headR * 1.42, g.headCy - g.headR * 1.46, g.headR * 2.84, g.headR * 2.84].join(" ")
+    : "0 0 200 480";
+  return h("svg", {
+    viewBox:vb, width:size, height:Math.round(size * (headCrop ? 1 : 2.4)),
+    className:o.className || "style-figure",
+    role:"img", "aria-label":o.label || "Style figure",
+    style:o.style,
+  }, [h("defs", { key:"d" }, defs)].concat(kids.filter(Boolean)));
+}
+
+/* ---- the figure in the app ---------------------------------------- */
+
+const FIGURE_KEY = "lore_figure";
+
+/* Pattern ids live in one document-wide namespace, so every figure on
+   screen needs its own. React's useId is exactly this. */
+function StyleFigure({ figure, pieces, size, palette, className, style, label, crop }){
+  const uid = React.useId().replace(/[^a-zA-Z0-9_-]/g, "");
+  const fig = (figure && figure.body) ? figure : normalizeFigure(figure, null);
+  return renderFigure(e, {
+    figure: fig, pieces: pieces || {}, uid: "fg" + uid, size: size || 220,
+    palette: palette, className: className || "style-figure", style: style,
+    label: label || "Style figure", crop: crop,
+  });
+}
+
+/* One garment per slot, newest first, so a figure shows what the person
+   most recently logged rather than whatever happens to sort first. */
+function figurePieces(items){
+  const out = {};
+  const list = (items || []).slice().sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+  for(const it of list){
+    const cat = garmentCategory(it.description);
+    if(!cat || cat === "accessory") continue;
+    if(!out[cat]) out[cat] = it;
+  }
+  // A dress and a separate top/bottom cannot both be worn.
+  if(out.dress){ delete out.top; delete out.bottom; }
+  return out;
+}
+
+function seasonPalette(colorResult){
+  const s = colorResult && colorResult.seasonId && COLOR_SEASON_BY_ID[colorResult.seasonId];
+  return (s && s.swatches && s.swatches.length) ? s.swatches : null;
+}
+
+/* ---- the editor ---------------------------------------------------- */
+
+const FIGURE_TABS = [
+  { id:"skin", name:"Skin" },
+  { id:"hair", name:"Hair" },
+  { id:"face", name:"Face" },
+  { id:"body", name:"Body" },
+];
+
+function Swatches({ list, value, onPick, label }){
+  return e("div", { className:"fig-swatches", role:"group", "aria-label":label },
+    list.map(x => e("button", {
+      key:x.id, type:"button",
+      className:"fig-swatch" + (x.id === value ? " is-on" : ""),
+      style:{ background:x.hex }, "aria-label":label + " " + x.id,
+      "aria-pressed": x.id === value, onClick:() => onPick(x.id),
+    }))
+  );
+}
+
+function Chips({ list, value, onPick, label }){
+  return e("div", { className:"fig-chips", role:"group", "aria-label":label },
+    list.map(x => e("button", {
+      key:x.id, type:"button",
+      className:"fig-chip" + (x.id === value ? " is-on" : ""),
+      "aria-pressed": x.id === value, onClick:() => onPick(x.id),
+    }, x.name))
+  );
+}
+
+function FigureEditor({ figure, kibbeTypeId, palette, pieces, onChange, onSave, onClose, busy, error }){
+  const dialogRef = useDialog(null);
+  useBackClose(onClose);
+  const [tab, setTab] = useState("skin");
+  const fig = figure;
+  const set = patch => onChange(Object.assign({}, fig, patch));
+  const setBody = (k, v) => onChange(Object.assign({}, fig, { body: Object.assign({}, fig.body, { [k]: v }) }));
+
+  return e("div", { className:"sheet-backdrop" },
+    e("div", { className:"sheet", ref:dialogRef, role:"dialog", "aria-modal":"true" },
+      e("div", { className:"sheet-handle" }),
+      e("div", { className:"sheet-head" },
+        e("h2", { className:"display", style:{ fontSize:20, fontWeight:700 } }, "Your figure"),
+        e("button", { type:"button", className:"btn-text", onClick:onClose }, "Cancel")
+      ),
+
+      e("div", { className:"fig-edit" },
+        e("div", { className:"fig-edit-preview" },
+          e(StyleFigure, { figure:fig, pieces:pieces, palette:palette, size:132,
+                           label:"Your figure" })
+        ),
+        e("div", { className:"fig-edit-controls" },
+          e("div", { className:"fig-tabs", role:"tablist" },
+            FIGURE_TABS.map(t => e("button", {
+              key:t.id, type:"button", role:"tab", "aria-selected": tab === t.id,
+              className:"fig-tab" + (tab === t.id ? " is-on" : ""),
+              onClick:() => setTab(t.id),
+            }, t.name))
+          ),
+
+          tab === "skin" ? e("div", { key:"skin" },
+            e("div", { className:"eyebrow fig-label" }, "Skin"),
+            e(Swatches, { list:SKIN_TONES, value:fig.skin, onPick:v => set({ skin:v }), label:"Skin tone" })
+          ) : null,
+
+          tab === "hair" ? e("div", { key:"hair" },
+            e("div", { className:"eyebrow fig-label" }, "Style"),
+            e(Chips, { list:HAIR_STYLES, value:fig.hair, onPick:v => set({ hair:v }), label:"Hair style" }),
+            e("div", { className:"eyebrow fig-label" }, "Colour"),
+            e(Swatches, { list:HAIR_COLORS, value:fig.hairColor, onPick:v => set({ hairColor:v }), label:"Hair colour" })
+          ) : null,
+
+          tab === "face" ? e("div", { key:"face" },
+            e("div", { className:"eyebrow fig-label" }, "Eyes"),
+            e(Swatches, { list:EYE_COLORS, value:fig.eyes, onPick:v => set({ eyes:v }), label:"Eye colour" }),
+            e("div", { className:"eyebrow fig-label" }, "Brows"),
+            e(Chips, { list:BROW_SHAPES, value:fig.brow, onPick:v => set({ brow:v }), label:"Brow shape" }),
+            e("div", { className:"eyebrow fig-label" }, "Nose"),
+            e(Chips, { list:NOSE_SHAPES, value:fig.nose, onPick:v => set({ nose:v }), label:"Nose shape" }),
+            e("div", { className:"eyebrow fig-label" }, "Mouth"),
+            e(Chips, { list:MOUTH_SHAPES, value:fig.mouth, onPick:v => set({ mouth:v }), label:"Mouth shape" })
+          ) : null,
+
+          tab === "body" ? e("div", { key:"body" },
+            e("p", { className:"footnote", style:{ margin:"0 0 10px" } },
+              "These start from your " + ((KIBBE_BY_ID[kibbeTypeId] || {}).name || "quiz") + " result. Move anything you like."),
+            BODY_SLIDERS.map(s => e("label", { key:s.id, className:"fig-slider" },
+              e("span", null, s.name),
+              e("input", {
+                type:"range", min:0, max:100, step:1,
+                value: Math.round((fig.body[s.id] != null ? fig.body[s.id] : .5) * 100),
+                onChange: ev => setBody(s.id, Number(ev.target.value) / 100),
+                "aria-label":s.name,
+              })
+            )),
+            e("button", { type:"button", className:"btn-text", style:{ padding:0, marginTop:4 },
+              onClick:() => onChange(Object.assign({}, fig, { body: defaultFigureFor(kibbeTypeId).body })) },
+              "Reset to my type")
+          ) : null
+        )
+      ),
+
+      error ? e("p", { className:"footnote", style:{ color:"var(--danger)" } }, error) : null,
+      e("button", { className:"btn btn-accent btn-block", onClick:onSave, disabled:busy },
+        busy ? "Saving\u2026" : "Save figure")
+    )
+  );
+}
+
 function kibbeArtSrc(id, which){ return "/img/kibbe/" + id + "-" + (which === "men" ? "m" : "w") + ".svg"; }
 function KibbeArt({ id, name, wardrobe, both, note, style }){
   const w = wardrobe || getWardrobe();
@@ -4794,11 +5566,14 @@ const Api = {
     if(!r.ok) throw await apiError(r, "Couldn't load that profile.");
     return r.json();
   },
-  async saveProfile(id, { name, bio, avatarBlob, authToken }){
+  async saveProfile(id, { name, bio, avatarBlob, authToken, figure }){
     const fd = new FormData();
     fd.append("name", name);
     fd.append("bio", bio || "");
     if(avatarBlob) fd.append("avatar", avatarBlob, "avatar.jpg");
+    // Only sent when there is one to send: the server treats an absent
+    // "figure" as "leave it alone", so saving name/bio never wipes it.
+    if(figure) fd.append("figure", JSON.stringify(figure));
     if(authToken) fd.append("authToken", authToken);
     const r = await fetch("/api/profiles/"+encodeURIComponent(id), { method:"POST", body:fd });
     if(!r.ok) throw await apiError(r, "Couldn't save your profile.");
@@ -5912,10 +6687,15 @@ function LightboxHost(){
   return photo ? e(Lightbox, { photo, onClose: close }) : null;
 }
 
-function Avatar({ url, name, size }){
+function Avatar({ url, name, size, figure }){
   const s = size || 32;
   const style = { width:s, height:s, fontSize: Math.max(11, Math.round(s * 0.36)) };
   if(url) return e("img", { src:mediaUrl(url), alt:"", className:"avatar-img", style });
+  // A photo still wins. Below that, the face they drew beats two letters
+  // in a circle -- same drawing as their full figure, cropped to the head,
+  // so an avatar and a figure can never show two different people.
+  if(figure) return e("span", { className:"avatar-img", style:Object.assign({ overflow:"hidden", display:"inline-block", background:"var(--paper-raised)" }, style) },
+    e(StyleFigure, { figure:figure, crop:"head", size:s, label:(name || "Someone") + "'s face" }));
   return e("span", { className:"post-avatar", style }, initialsOf(name));
 }
 
@@ -10198,6 +10978,26 @@ function PostCard({ post, profile, followingIds, onToggleFollow, onOpenProfile, 
   }, [hasSuggestion, post.authorId]);
   const closetById = {};
   (authorCloset || []).forEach(it => { closetById[it.id] = it; });
+  // Who the suggested outfit is for. Their own saved figure if they have
+  // one; failing that, a figure shaped by the Kibbe type on the post, so
+  // the look is still worn by someone built like them rather than by a
+  // generic mannequin. Fetched only when a suggestion exists, alongside
+  // the closet lookup it already needs.
+  const [authorProfile, setAuthorProfile] = useState(null);
+  useEffect(() => {
+    if(!hasSuggestion || authorProfile || !post.authorId) return;
+    let dead = false;
+    Api.getProfile(post.authorId)
+      .then(row => { if(!dead) setAuthorProfile(row || {}); })
+      .catch(() => { if(!dead) setAuthorProfile({}); });
+    return () => { dead = true; };
+  }, [hasSuggestion, post.authorId]);
+  const wearer = hasSuggestion ? {
+    figure: normalizeFigure(
+      (authorProfile && authorProfile.figure) || null,
+      (authorProfile && authorProfile.kibbeResult && authorProfile.kibbeResult.kibbeTypeId) || post.kibbe_tag || null),
+    palette: seasonPalette(authorProfile && authorProfile.colorResult),
+  } : null;
   // Styling yourself is not a thing, and a post with no author id predates
   // author tracking and has no closet to open.
   const canStyleThem = !!(profile && post.authorId && post.authorId !== me.visitorId);
@@ -10457,7 +11257,7 @@ function PostCard({ post, profile, followingIds, onToggleFollow, onOpenProfile, 
     showComments ? e("div", { className:"comment-list" },
       threadComments(post.comments).map(node => e(CommentThread, {
         key: node.comment.id != null ? ("c"+node.comment.id) : ("i"+node.index),
-        node, profile, focusCommentId, focusRef, closetById,
+        node, profile, focusCommentId, focusRef, closetById, wearer,
         // No Reply button for a guest: it would open a reply banner with no
         // box under it, now that the composer is members-only.
         onReply: isGuest ? null : startReply, onOpenProfile, onReportComment: reportComment,
@@ -10516,7 +11316,7 @@ function threadComments(comments){
   return roots;
 }
 
-function CommentThread({ node, profile, focusCommentId, focusRef, closetById, onReply, onOpenProfile, onReportComment, isReply }){
+function CommentThread({ node, profile, focusCommentId, focusRef, closetById, onReply, onOpenProfile, onReportComment, isReply, wearer }){
   const c = node.comment;
   const isFocus = focusCommentId != null && c.id != null && String(c.id) === String(focusCommentId);
   // Per-comment reporting. Guideline 1.2 wants the report control on the
@@ -10545,12 +11345,26 @@ function CommentThread({ node, profile, focusCommentId, focusRef, closetById, on
         // never outlive the consent that made the piece visible.
         const pieces = ids.map(id => (closetById || {})[id]).filter(Boolean);
         if(!pieces.length) return null;
+        // Worn, not laid out. Four thumbnails in a row are an
+        // inventory; the same four on a figure are an outfit, which is
+        // the thing the person actually asked for when they posted.
+        const slots = {};
+        pieces.forEach(it => {
+          const cat = garmentCategory(it.description);
+          if(cat && cat !== "accessory" && !slots[cat]) slots[cat] = it;
+        });
+        if(slots.dress){ delete slots.top; delete slots.bottom; }
         return e("div", { className:"suggestion" },
           e("div", { className:"suggestion-note" }, "Styled for you"),
-          e("div", { className:"suggestion-row" },
-            pieces.map(it => it.photo
-              ? e("img", { key:it.id, src:it.photo, alt:it.description || "", title:it.description || "" })
-              : e("div", { key:it.id, className:"outfit-piece-blank", style:{ width:44, height:44, borderRadius:8 } }, Icon("shirt"))
+          e("div", { className:"suggestion-worn" },
+            e(StyleFigure, { figure:(wearer && wearer.figure) || null, pieces:slots,
+                             palette:(wearer && wearer.palette) || null, size:84,
+                             label:"The suggested outfit, worn" }),
+            e("div", { className:"suggestion-row" },
+              pieces.map(it => it.photo
+                ? e("img", { key:it.id, src:it.photo, alt:it.description || "", title:it.description || "" })
+                : e("div", { key:it.id, className:"outfit-piece-blank", style:{ width:44, height:44, borderRadius:8 } }, Icon("shirt"))
+              )
             )
           )
         );
@@ -10579,7 +11393,7 @@ function CommentThread({ node, profile, focusCommentId, focusRef, closetById, on
     ),
     node.replies.map(child => e(CommentThread, {
       key: child.comment.id != null ? ("c"+child.comment.id) : ("i"+child.index),
-      node: child, profile, focusCommentId, focusRef, closetById, onReply, onOpenProfile, onReportComment, isReply: true,
+      node: child, profile, focusCommentId, focusRef, closetById, wearer, onReply, onOpenProfile, onReportComment, isReply: true,
     }))
   );
 }
@@ -10677,6 +11491,13 @@ function ProfileScreen({ id, viewer, onBack, onOpenProfile, onNameChange, onMess
   const [isBlocked, setIsBlocked] = useState(false);
   const [confirmBlock, setConfirmBlock] = useState(false);
   const [blockBusy, setBlockBusy] = useState(false);
+  // The figure. Server copy first so it follows the account to a new
+  // device; the local copy is the fallback for someone who built one
+  // before they ever saved a profile row.
+  const [figure, setFigure] = useState(null);
+  const [figureDraft, setFigureDraft] = useState(null);   // non-null while the editor is open
+  const [figureBusy, setFigureBusy] = useState(false);
+  const [figureError, setFigureError] = useState(null);
 
   const isMe = id === viewer.visitorId;
 
@@ -10694,6 +11515,43 @@ function ProfileScreen({ id, viewer, onBack, onOpenProfile, onNameChange, onMess
   }, [id]);
 
   useEffect(() => { load(); }, [load]);
+
+  // The Kibbe type only seeds the default shape; everything after that is
+  // whatever the person chose for themselves.
+  const figureTypeId = (profileRow && profileRow.kibbeResult && profileRow.kibbeResult.kibbeTypeId) || null;
+  useEffect(() => {
+    if(!profileRow) return;
+    const saved = profileRow.figure || (isMe ? loadLocal(FIGURE_KEY, null) : null);
+    setFigure(normalizeFigure(saved, figureTypeId));
+  }, [profileRow, figureTypeId, isMe]);
+
+  const figurePalette = seasonPalette(profileRow && profileRow.colorResult);
+  const figureOutfit = useMemo(() => figurePieces(closetItems || []), [closetItems]);
+
+  async function saveFigure(){
+    if(!figureDraft) return;
+    setFigureBusy(true); setFigureError(null);
+    try{
+      const updated = await Api.saveProfile(viewer.visitorId, {
+        name: (profileRow && profileRow.name) || viewer.name,
+        bio: (profileRow && profileRow.bio) || "",
+        authToken: viewer.token,
+        figure: figureDraft,
+      });
+      saveLocal(FIGURE_KEY, figureDraft);
+      setFigure(normalizeFigure((updated && updated.figure) || figureDraft, figureTypeId));
+      setProfileRow(prev => prev ? Object.assign({}, prev, { figure: figureDraft }) : prev);
+      track("figure_saved", {});
+      setFigureDraft(null);
+    }catch(err){
+      onAuthError(err);
+      // It is saved on this device either way -- losing a figure someone
+      // just spent two minutes on because the network blinked would be
+      // its own small insult.
+      saveLocal(FIGURE_KEY, figureDraft);
+      setFigureError(err.message || "Saved on this device, but couldn't reach the server.");
+    }finally{ setFigureBusy(false); }
+  }
 
   async function toggleFollow(){
     if(isMe || followBusy || !followerIds) return;
@@ -10760,7 +11618,7 @@ function ProfileScreen({ id, viewer, onBack, onOpenProfile, onNameChange, onMess
     e("div", { className:"profile-head" },
       profileRow && profileRow.avatarUrl
         ? e("button", { type:"button", className:"zoomable", style:{ padding:0, borderRadius:"50%", lineHeight:0 }, "aria-label":"View profile photo", onClick: () => openPhoto(mediaUrl(profileRow.avatarUrl), displayName) }, e(Avatar, { url: profileRow.avatarUrl, name:displayName, size:72 }))
-        : e(Avatar, { url: null, name:displayName, size:72 }),
+        : e(Avatar, { url: null, name:displayName, size:72, figure:figure }),
       e("div", { style:{ flex:1, minWidth:0 } },
         e("div", { className:"profile-name" }, displayName),
         (profileRow && profileRow.bio)
@@ -10825,6 +11683,22 @@ function ProfileScreen({ id, viewer, onBack, onOpenProfile, onNameChange, onMess
       styleWordNames.map(name => e("span", { key:name, className:"tab-chip tab-chip-accent", "aria-pressed":"true", style:{ marginRight:6, marginBottom:6, display:"inline-block" } }, name))
     ) : null,
 
+    figure ? e("div", { className:"card", style:{ margin:"14px 0" } },
+      e("div", { className:"fig-card" },
+        e(StyleFigure, { figure:figure, pieces:figureOutfit, palette:figurePalette, size:104,
+          label: isMe ? "Your figure" : displayName + "’s figure" }),
+        e("div", { className:"fig-card-body" },
+          e("div", { className:"eyebrow", style:{ marginBottom:4 } }, isMe ? "Your figure" : displayName + "’s figure"),
+          e("p", { className:"footnote", style:{ margin:"0 0 10px" } },
+            Object.keys(figureOutfit).length
+              ? (isMe ? "Wearing what you logged most recently." : "Wearing their most recent public pieces.")
+              : (isMe ? "Log a few closet pieces and they'll show up here." : "No public pieces to wear yet.")),
+          isMe ? e("button", { className:"btn btn-sm", onClick:() => { setFigureError(null); setFigureDraft(figure); track("figure_edit_open", {}); } },
+            "Edit figure") : null
+        )
+      )
+    ) : null,
+
     (closetItems && closetItems.length > 0) ? e("div", { style:{ margin:"14px 0" } },
       e("div", { className:"eyebrow", style:{ marginBottom:8 } }, isMe ? "Your public closet items" : displayName + "’s closet"),
       e("div", { className:"row-list" },
@@ -10854,6 +11728,18 @@ function ProfileScreen({ id, viewer, onBack, onOpenProfile, onNameChange, onMess
       currentProfile: profileRow || { name:viewer.name, bio:"", avatarUrl:null },
       onSaved: handleSaved,
       onClose: () => setShowEdit(false)
+    }) : null,
+
+    figureDraft ? e(FigureEditor, {
+      figure: figureDraft,
+      kibbeTypeId: figureTypeId,
+      palette: figurePalette,
+      pieces: figureOutfit,
+      busy: figureBusy,
+      error: figureError,
+      onChange: setFigureDraft,
+      onSave: saveFigure,
+      onClose: () => { setFigureDraft(null); setFigureError(null); },
     }) : null,
 
     showCompare ? e(CompareSheet, {

@@ -37,6 +37,7 @@ const EVENT_NAMES = [
     // Does anyone actually style anybody else? The whole bet of the
     // "Style them" feature is that they will.
     'outfit_suggestion_sent',
+    'figure_edit_open', 'figure_saved',
 ];
 
 $pdo = db();

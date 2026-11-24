@@ -746,6 +746,60 @@ function weekly_tip_for_type(array $tips, string $typeName, int $week): ?array {
 }
 
 /** profiles.color_result_json — the color-season quiz result, synced like kibbe_result_json. Lazy, idempotent. */
+/** The figure (avatar) a person built for themselves. Additive, idempotent. */
+function ensure_figure_column(PDO $pdo): void {
+    static $done = false; if ($done) return; $done = true;
+    try { $pdo->exec('ALTER TABLE profiles ADD COLUMN IF NOT EXISTS figure_json VARCHAR(700) DEFAULT NULL'); }
+    catch (Throwable $e) { error_log('ensure_figure_column: ' . $e->getMessage()); }
+}
+
+/**
+ * A figure is drawn in other people's browsers, so nothing reaches storage
+ * that was not chosen from these lists. Anything unrecognised is dropped
+ * rather than corrected, and a figure that survives with no recognisable
+ * keys at all is stored as null so the client falls back to its own
+ * Kibbe-derived default.
+ */
+function sanitize_figure(?string $raw): ?string {
+    if ($raw === null || $raw === '') return null;
+    if (strlen($raw) > 2000) return null;                 // nothing legitimate is this big
+    $in = json_decode($raw, true);
+    if (!is_array($in)) return null;
+
+    $allowed = [
+        'skin'      => ['s1','s2','s3','s4','s5','s6','s7','s8'],
+        'hair'      => ['short','crop','bob','long','curls','coils','updo','braids','wavy','bald'],
+        'hairColor' => ['h1','h2','h3','h4','h5','h6','h7','h8','h9','h10','h11','h12'],
+        'eyes'      => ['e1','e2','e3','e4','e5','e6'],
+        'nose'      => ['n1','n2','n3','n4'],
+        'mouth'     => ['m1','m2','m3','m4'],
+        'brow'      => ['b1','b2','b3'],
+    ];
+    $sliders = ['height','shoulders','torso','waist','hips','legs','arms'];
+
+    $out = [];
+    foreach ($allowed as $key => $values) {
+        $v = $in[$key] ?? null;
+        if (is_string($v) && in_array($v, $values, true)) $out[$key] = $v;
+    }
+    $body = [];
+    if (isset($in['body']) && is_array($in['body'])) {
+        foreach ($sliders as $k) {
+            if (!array_key_exists($k, $in['body'])) continue;
+            $n = $in['body'][$k];
+            if (!is_int($n) && !is_float($n) && !(is_string($n) && is_numeric($n))) continue;
+            $n = (float)$n;
+            if (!is_finite($n)) continue;
+            $body[$k] = round(max(0.0, min(1.0, $n)), 3);
+        }
+    }
+    if ($body) $out['body'] = $body;
+    if (!$out) return null;
+
+    $json = json_encode($out);
+    return ($json !== false && strlen($json) <= 700) ? $json : null;
+}
+
 function ensure_color_result_column(PDO $pdo): void {
     static $done = false; if ($done) return; $done = true;
     try { $pdo->exec('ALTER TABLE profiles ADD COLUMN IF NOT EXISTS color_result_json MEDIUMTEXT DEFAULT NULL'); }

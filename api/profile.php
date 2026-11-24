@@ -6,7 +6,8 @@ $id = (string)($_GET['id'] ?? '');
 
 if ($_SERVER['REQUEST_METHOD'] === 'GET') {
     ensure_color_result_column($pdo);
-    $stmt = $pdo->prepare('SELECT id, name, bio, avatar_url, kibbe_type_name, style_words, kibbe_result_json, style_blend_json, color_result_json FROM profiles WHERE id = ?');
+    ensure_figure_column($pdo);
+    $stmt = $pdo->prepare('SELECT id, name, bio, avatar_url, kibbe_type_name, style_words, kibbe_result_json, style_blend_json, color_result_json, figure_json FROM profiles WHERE id = ?');
     $stmt->execute([$id]);
     $existing = $stmt->fetch();
     if ($existing) {
@@ -46,6 +47,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
             // Color-season quiz result, synced the same way so it follows
             // the account to a new device / a fresh sign-in.
             'colorResult' => $colorResult,
+            // The figure this person built for themselves. Null until
+            // they open the editor; the client then draws its own
+            // default from their Kibbe type instead.
+            'figure' => !empty($existing['figure_json']) ? json_decode($existing['figure_json'], true) : null,
         ]);
     }
 
@@ -64,6 +69,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
         'styleWords' => [],
         'kibbeResult' => null,
         'styleBlend' => null,
+        'figure' => null,
         'exists' => false,
     ]);
 }
@@ -76,11 +82,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     // deployment-status.md's audit notes.
     require_owner($pdo, $id, (string)($_POST['authToken'] ?? ''));
 
+    ensure_figure_column($pdo);
+
     $name = mb_substr(trim((string)($_POST['name'] ?? '')), 0, 60);
     $bio = mb_substr(trim((string)($_POST['bio'] ?? '')), 0, 160);
     if (!$name) error_response('Name is required.', 400);
 
-    $stmt = $pdo->prepare('SELECT avatar_url FROM profiles WHERE id = ?');
+    // Absent means "leave it alone" -- Edit profile posts no figure, and
+    // must not wipe one the person built in the figure editor.
+    $figureSent = array_key_exists('figure', $_POST);
+    $figure = $figureSent ? sanitize_figure((string)$_POST['figure']) : null;
+
+    $stmt = $pdo->prepare('SELECT avatar_url, figure_json FROM profiles WHERE id = ?');
     $stmt->execute([$id]);
     $existing = $stmt->fetch();
 
@@ -92,15 +105,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $avatarUrl = $uploadedUrl ?: ($existing ? $existing['avatar_url'] : null);
     $now = current_time_ms();
 
+    $figureJson = $figureSent ? $figure : ($existing ? ($existing['figure_json'] ?? null) : null);
+
     if ($existing) {
-        $upd = $pdo->prepare('UPDATE profiles SET name = ?, bio = ?, avatar_url = ?, updated_at = ? WHERE id = ?');
-        $upd->execute([$name, $bio, $avatarUrl, $now, $id]);
+        $upd = $pdo->prepare('UPDATE profiles SET name = ?, bio = ?, avatar_url = ?, figure_json = ?, updated_at = ? WHERE id = ?');
+        $upd->execute([$name, $bio, $avatarUrl, $figureJson, $now, $id]);
     } else {
-        $ins = $pdo->prepare('INSERT INTO profiles (id, name, bio, avatar_url, updated_at) VALUES (?, ?, ?, ?, ?)');
-        $ins->execute([$id, $name, $bio, $avatarUrl, $now]);
+        $ins = $pdo->prepare('INSERT INTO profiles (id, name, bio, avatar_url, figure_json, updated_at) VALUES (?, ?, ?, ?, ?, ?)');
+        $ins->execute([$id, $name, $bio, $avatarUrl, $figureJson, $now]);
     }
 
-    json_response(['id' => $id, 'name' => $name, 'bio' => $bio, 'avatarUrl' => $avatarUrl]);
+    json_response([
+        'id' => $id, 'name' => $name, 'bio' => $bio, 'avatarUrl' => $avatarUrl,
+        'figure' => $figureJson ? json_decode($figureJson, true) : null,
+    ]);
 }
 
 error_response('Method not allowed.', 405);
