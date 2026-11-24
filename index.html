@@ -3141,8 +3141,28 @@ const LoreyVoice = (function(){
     });
   }
 
+  /* Android in particular hands back an empty voice list on the first
+     call and fills it a moment later, so asking once and taking what you
+     get means her first sentence comes out in the system default — which
+     is as likely to be a man as a woman. Wait for the list, briefly, and
+     only on the first utterance; after that it is already warm. */
+  function withVoices(go){
+    let list = [];
+    try{ list = window.speechSynthesis.getVoices() || []; }catch(err){}
+    if(list.length) return go();
+    let fired = false;
+    const run = () => { if(fired) return; fired = true; go(); };
+    try{ window.speechSynthesis.addEventListener("voiceschanged", run, { once:true }); }
+    catch(err){ try{ window.speechSynthesis.onvoiceschanged = run; }catch(e2){} }
+    setTimeout(run, 800);          // never leave her mute waiting for a list
+  }
+
   function speakDevice(text, done){
     if(!can()) { if(done) done(); return; }
+    withVoices(() => speakNow(text, done));
+  }
+
+  function speakNow(text, done){
     const u = new SpeechSynthesisUtterance(text);
     const v = pickVoice();
     if(v){ u.voice = v; u.lang = v.lang || "en-US"; }
