@@ -905,6 +905,10 @@
   .lorey-portrait{ flex:0 0 auto; width:76px; height:76px; border-radius:50%; overflow:hidden;
     background:var(--accent-soft); border:1px solid var(--line-soft); }
   .lorey-portrait .style-figure{ display:block; }
+  .lorey-tap{ display:block; padding:0; border:0; background:none; cursor:pointer; line-height:0;
+    border-radius:50%; }
+  .lorey-tap:focus-visible{ outline:2px solid var(--accent); outline-offset:3px; }
+  .lorey-tap:active{ transform:scale(.97); }
   .suggestion-worn{ display:flex; gap:12px; align-items:center; }
   .suggestion-worn .suggestion-row{ flex:1; min-width:0; }
   .fig-card{ display:flex; gap:14px; align-items:center; }
@@ -2649,6 +2653,11 @@ function renderFigure(h, opts){
   const hairCol = byId(HAIR_COLORS, fig.hairColor).hex;
   const eyeCol = byId(EYE_COLORS, fig.eyes).hex;
   const g = figureGeometry(fig.body, fig.face);
+  /* Expression. A static drawing is a picture; a drawing that blinks,
+     breathes, looks at you and moves its mouth while it answers is a
+     character. All of it is a handful of numbers applied at draw time,
+     so nothing about the figure itself has to change. */
+  const X = Object.assign({ blink:0, mouth:0, brow:0, gazeX:0, gazeY:0, tilt:0, lean:0 }, o.expr || {});
   const FA = g.face;
   const L = (a, z, t) => a + (z - a) * t;
   const wear = fig.wear || {};
@@ -2804,17 +2813,28 @@ function renderFigure(h, opts){
     defs.push(h("clipPath", { key:"c" + side, id:clipId }, [h("path", { key:"p", d:E.almond })]));
     kids.push(h("path", { key:"sclera" + side, d:E.almond, fill:"#F6F1EA" }));
     kids.push(h("g", { key:"iris" + side, clipPath:"url(#" + clipId + ")" }, [
-      h("circle", { key:"i", cx:E.ex, cy:E.ey - E.h * .10, r:irisR, fill:eyeCol }),
-      h("circle", { key:"ir", cx:E.ex, cy:E.ey - E.h * .10, r:irisR, fill:"none",
+      h("circle", { key:"i", cx:E.ex + X.gazeX * irisR, cy:E.ey - E.h * .10 + X.gazeY * irisR, r:irisR, fill:eyeCol }),
+      h("circle", { key:"ir", cx:E.ex + X.gazeX * irisR, cy:E.ey - E.h * .10 + X.gazeY * irisR, r:irisR, fill:"none",
                     stroke:"#2A2622", strokeWidth:irisR * .22, strokeOpacity:.45 }),
-      h("circle", { key:"p", cx:E.ex, cy:E.ey - E.h * .10, r:irisR * .45, fill:"#17150F" }),
-      h("circle", { key:"gl", cx:E.ex - irisR * .34, cy:E.ey - E.h * .52, r:irisR * .24, fill:"#FFFFFF", opacity:.9 }),
+      h("circle", { key:"p", cx:E.ex + X.gazeX * irisR, cy:E.ey - E.h * .10 + X.gazeY * irisR, r:irisR * .45, fill:"#17150F" }),
+      h("circle", { key:"gl", cx:E.ex - irisR * .34 + X.gazeX * irisR, cy:E.ey - E.h * .52 + X.gazeY * irisR, r:irisR * .24, fill:"#FFFFFF", opacity:.9 }),
       // The upper lid always covers a little of the iris. Eyes drawn as
       // a full circle on white are what makes a face look startled.
       h("path", { key:"ls", d:["M", E.ex - E.w * 1.1, E.ey - E.h * 1.5, "L", E.ex + E.w * 1.1, E.ey - E.h * 1.5,
                                "L", E.ex + E.w * 1.1, E.ey - E.h * .52, "L", E.ex - E.w * 1.1, E.ey - E.h * .30, "Z"].join(" "),
         fill:mix(skin.shade, "#000000", .10), opacity:.55 }),
     ]));
+    // The lid comes down over the eye. A blink is the single cheapest
+    // thing that makes a drawn face feel alive.
+    if(X.blink > .01){
+      kids.push(h("g", { key:"lid" + side, clipPath:"url(#" + clipId + ")" }, [
+        h("rect", { key:"r", x:E.ex - E.w * 1.3, y:E.ey - E.h * 1.9,
+                    width:E.w * 2.6, height:E.h * 3.4 * X.blink, fill:mid }),
+        h("path", { key:"e", d:["M", E.ex - E.w * 1.3, E.ey - E.h * 1.9 + E.h * 3.4 * X.blink,
+                                "L", E.ex + E.w * 1.3, E.ey - E.h * 1.9 + E.h * 3.4 * X.blink].join(" "),
+                    stroke:"#2A2420", strokeWidth:E.h * .34, strokeOpacity:.75 }),
+      ]));
+    }
     kids.push(h("path", { key:"lash" + side, d:E.lid, fill:"none", stroke:"#2A2420",
                           strokeWidth:E.h * .40, strokeOpacity:.80, strokeLinecap:"round" }));
     kids.push(h("path", { key:"crease" + side,
@@ -2823,7 +2843,8 @@ function renderFigure(h, opts){
     kids.push(h("path", { key:"brow" + side, d:browPath(fig.brow, g, side),
       fill:"none", stroke:mix(hairCol, "#000000", .12),
       strokeWidth:g.headR * L(.032, .095, FA.browThick),
-      strokeOpacity:.88, strokeLinecap:"round" }));
+      strokeOpacity:.88, strokeLinecap:"round",
+      transform: X.brow ? ("translate(0 " + (-X.brow * g.headR * .10) + ")") : undefined }));
   });
 
   // Nose: a shadow down one side and under the tip, not an outline.
@@ -2836,6 +2857,15 @@ function renderFigure(h, opts){
   // lower lip. A single flat lozenge reads as a sticker.
   const lipCol = mix(skin.shade, "#A14B4B", .55);
   kids.push(h("path", { key:"mouth", d:mouthPath(fig.mouth, g), fill:lipCol, opacity:.92 }));
+  if(X.mouth > .02){
+    const my = g.headCy + g.headR * .80;
+    const mw = g.headR * .22 * L(.74, 1.34, FA.mouthWidth);
+    kids.push(h("ellipse", { key:"mouthopen", cx:g.cx, cy:my + g.headR * .06 * X.mouth,
+      rx:mw * (.72 + .28 * X.mouth), ry:g.headR * .20 * X.mouth,
+      fill:mix(lipCol, "#000000", .62) }));
+    kids.push(h("ellipse", { key:"teeth", cx:g.cx, cy:my - g.headR * .02 * X.mouth,
+      rx:mw * (.62 + .24 * X.mouth), ry:g.headR * .055 * X.mouth, fill:"#F4EFE6", opacity:.92 }));
+  }
   kids.push(h("path", { key:"mouthline",
     d:["M", g.cx - g.headR * .20, g.headCy + g.headR * .56, "Q", g.cx, g.headCy + g.headR * .585,
        g.cx + g.headR * .20, g.headCy + g.headR * .56].join(" "),
@@ -2898,12 +2928,120 @@ function renderFigure(h, opts){
     className:o.className || "style-figure",
     role:"img", "aria-label":o.label || "Style figure",
     style:o.style,
-  }, [h("defs", { key:"d" }, defs)].concat(kids.filter(Boolean)));
+  }, [h("defs", { key:"d" }, defs),
+      (X.tilt || X.lean)
+        ? h("g", { key:"stage",
+            transform:"rotate(" + (X.tilt * 2.2) + " " + g.cx + " " + g.shoulderY +
+                      ") translate(0 " + (X.lean * 1.4) + ")" }, kids.filter(Boolean))
+        : h("g", { key:"stage" }, kids.filter(Boolean))]);
 }
 
 /* ---- the figure in the app ---------------------------------------- */
 
 const FIGURE_KEY = "lore_figure";
+
+
+/* ---- Lorey, animated -------------------------------------------------
+   A drawing that blinks, breathes, looks at you and moves its mouth
+   while it answers is a character; the same drawing held still is a
+   picture. This is the difference, and it is one requestAnimationFrame
+   loop over seven numbers.
+
+   Deliberately not a video, not a sprite sheet and not a 3D model: it
+   costs no download, runs at any size, and works on a phone with no
+   WebGL. The 3D version waits on a licensed mesh, not on this code.
+   -------------------------------------------------------------------- */
+function useLoreyExpression({ speaking, thinking, listening }){
+  const [expr, setExpr] = useState({ blink:0, mouth:0, brow:0, gazeX:0, gazeY:0, tilt:0, lean:0 });
+  const state = useRef({ nextBlink: 1200, blinkT: -1, speakUntil: 0, seed: 1 });
+
+  useEffect(() => {
+    if(!speaking) return;
+    // Mouth moves for about as long as the sentence takes to read, so it
+    // stops when she stops rather than running on a timer of its own.
+    const ms = Math.min(14000, 700 + String(speaking).length * 42);
+    state.current.speakUntil = performance.now() + ms;
+    state.current.seed = (String(speaking).length % 97) + 1;
+  }, [speaking]);
+
+  useEffect(() => {
+    let raf = 0, last = performance.now(), t = 0;
+    // Respect the system setting. Someone who has asked for less motion
+    // should get a calm face, not a fidgeting one.
+    let still = false;
+    try{ still = window.matchMedia("(prefers-reduced-motion: reduce)").matches; }catch(err){}
+
+    const tick = now => {
+      const dt = Math.min(64, now - last); last = now; t += dt;
+      const S = state.current;
+
+      // blink
+      let blink = 0;
+      if(!still){
+        if(S.blinkT >= 0){
+          S.blinkT += dt;
+          const D = 150;
+          blink = S.blinkT < D * .45 ? (S.blinkT / (D * .45))
+                : S.blinkT < D ? (1 - (S.blinkT - D * .45) / (D * .55)) : 0;
+          if(S.blinkT >= D){ S.blinkT = -1; S.nextBlink = 2200 + Math.random() * 4200; }
+        } else {
+          S.nextBlink -= dt;
+          if(S.nextBlink <= 0) S.blinkT = 0;
+        }
+      }
+
+      // breath
+      const breathe = still ? 0 : Math.sin(t / 1900);
+      const sway = still ? 0 : Math.sin(t / 2600 + 1.1);
+
+      // mouth while she is answering: a cheap viseme chain, varied by the
+      // text so two different answers do not mouth identically.
+      let mouth = 0;
+      if(now < S.speakUntil && !still){
+        const step = Math.floor(t / 95);
+        const n = Math.abs(Math.sin(step * 12.9898 * S.seed) * 43758.5453) % 1;
+        mouth = .18 + n * .72;
+      }
+
+      setExpr({
+        blink: blink,
+        mouth: mouth,
+        brow: thinking ? .75 : listening ? .35 : (mouth > .5 ? .18 : 0),
+        gazeX: thinking ? .72 : listening ? 0 : sway * .16,
+        gazeY: thinking ? -.45 : listening ? .12 : 0,
+        tilt: thinking ? .5 : (listening ? -.28 : sway * .35),
+        lean: breathe * .5 + (listening ? -1.1 : 0),
+      });
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [thinking, listening]);
+
+  return expr;
+}
+
+/* The stage: Lorey at a size you can see, animated, and tappable. */
+function LoreyStage({ size, speaking, thinking, listening, onTap, label }){
+  const expr = useLoreyExpression({ speaking, thinking, listening });
+  const fig = normalizeFigure(LOREY_FIGURE, null);
+  const art = e(StyleFigure, {
+    figure: fig,
+    pieces: { top: { description: "top" } },
+    palette: ["#B9867A"],
+    crop: "portrait",
+    size: size || 96,
+    expr: expr,
+    className: "style-figure lorey-figure",
+    label: label || "Lorey, the Style-LORE stylist",
+  });
+  if(!onTap) return art;
+  return e("button", {
+    type:"button", className:"lorey-tap",
+    onClick:onTap,
+    "aria-label":"Talk to Lorey",
+  }, art);
+}
 
 /* Lorey, drawn with the same system as everybody else. A fixed figure
    rather than a special illustration: whatever improves the figures
@@ -2922,13 +3060,13 @@ function LoreyPortrait({ size, crop }){
 
 /* Pattern ids live in one document-wide namespace, so every figure on
    screen needs its own. React's useId is exactly this. */
-function StyleFigure({ figure, pieces, size, palette, className, style, label, crop }){
+function StyleFigure({ figure, pieces, size, palette, className, style, label, crop, expr }){
   const uid = React.useId().replace(/[^a-zA-Z0-9_-]/g, "");
   const fig = (figure && figure.body) ? figure : normalizeFigure(figure, null);
   return renderFigure(e, {
     figure: fig, pieces: pieces || {}, uid: "fg" + uid, size: size || 220,
     palette: palette, className: className || "style-figure", style: style,
-    label: label || "Style figure", crop: crop,
+    label: label || "Style figure", crop: crop, expr: expr,
   });
 }
 
@@ -10064,6 +10202,12 @@ function CheckerScreen({ blend, styleWordBlend, kibbeTypeName, topStyleWords, vi
   // each time). Lives here and nowhere else: like the photo, it is never
   // stored server side.
   const [aiThread, setAiThread] = useState([]);
+  // What Lorey is doing with her face. "speaking" carries the text, so her
+  // mouth runs for as long as that answer takes to read rather than on a
+  // fixed timer.
+  const [loreySaying, setLoreySaying] = useState(null);
+  const [loreyListening, setLoreyListening] = useState(false);
+  const askInputRef = useRef(null);
   const [aiAskDraft, setAiAskDraft] = useState("");
   const [aiAskBusy, setAiAskBusy] = useState(false);
   const [aiAskError, setAiAskError] = useState(null);
@@ -10178,6 +10322,7 @@ function CheckerScreen({ blend, styleWordBlend, kibbeTypeName, topStyleWords, vi
     // than stored, so a correction-and-re-read starts the conversation over
     // against the corrected reading instead of dragging the old one along.
     const readText = [aiResult.item ? "Reading this as " + aiResult.item + "." : "", aiResult.headline, aiResult.detail, aiResult.suggestion].filter(Boolean).join(" ");
+    setLoreySaying(readText);
     try{
       const res = await Api.askStylist({
         visitorId, authToken, photoBlob, question:q,
@@ -10185,6 +10330,7 @@ function CheckerScreen({ blend, styleWordBlend, kibbeTypeName, topStyleWords, vi
         kibbeTypeName, topStyleWords
       });
       setAiThread(aiThread.concat([{ role:"user", text:q }, { role:"assistant", text:res.answer }]));
+      setLoreySaying(res.answer);
       setAiAskDraft("");
     }catch(err){
       if(err.code === "ai_consent_required"){ aiConsentRef.current = false; setAiConsent(false); setAfterConsent("ask"); setShowAiConsent(true); }
@@ -10339,7 +10485,23 @@ function CheckerScreen({ blend, styleWordBlend, kibbeTypeName, topStyleWords, vi
       // everyone else's figure so she can never drift out of the house
       // style.
       e("div", { className:"lorey-intro" },
-        e("div", { className:"lorey-portrait" }, e(LoreyPortrait, { size:76 })),
+        e("div", { className:"lorey-portrait" },
+          e(LoreyStage, {
+            size:76,
+            speaking: loreySaying,
+            thinking: aiAskBusy || aiBusy,
+            listening: loreyListening,
+            // Tapping her is how you start talking to her. Premium gets
+            // the box focused; everyone else hears what she is, from her.
+            onTap: () => {
+              setLoreySaying(isPremium
+                ? "Hi \u2014 I'm Lorey. Show me a photo and I'll tell you what's working and what I'd change."
+                : "Hi \u2014 I'm Lorey. I read photos for Premium members. Add one and I'll show you what I mean.");
+              try{ track("lorey_tap", {}); }catch(err){}
+              if(isPremium && askInputRef.current){ try{ askInputRef.current.focus(); }catch(err){} }
+            },
+          })
+        ),
         e("div", { style:{ flex:1, minWidth:0 } },
           e("div", { className:"eyebrow", style:{ marginBottom:4 } }, isPremium ? "Lorey" : hasFreeRead ? "Lorey · your first read is free" : "Lorey · Premium"),
           e("div", { style:{ fontSize:15, fontWeight:600, marginBottom:6 } }, photoBlob ? "Want Lorey's read on this photo?" : "Want Lorey's read on a photo?"),
@@ -10432,10 +10594,17 @@ function CheckerScreen({ blend, styleWordBlend, kibbeTypeName, topStyleWords, vi
             ? e("div", null,
                 e("div", { className:"field", style:{ marginBottom:0 } },
                   e("input", {
+                    ref: askInputRef,
                     type:"text", value:aiAskDraft, maxLength:400,
-                    placeholder: aiThread.length ? "Ask another…" : "Ask the stylist about this photo…",
-                    "aria-label":"Ask the stylist about this photo",
+                    placeholder: aiThread.length ? "Ask Lorey another…" : "Ask Lorey about this photo…",
+                    "aria-label":"Ask Lorey about this photo",
                     onChange: ev => setAiAskDraft(ev.target.value),
+                    // She looks at you while you are typing to her, and back
+                    // to resting when you stop. That one detail is most of
+                    // the difference between a picture and someone paying
+                    // attention.
+                    onFocus: () => setLoreyListening(true),
+                    onBlur: () => setLoreyListening(false),
                     onKeyDown: ev => { if(ev.key === "Enter"){ ev.preventDefault(); askStylist(); } }
                   })
                 ),

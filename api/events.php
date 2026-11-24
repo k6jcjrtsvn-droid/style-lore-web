@@ -38,6 +38,7 @@ const EVENT_NAMES = [
     // "Style them" feature is that they will.
     'outfit_suggestion_sent',
     'figure_edit_open', 'figure_saved',
+    'lorey_tap',
 ];
 
 $pdo = db();
