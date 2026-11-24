@@ -1,6 +1,6 @@
 import json, math, os, sys, collections
 sys.path.insert(0, '/home/claude/mh')
-import anat, wardrobe, hair as HAIR
+import anat, wardrobe, wardrobe2, footwear, cutter, hair as HAIR
 
 RAW=[]; FACES=[]; cur=None
 for line in open('base.obj'):
@@ -153,12 +153,13 @@ def build(spec):
                  'normal':[c for q in N for c in q],
                  'color':skin_colours(P,src,B2,N,adj,spec['skin'],spec['hairColor']),
                  'index':[i for f in TT for i in f],'n':len(P)}}
-    out['top']=wardrobe.top(B2,FACES, hem=spec.get('hem',0.47), sleeve=spec.get('sleeve',0.30))
+    nrm = cutter.body_normals(B2, FACES)
+    out['top']=wardrobe2.top(B2, FACES, nrm, spec.get('top','tee'))
     if spec.get('skirt'):
-        out['skirt']=wardrobe.skirt(B2,FACES, length=spec.get('skirtLen',0.30))
-    else:
-        out['bottom']=wardrobe.bottoms(B2,FACES)
-    out['shoes']=wardrobe.boots(B2,FACES)
+        out['skirt']=wardrobe2.skirt(B2, FACES, nrm, spec.get('skirt'))
+    if spec.get('bottom'):
+        out['bottom']=wardrobe2.bottoms(B2, FACES, nrm, spec.get('bottom'))
+    out['shoes']=footwear.build(B2, spec.get('shoes','flat'))
     out['lashes']=simple(v,{'helper-l-eyelashes-1','helper-l-eyelashes-2',
                             'helper-r-eyelashes-1','helper-r-eyelashes-2'})
     eye=ball(v,'helper-l-eye'); out['eyeL']=eye; out['eyeR']=ball(v,'helper-r-eye')
