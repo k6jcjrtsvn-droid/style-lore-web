@@ -11,7 +11,7 @@
    can take typed-array views straight onto the buffer with no copying."""
 import json, struct, sys, os, gzip
 sys.path.insert(0, '/home/claude/mh')
-import build_avatar as BA, kibbe
+import build_avatar as BA, kibbe, sliders
 
 OUT = sys.argv[1] if len(sys.argv) > 1 else '/home/claude/cine/avatar-base-v1.bin'
 
@@ -22,6 +22,8 @@ names = set('macrodetails/' + m for m in MACRO)
 for fam in ('dramatic', 'natural', 'classic', 'gamine', 'romantic'):
     for path, w in kibbe.shape_for({fam: 1.0}):
         names.add(path)
+# every target the twelve body sliders and fifteen face sliders can reach
+names.update(sliders.all_targets())
 for t in getattr(kibbe, 'TYPES', []):
     tid = t['id'] if isinstance(t, dict) else t
     try:
@@ -157,6 +159,10 @@ header = {
     'kibbe': {'family': kibbe.FAMILY, 'modYang': kibbe.MOD_YANG,
               'modYin': kibbe.MOD_YIN,
               'types': {k: v for k, v in kibbe.TYPES}},
+    'sliders': {'body': {k: [list(map(list, u)), list(map(list, d))]
+                         for k, (u, d) in sliders.BODY.items()},
+                'face': {k: [list(map(list, u)), list(map(list, d))]
+                         for k, (u, d) in sliders.FACE.items()}},
     'helpers': hgroups, 'hn': len(hids),
     'ref': {
         'shoulder': {str(k): int(v) for k, v in R['shoulder'].items()},

@@ -4121,14 +4121,18 @@ function Figure3D({ figure, kibbeTypeId, onClose }){
       // the 2D figure is still there; this view is the extra, not the floor
       try{ track("figure_3d_failed", { message: String(err && err.message || err).slice(0, 120) }); }catch(e){}
     });
-    let dragging = false, lastX = 0;
-    const down = ev => { dragging = true; lastX = ev.clientX;
+    let dragging = false, lastX = 0, lastY = 0;
+    const down = ev => { dragging = true; lastX = ev.clientX; lastY = ev.clientY;
                          canvas.setPointerCapture && canvas.setPointerCapture(ev.pointerId); };
     const move = ev => { if(!dragging || !viewRef.current) return;
-                         viewRef.current.spin(ev.clientX - lastX); lastX = ev.clientX; };
+                         viewRef.current.spin(ev.clientX - lastX, ev.clientY - lastY);
+                         lastX = ev.clientX; lastY = ev.clientY;
+                         if(ev.cancelable) ev.preventDefault(); };
     const up = () => { dragging = false; };
     canvas.addEventListener("pointerdown", down);
-    canvas.addEventListener("pointermove", move);
+    // passive:false so the drag can stop the page scrolling under it on a
+    // touch screen -- without it the figure turns and the page moves too
+    canvas.addEventListener("pointermove", move, { passive: false });
     canvas.addEventListener("pointerup", up);
     canvas.addEventListener("pointercancel", up);
     return () => {
@@ -4157,7 +4161,7 @@ function Figure3D({ figure, kibbeTypeId, onClose }){
     e("p", { className:"fig3d-note" },
       status === "loading" ? "Building your figure\u2026"
       : status === "error" ? "This device could not open the 3D view. Your figure is unchanged."
-      : "Drag to turn her. Built in " + ms + " ms."
+      : "Drag to turn her all the way round. Built in " + ms + " ms."
     )
   );
 }

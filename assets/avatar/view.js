@@ -5,7 +5,7 @@
    until someone actually opens the 3D view. The app's own 2D figure is
    untouched and is still what the feed, the profile and Lorey use. */
 import * as THREE from '../three.module.js';
-import { loadBase, applyMix, groupCentre, styliseHead, shapeFor, MACRO_NEUTRAL }
+import { loadBase, applyMix, groupCentre, styliseHead, shapeFor, sliderMix, MACRO_NEUTRAL }
   from './avatar.js';
 import { makeBody, armsDown, bodyNormals } from './body.js';
 import { top as mkTop, bottoms as mkBottom, skirt as mkSkirt, shoes as mkShoes }
@@ -116,7 +116,8 @@ export async function mount(canvas, opts){
   ]);
   const SK = { mask, warm, normal, rough };
 
-  let group = null, yaw = .30, raf = 0, alive = true;
+  let group = null, yaw = .30, pitch = 0, raf = 0, alive = true;
+  let refSpan = 0;
   let only = null;   // isolation: draw one part on its own
   const EYE = { tex: null, hex: null };
   function eyeball(centre, radius, hex){
@@ -211,8 +212,13 @@ export async function mount(canvas, opts){
   function update(fig, kibbeTypeId){
     if(!alive) return 0;
     const t0 = performance.now();
+    /* The Kibbe result is the starting shape; the member's own sliders
+       are applied on top of it, which is the order the editor presents
+       them in -- "these start from your result, move anything you like". */
     const vec = (B.head.kibbe.types || {})[kibbeTypeId] || { classic:1 };
-    const mix = MACRO_NEUTRAL.concat(shapeFor(B, vec));
+    const mix = MACRO_NEUTRAL
+      .concat(shapeFor(B, vec))
+      .concat(sliderMix(B, fig.body, fig.face));
     const { body, helper } = applyMix(B, mix);
     const eL = groupCentre(B, helper, 'helper-l-eye');
     const eR = groupCentre(B, helper, 'helper-r-eye');
@@ -279,9 +285,17 @@ export async function mount(canvas, opts){
     const span = bb.max.y - bb.min.y;
     group.position.set(-c0.x, -bb.min.y, -c0.z);
     scene.add(group);
-    rig(span);
-    const dist = (span*.56) / Math.tan(22*Math.PI/360);
-    cam.position.set(0, span*.52, dist); cam.lookAt(0, span*.52, 0);
+    /* Frame on a FIXED height, not on the figure's own. Fitting the
+       camera to each figure normalises height straight back out -- the
+       height slider moved the mesh and the picture never changed, which
+       in a body editor is the one thing it must not do. The first figure
+       built sets the reference and every later one is measured against
+       it. */
+    if(!refSpan) refSpan = span;
+    rig(refSpan);
+    const frame = refSpan * 1.06;
+    const dist = (frame*.56) / Math.tan(22*Math.PI/360);
+    cam.position.set(0, frame*.52, dist); cam.lookAt(0, frame*.52, 0);
     render();
     return performance.now() - t0;
   }
@@ -306,7 +320,11 @@ export async function mount(canvas, opts){
       new THREE.ShadowMaterial({ opacity:.46 }));
     floor.rotation.x = -Math.PI/2; floor.receiveShadow = true; scene.add(floor);
   }
-  function render(){ if(!alive) return; if(group) group.rotation.y = yaw; r.render(scene, cam); }
+  function render(){
+    if(!alive) return;
+    if(group){ group.rotation.y = yaw; group.rotation.x = pitch; }
+    r.render(scene, cam);
+  }
   function disposeTree(root){
     root.traverse(ob => {
       if(!ob.isMesh) return;
@@ -314,7 +332,13 @@ export async function mount(canvas, opts){
       if(ob.material) ob.material.dispose();
     });
   }
-  function spin(dx){ yaw += dx * .01; render(); }
+  function spin(dx, dy){
+    yaw += dx * .011;
+    // a little tilt, firmly clamped: past about fifteen degrees a figure
+    // standing on a shadow plane starts to look like it is falling over
+    if(dy) pitch = Math.max(-0.26, Math.min(0.26, pitch + dy * .006));
+    render();
+  }
   function setYaw(a){ yaw = a; render(); }
   function snapshot(){ render(); return canvas.toDataURL('image/png'); }
   function dispose(){

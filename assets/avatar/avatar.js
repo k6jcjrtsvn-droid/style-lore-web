@@ -199,3 +199,32 @@ export const MACRO_NEUTRAL = [
   ['macrodetails/african-female-young', .28],
   ['macrodetails/asian-female-young', .22],
 ];
+
+/* The editor's own sliders, as morph weights.
+
+   Twelve for the body and fifteen for the face, each 0..1 with 0.5
+   neutral, each mapped to a list of targets for the way up and another
+   for the way down. The table lives in the bundle, exported from
+   sliders.py at pack time, so there is one copy of it. */
+export function sliderMix(B, body, face){
+  const S = B.head.sliders;
+  if(!S) return [];
+  const out = {};
+  const take = (tbl, vals) => {
+    if(!vals) return;
+    for(const key in tbl){
+      const v = vals[key];
+      if(v == null) continue;
+      const d = (+v - 0.5) * 2;
+      if(Math.abs(d) < 0.02) continue;
+      const list = d > 0 ? tbl[key][0] : tbl[key][1];
+      for(const [t, w] of list) out[t] = (out[t] || 0) + w * Math.abs(d);
+    }
+  };
+  take(S.body, body);
+  take(S.face, face);
+  const list = [];
+  for(const t of Object.keys(out).sort())
+    if(out[t] > 0.004) list.push([t, Math.min(1, Math.round(out[t]*1000)/1000)]);
+  return list;
+}
