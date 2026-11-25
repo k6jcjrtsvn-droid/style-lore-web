@@ -752,8 +752,16 @@ function ensure_figure_column(PDO $pdo): void {
     try {
         $pdo->exec('ALTER TABLE profiles ADD COLUMN IF NOT EXISTS figure_json VARCHAR(1800) DEFAULT NULL');
         // Widened when the figure grew from 7 numbers to 27 plus a
-        // wardrobe. MODIFY is a no-op when it is already this wide.
-        $pdo->exec('ALTER TABLE profiles MODIFY COLUMN figure_json VARCHAR(1800) DEFAULT NULL');
+        // wardrobe. MODIFY rewrites the table, so it is asked for only
+        // when the column is actually still the old width -- it was
+        // running on every request that touched a profile.
+        $st = $pdo->query("SELECT CHARACTER_MAXIMUM_LENGTH FROM information_schema.COLUMNS
+                            WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'profiles'
+                              AND COLUMN_NAME = 'figure_json'");
+        $len = $st ? (int)$st->fetchColumn() : 0;
+        if ($len > 0 && $len < 1800) {
+            $pdo->exec('ALTER TABLE profiles MODIFY COLUMN figure_json VARCHAR(1800) DEFAULT NULL');
+        }
     }
     catch (Throwable $e) { error_log('ensure_figure_column: ' . $e->getMessage()); }
 }
@@ -843,7 +851,10 @@ function sanitize_figure(?string $raw): ?string {
             $wear[$slot] = ['style' => $style, 'color' => $color];
         }
     }
-    if ($wear) $out['wear'] = $wear;
+    // An empty wardrobe is an answer -- it means the person took
+    // everything off -- and has to survive as an empty object, or the
+    // client hands them the default outfit back on the next device.
+    if (isset($in['wear']) && is_array($in['wear'])) $out['wear'] = (object)$wear;
 
     if (!$out) return null;
 
