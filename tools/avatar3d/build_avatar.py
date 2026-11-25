@@ -1,6 +1,6 @@
 import json, math, os, sys, collections
 sys.path.insert(0, '/home/claude/mh')
-import anat, wardrobe, wardrobe2, footwear, cutter, hair as HAIR
+import anat, wardrobe, wardrobe2, footwear, cutter, hair as HAIR, hairgen
 
 RAW=[]; FACES=[]; UVRAW=[]; UVOF={}; cur=None
 for line in open('base.obj'):
@@ -179,9 +179,19 @@ def build(spec):
     out['lashes']=simple(v,{'helper-l-eyelashes-1','helper-l-eyelashes-2',
                             'helper-r-eyelashes-1','helper-r-eyelashes-2'})
     eye=ball(v,'helper-l-eye'); out['eyeL']=eye; out['eyeR']=ball(v,'helper-r-eye')
-    h=HAIR.build_hair(P,TT,N,eye,{'front':.76,'thick':.05,'puff':.075,
-                                  'rings':11,'length':spec.get('hairLen',1.55)})
-    if h: out['hair']=h
+    hopt={'front':.76,'thick':.05,'puff':.075,
+          'rings':11,'length':spec.get('hairLen',1.55)}
+    # The cap stays, but dark and tight to the skull: it is only there so
+    # no scalp shows through the gaps between the cards.
+    cap=HAIR.scalp(P,TT,N,eye,{'front':hopt['front'],'thick':.030})
+    if cap:
+        out['hairCap']=hairgen.cap_mesh(cap)
+        out['hair']=hairgen.build(cap['pos'],cap['nrm'],cap['tris'],
+                                  style=spec.get('hairStyle','long'),
+                                  seed=spec.get('hairSeed',3))
+    else:
+        h=HAIR.build_hair(P,TT,N,eye,hopt)
+        if h: out['hair']=h
     ys=[q[1] for q in P]
     out['bounds']={'top':max(ys),'bot':min(ys)}
     out['palette']={'skin':spec['skin'],'hair':spec['hairColor'],

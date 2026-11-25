@@ -30,6 +30,8 @@ const load = (f, srgb) => {
   t.flipY = false; t.anisotropy = 8;
   return t;
 };
+const STRAND = load('./hair_strand.png', true);
+STRAND.wrapS = STRAND.wrapT = THREE.ClampToEdgeWrapping;
 const SKIN = {
   mask:   load('./skin_mask.png', false),
   warm:   load('./skin_warm.png', false),
@@ -100,6 +102,32 @@ function skinMat(opt){
    an anisotropic highlight that runs ACROSS the strands, dark roots and a
    rough, slightly translucent tip. r169 ships KHR anisotropy, so this is
    two properties rather than a custom shader. */
+/* Hair cards. alphaTest rather than blending: a card that writes depth
+   needs no sorting, and hair is the worst case for sorting there is --
+   hundreds of overlapping transparent quads seen from every angle. */
+function cardMat(hex){
+  const m = new THREE.MeshPhysicalMaterial({
+    // No sheen. Sheen is an additive lobe that ignores the base colour,
+    // so a tan sheenColor renders tan hair whatever colour the member
+    // picked -- with the base colour set to pure black it still came out
+    // blonde. The highlight belongs to anisotropy, which does respect it.
+    // alphaToCoverage instead of a hard alphaTest: a binary cut turns
+    // every strand into a polygon-looking shard, because the edge gets no
+    // anti-aliasing at all. Coverage dithering against MSAA gives a soft
+    // edge and still writes depth, so the cards need no sorting.
+    color:hex, map:STRAND, alphaTest:.30, transparent:false,
+    alphaToCoverage:true,
+    vertexColors:true, roughness:.56, metalness:0,
+    anisotropy:.55, anisotropyRotation:Math.PI/2,
+    sheen:0, envMapIntensity:.08, side:THREE.DoubleSide,
+  });
+  m.shadowSide = THREE.DoubleSide;
+  return m;
+}
+const capMat = hex => new THREE.MeshStandardMaterial({
+  color:new THREE.Color(hex).multiplyScalar(.45), roughness:.95,
+  metalness:0, envMapIntensity:.06, side:THREE.DoubleSide });
+
 function hairMat(hex){
   // Hair is dark and rough with ONE bright band across it. Driving the
   // env map, clearcoat and sheen up turned a brown cap into a chrome
@@ -268,9 +296,13 @@ window.show = (name, mode) => {
     ? new THREE.MeshLambertMaterial({ vertexColors:true, side:THREE.DoubleSide })
     : skinMat({ brow: HAIRC[E.palette.hair], lip: 0xa8554f });
   g.add(mesh(E.body, skin));
+  const hairHex = HAIRC[E.palette.hair];
+  if(E.hairCap) g.add(mesh(E.hairCap, flat
+    ? new THREE.MeshLambertMaterial({ color:hairHex, side:THREE.DoubleSide })
+    : capMat(hairHex)));
   if(E.hair) g.add(mesh(E.hair, flat
-    ? new THREE.MeshLambertMaterial({ color:HAIRC[E.palette.hair], side:THREE.DoubleSide })
-    : hairMat(HAIRC[E.palette.hair])));
+    ? new THREE.MeshLambertMaterial({ color:hairHex, side:THREE.DoubleSide })
+    : (E.hair.uv ? cardMat(hairHex) : hairMat(hairHex))));
   if(E.lashes) g.add(mesh(E.lashes, new THREE.MeshStandardMaterial({
     color:0x120b0a, roughness:.55, side:THREE.DoubleSide })));
   for(const k of ['eyeL','eyeR']){

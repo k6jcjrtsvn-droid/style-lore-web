@@ -93,3 +93,37 @@ def hair_for_body(pos, tris, N, headTopY, eyeY, opts):
        has to be found from the head's own proportions rather than handed in,
        because every body in the app is a different height."""
     return build_hair(pos, tris, N, {'c':[0.0, eyeY, 0.0], 'r':0.15}, opts)
+
+
+def scalp(pos, tris, N, eye, opts):
+    """The cap the hair grows out of, on its own.
+
+       build_hair() cuts this same region and then lofts a solid skirt off
+       its boundary, which is what makes a helmet. Cards need the cap but
+       not the skirt, so the cut is available separately."""
+    o = dict(opts or {})
+    ys=[p[1] for p in pos]; yTop=max(ys)
+    face=[p for p in pos if p[1]>yTop-2.4]
+    if not face: return None
+    zMin=min(p[2] for p in face); zMax=max(p[2] for p in face)
+    xMax=max(abs(p[0]) for p in face) or 1
+    eyeY=eye['c'][1]
+    front=o.get('front',0.80); lift=o.get('lift',0.0)
+    def hairline(p):
+        zf=max(0.0,min(1.0,(p[2]-zMin)/((zMax-zMin) or 1)))
+        return eyeY + front*(zf**1.5) - 0.06 + lift - 0.20*(abs(p[0])/xMax)
+    sc=[p[1] > hairline(p) for p in pos]
+    cap=[t for t in tris if sc[t[0]] and sc[t[1]] and sc[t[2]]]
+    if not cap: return None
+    m={}; P=[]; NN=[]; T=[]
+    thick=o.get('thick',0.045)
+    for t in cap:
+        f=[]
+        for i in t:
+            if i not in m:
+                m[i]=len(P)
+                P.append([pos[i][k]+N[i][k]*thick for k in range(3)])
+                NN.append(list(N[i]))
+            f.append(m[i])
+        T.append(f)
+    return {'pos':P, 'nrm':NN, 'tris':T}
