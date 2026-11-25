@@ -147,3 +147,55 @@ export function normals(v, index, out){
   }
   return N;
 }
+
+/* Kibbe type -> morph weights. A port of kibbe.shape_for(), reading the
+   tables out of the bundle so there is only ever one copy of them. */
+const CANCEL = [
+  ['torso/torso-scale-vert-incr','torso/torso-scale-vert-decr'],
+  ['torso/torso-scale-horiz-incr','torso/torso-scale-horiz-decr'],
+  ['hip/hip-scale-horiz-incr','hip/hip-scale-horiz-decr'],
+  ['stomach/stomach-tone-incr','stomach/stomach-tone-decr'],
+  ['breast/breast-volume-vert-up','breast/breast-volume-vert-down'],
+  ['hip/hip-waist-up','hip/hip-waist-down'],
+  ['armslegs/lowerlegs-height-incr','armslegs/lowerlegs-height-decr'],
+];
+for(const side of ['l','r'])
+  for(const [a,b] of [['upperleg-scale-vert-incr','upperleg-scale-vert-decr'],
+                      ['upperarm-scale-horiz-incr','upperarm-scale-horiz-decr']])
+    CANCEL.push(['armslegs/' + side + '-' + a, 'armslegs/' + side + '-' + b]);
+
+export function shapeFor(B, vec){
+  const K = B.head.kibbe;
+  const out = {};
+  for(const fam in vec){
+    const w = vec[fam];
+    if(fam === 'mod' || !w) continue;
+    const tbl = K.family[fam];
+    if(!tbl) continue;
+    for(const t in tbl) out[t] = (out[t] || 0) + tbl[t] * w;
+  }
+  const mod = vec.mod || 0;
+  if(mod){
+    const src = mod > 0 ? K.modYang : K.modYin;
+    for(const t in src) out[t] = (out[t] || 0) + src[t] * Math.abs(mod);
+  }
+  // Opposing targets cancel rather than fight: a blend that asks for both
+  // a longer and a shorter torso should get neither, not both applied.
+  for(const [a, b] of CANCEL){
+    if(a in out && b in out){
+      const d = out[a] - out[b];
+      out[a] = Math.max(0, d); out[b] = Math.max(0, -d);
+    }
+  }
+  const list = [];
+  for(const t of Object.keys(out).sort())
+    if(out[t] > 0.004) list.push([t, Math.min(1, Math.round(out[t]*1000)/1000)]);
+  return list;
+}
+
+/* The macro blend the pipeline measures its landmarks against. */
+export const MACRO_NEUTRAL = [
+  ['macrodetails/caucasian-female-young', .50],
+  ['macrodetails/african-female-young', .28],
+  ['macrodetails/asian-female-young', .22],
+];

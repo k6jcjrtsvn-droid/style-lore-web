@@ -148,8 +148,15 @@ for name in names:
 add('targets', tdata)
 
 # ---- assemble ---------------------------------------------------------
+# The Kibbe tables travel with the bundle rather than being retyped in
+# JavaScript. A second copy of this is a copy that drifts: the first pass
+# at a browser-side table invented target names that do not exist, and
+# every family rendered the same body because every weight was dropped.
 header = {
     'v': 1, 'n': n, 'indexBytes': 2 if n <= 65535 else 4,
+    'kibbe': {'family': kibbe.FAMILY, 'modYang': kibbe.MOD_YANG,
+              'modYin': kibbe.MOD_YIN,
+              'types': {k: v for k, v in kibbe.TYPES}},
     'helpers': hgroups, 'hn': len(hids),
     'ref': {
         'shoulder': {str(k): int(v) for k, v in R['shoulder'].items()},
