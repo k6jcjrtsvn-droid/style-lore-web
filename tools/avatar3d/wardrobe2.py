@@ -7,11 +7,15 @@ def _limbY(B, frac_of_arm):
     armL = max(L for _,_,L in B.axis.values()) if B.axis else 1.0
     return B.sy - frac_of_arm*armL
 
+# A neckline at .95 leaves a gap either side of the neck wide enough to
+# see the unlit inside of the back of the shirt through: a pair of small
+# black wedges that look exactly like holes in the mesh. A collar sits
+# close to a neck.
 TOPS = {
- 'tee':        dict(hem=.46, neck=.95, sleeve=.30),
- 'long-sleeve':dict(hem=.45, neck=.95, sleeve=.78),
- 'tank':       dict(hem=.46, neck=.80, sleeve=.02, strap=True),
- 'vneck':      dict(hem=.46, neck=1.30, sleeve=.30, vee=True),
+ 'tee':        dict(hem=.515, neck=.76, sleeve=.30),
+ 'long-sleeve':dict(hem=.510, neck=.76, sleeve=.78),
+ 'tank':       dict(hem=.515, neck=.80, sleeve=.02, strap=True),
+ 'vneck':      dict(hem=.515, neck=1.30, sleeve=.30, vee=True),
  'crop':       dict(hem=.60, neck=.95, sleeve=.22),
 }
 
@@ -41,22 +45,28 @@ def top(B, FACES, nrm, style='tee', thick=.085):
             d.append(cuffT - a[0])                    # the cuff
             if o.get('strap'): d.append(-1.0)         # no sleeve at all
         return min(d)
-    return cutter.shell(B, FACES, field, thick, nrm, relax=.35, smooth=2)
+    # Thicker than the bottoms, and not by accident: where a tee overlaps
+    # a waistband the two shells are within a few thousandths of each
+    # other, each one wins the depth test over half the pixels, and with
+    # the picture supersampled the two colours average into what looks
+    # like a transparent shirt. The top is simply further out than what
+    # it is worn over.
+    return cutter.shell(B, FACES, field, thick, nrm, relax=.22, smooth=2, drape=True)
 
 BOTTOMS = {
  'leggings': dict(waist=.56, hem=.075),
- 'trousers': dict(waist=.57, hem=.065, thick=.13),
+ 'trousers': dict(waist=.57, hem=.065, thick=.075),
  'shorts':   dict(waist=.56, hem=.38),
  'capri':    dict(waist=.56, hem=.20),
 }
 
 def bottoms(B, FACES, nrm, style='leggings'):
     o=BOTTOMS.get(style, BOTTOMS['leggings'])
-    th=o.get('thick', .095)
+    th=o.get('thick', .055)
     def field(p, i):
         if B.limb(i): return -1.0
         return min((B.frac(p)-o['hem'])*B.h, (o['waist']-B.frac(p))*B.h)
-    return cutter.shell(B, FACES, field, th, nrm, relax=.3, smooth=2)
+    return cutter.shell(B, FACES, field, th, nrm, relax=.22, smooth=2, drape=True)
 
 SKIRTS = {
  'a-line': dict(length=.30, flare=.55, waist=.56),

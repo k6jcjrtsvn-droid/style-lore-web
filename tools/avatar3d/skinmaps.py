@@ -104,6 +104,29 @@ def bake(v, N=1024):
     eL = group_centre(v, 'helper-l-eye'); eR = group_centre(v, 'helper-r-eye')
     mouth = group_centre(v, 'joint-mouth')
     g = abs(eL[0] - eR[0]) or 1.0
+
+    # joint-mouth is a JOINT. It sits inside the skull AND at the height
+    # of the nose -- which is where a jaw hinge's child belongs and is
+    # nowhere near the lips. Everything placed from it was therefore
+    # painted inside the head, a centimetre too high: the lip colour, the
+    # shadow under the lower lip and the darkening in the nostrils have
+    # never once appeared on a face. Tinting the lip mask bright green
+    # and rendering it is what settled it -- not a trace of green.
+    #
+    # The mouth LINE is between the teeth, which the mesh carries as
+    # helper groups; the lip SURFACE is the front of the face at that
+    # height. Both are read off the mesh rather than assumed.
+    ut = group_centre(v, 'helper-upper-teeth'); lt = group_centre(v, 'helper-lower-teeth')
+    if ut is not None and lt is not None:
+        my = (ut[1] + lt[1]) * .5
+        band = (np.abs(v[:, 1] - my) < .20 * g) & (np.abs(v[:, 0]) < .90 * g)
+        mz = float(np.percentile(v[band, 2], 92)) if band.any() else mouth[2]
+        mouth = np.array([0.0, my, mz])
+    # the nose, likewise: its tip is simply the front of the face above
+    # the mouth and below the eyes
+    nb = (v[:, 1] > mouth[1] + .10 * g) & (v[:, 1] < eL[1] - .20 * g) & (np.abs(v[:, 0]) < .18 * g)
+    nose = v[nb][np.argmax(v[nb, 2])] if nb.any() else mouth + np.array([0, .55 * g, 0])
+
     sym = P.copy(); sym[..., 0] = np.abs(sym[..., 0])          # mirror, so one
     e = np.array([abs(eL[0]), eL[1], eL[2]])                   # test does both eyes
 
@@ -114,12 +137,14 @@ def bake(v, N=1024):
     socket = ellipsoid(sym, e + np.array([0, .02*g, -.02*g]), (.82*g, .52*g, .86*g), .80)
     crease = ellipsoid(sym, e + np.array([0, .255*g, .02*g]), (.44*g, .075*g, .44*g), .70)
     lip = np.maximum(
-        ellipsoid(P, mouth + np.array([0, .035*g, .20*g]), (.46*g, .105*g, .42*g), .45),
-        ellipsoid(P, mouth + np.array([0, -.075*g, .18*g]), (.40*g, .105*g, .40*g), .45))
-    blush = ellipsoid(sym, e + np.array([.30*g, -.78*g, .10*g]), (.62*g, .46*g, .66*g), .95)
-    nostril = ellipsoid(sym, np.array([.17*g, (eL[1]+mouth[1])*.5 - .10*g,
-                                       P[..., 2].max()*.0 + mouth[2] + .30*g]),
-                        (.14*g, .12*g, .30*g), .8)
+        ellipsoid(P, mouth + np.array([0, .052*g, -.10*g]), (.44*g, .098*g, .34*g), .45),
+        ellipsoid(P, mouth + np.array([0, -.068*g, -.12*g]), (.39*g, .105*g, .34*g), .45))
+    # the cheek, which is level with the bottom of the nose and out at
+    # the widest part of the face, not down on the jaw
+    blush = ellipsoid(sym, np.array([.62*g, (e[1] + mouth[1]) * .5 + .04*g, e[2] + .20*g]),
+                      (.50*g, .38*g, .62*g), .95)
+    nostril = ellipsoid(sym, np.array([.145*g, nose[1] - .085*g, nose[2] - .14*g]),
+                        (.115*g, .085*g, .22*g), .75)
 
     # ambient shading: deeper in the socket, under the brow, under the lip,
     # at the hairline and under the jaw. This is the term that stops a head
@@ -127,7 +152,9 @@ def bake(v, N=1024):
     ao = np.ones((N, N))
     ao -= .34 * socket
     ao -= .20 * crease
-    ao -= .18 * ellipsoid(P, mouth + np.array([0, -.30*g, .12*g]), (.52*g, .16*g, .42*g), .8)
+    ao -= .20 * ellipsoid(P, mouth + np.array([0, -.235*g, -.10*g]), (.50*g, .13*g, .34*g), .8)
+    # the line where the lips meet, which is most of what makes a mouth
+    ao -= .34 * ellipsoid(P, mouth + np.array([0, -.004*g, -.02*g]), (.40*g, .022*g, .30*g), .55)
     ao -= .22 * nostril
     ao = np.clip(ao, 0, 1)
 

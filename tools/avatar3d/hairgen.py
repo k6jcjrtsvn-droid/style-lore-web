@@ -458,3 +458,72 @@ def build_brows(pos, nrm, eL, eR, seed=11, hairs=160):
     return {'position':[x for q in P for x in q], 'normal':[x for q in N for x in q],
             'color':[x for q in C for x in q],
             'index':[i for f in T for i in f], 'n':len(P)}
+
+
+# ----------------------------------------------------------------- lashes
+def build_lashes(hp, groups, c, r, seed=17, sgn=1.0):
+    """Eyelashes, rooted on the mesh's own lid rims.
+
+       The lash line was a dark smear in the skin texture, which is enough
+       at thumbnail size and nothing like enough once a figure can be
+       turned and looked at. Lashes are what make an eye read as wet and
+       alive: they break the hard edge of the lid and cast the shadow
+       that stops the eyeball looking like a bead glued into a socket.
+
+       The strips are ordered ACROSS the face, not by angle around the
+       eye. Angle was the first thing tried and it fans the lashes out
+       like a sea urchin, because an eye seen from the front is not a
+       circle and the corners of a lid are not where a circle would put
+       them. And the lashes grow from the strip's INNER edge -- the lid
+       margin -- because rooting them on the outer one puts the whole
+       fringe a lid's width up the eyelid."""
+    rng = RNG(seed)
+    P = []; N = []; C = []; T = []
+    for g in groups:
+        ids = g['ids']
+        if not ids or len(ids) < 6: continue
+        pts = [list(hp[i]) for i in ids]
+        xs = [p[0] for p in pts]
+        xMin, xMax = min(xs), max(xs)
+        span = (xMax - xMin) or 1.0
+        n = g['count']
+        for k in range(n):
+            t0 = (k + rng.uniform(.12, .88)) / n
+            x = xMin + span * t0
+            best = None; bw = span / n * 2.2
+            for p in pts:
+                if abs(p[0] - x) > bw: continue
+                e = -p[1] if g['upper'] else p[1]
+                if best is None or e > best[1]: best = (p, e)
+            if best is None: continue
+            root = best[0]
+            outward = 1.0 if g['upper'] else -1.0
+            toOuter = 1.0 if sgn >= 0 else -1.0
+            away = max(0.0, (t0 if sgn >= 0 else 1 - t0) - .18) / .82
+            d = _norm([toOuter * g['sweep'] * away, outward * g['up'], g['fwd']])
+            mid = 1 - abs(t0 - .55) * 2
+            L = r * g['len'] * (.20 + .80 * max(0.0, mid)) * rng.uniform(.80, 1.20)
+            wid = r * g['wid'] * rng.uniform(.70, 1.30)
+            nn = [0.0, 0.0, 1.0]
+            curl = g['curl']
+            segs = 3
+            base = len(P)
+            for i in range(segs + 1):
+                t = i / segs
+                p = [root[0] + d[0]*L*t,
+                     root[1] + d[1]*L*t + outward * curl * L * t * t,
+                     root[2] + d[2]*L*t]
+                side = _norm(_cross(nn, d))
+                half = wid * (1 - .90 * (t ** 1.2)) * .5
+                shade = .30 + .34 * t
+                for sg in (-1, 1):
+                    P.append(_add(p, _mul(side, sg * half)))
+                    N.append(nn[:])
+                    C.append([shade, shade, shade])
+                if i > 0:
+                    i0 = base + (i-1)*2
+                    T.append([i0, i0+2, i0+1]); T.append([i0+1, i0+2, i0+3])
+    if not P: return None
+    return {'position':[x for q in P for x in q], 'normal':[x for q in N for x in q],
+            'color':[x for q in C for x in q],
+            'index':[i for f in T for i in f], 'n':len(P)}

@@ -404,3 +404,89 @@ export function buildBrows(pos, nrm, eL, eR, seed, opt){
   if(!P.length) return null;
   return { position:P, normal:N, color:C, index:TRI, n:P.length/3 };
 }
+
+/* ---------------------------------------------------------------- lashes
+
+   The lash line was a dark smear in the skin texture, which is enough at
+   thumbnail size and nothing like enough once the figure can be turned
+   and looked at. Real lashes are what make an eye read as wet and alive:
+   they break the hard edge of the lid and they cast the shadow that
+   stops the eyeball looking like a bead glued into a socket.
+
+   The base mesh already carries the lid rims as helper groups -- two
+   strips per eye, one above and one below -- so the lashes do not have
+   to be guessed at: they are rooted on the mesh's own rim and grown out
+   and forward from it. */
+export function buildLashes(hp, groups, c, r, seed, sgn){
+  const P = [], N = [], C = [], TRI = [];
+  const rng = new RNG(seed == null ? 17 : seed);
+  for(const g of groups){
+    const ids = g.ids;
+    if(!ids || ids.length < 6) continue;
+    /* The strip is ordered ACROSS the face, not by angle around the eye.
+       Angle was the first thing tried and it fans the lashes out like a
+       sea urchin, because an eye seen from the front is not a circle and
+       the corners of the lid are not at the angles a circle would put
+       them. Sorting on x is the lid's own parameter. */
+    const pts = [];
+    for(const i of ids) pts.push([hp[i*3], hp[i*3+1], hp[i*3+2]]);
+    let xMin = Infinity, xMax = -Infinity;
+    for(const p of pts){ if(p[0] < xMin) xMin = p[0]; if(p[0] > xMax) xMax = p[0]; }
+    const span = (xMax - xMin) || 1;
+    const n = g.count;
+    for(let k = 0; k < n; k++){
+      const t0 = (k + rng.uniform(.12, .88)) / n;
+      const x = xMin + span * t0;
+      /* The rim at this x. The helper strip is a BAND around the lid,
+         and the lashes grow from its inner edge -- the lid margin, the
+         edge nearest the eye opening -- not from its outer one. Rooting
+         them on the outer edge puts the whole fringe a lid's width up
+         the eyelid, which looks like lashes drawn on by someone who has
+         not met an eye. */
+      let best = null, bw = span / n * 2.2;
+      for(const p of pts){
+        if(Math.abs(p[0] - x) > bw) continue;
+        const e = g.upper ? -p[1] : p[1];
+        if(!best || e > best.e) best = { p, e };
+      }
+      if(!best) continue;
+      const root = best.p;
+      // out of the lid, forward off the face, and swept toward the outer
+      // corner -- which is the single thing that makes lashes read as
+      // lashes rather than as a row of pins
+      const outward = g.upper ? 1 : -1;
+      const toOuter = (sgn >= 0 ? 1 : -1);
+      const away = Math.max(0, (sgn >= 0 ? t0 : 1 - t0) - .18) / .82;
+      let d = norm([toOuter * g.sweep * away, outward * g.up, g.fwd]);
+      const mid = 1 - Math.abs(t0 - .55) * 2;
+      const L = r * g.len * (.20 + .80 * Math.max(0, mid)) * rng.uniform(.80, 1.20);
+      const wid = r * g.wid * rng.uniform(.70, 1.30);
+      const nn = [0, 0, 1];
+      const curl = g.curl;
+      const segs = 3;
+      const base = P.length / 3;
+      for(let i = 0; i <= segs; i++){
+        const t = i / segs;
+        const p = [root[0] + d[0]*L*t,
+                   root[1] + d[1]*L*t + outward * curl * L * t * t,
+                   root[2] + d[2]*L*t];
+        let side = norm(cross(nn, d));
+        if(!isFinite(side[0])) side = [1,0,0];
+        const half = wid * (1 - .90 * Math.pow(t, 1.2)) * .5;
+        const shade = .30 + .34 * t;
+        for(const sg of [-1, 1]){
+          const q = add(p, mul(side, sg * half));
+          P.push(q[0], q[1], q[2]);
+          N.push(nn[0], nn[1], nn[2]);
+          C.push(shade, shade, shade);
+        }
+        if(i > 0){
+          const i0 = base + (i-1)*2;
+          TRI.push(i0, i0+2, i0+1, i0+1, i0+2, i0+3);
+        }
+      }
+    }
+  }
+  if(!P.length) return null;
+  return { position:P, normal:N, color:C, index:TRI, n:P.length/3 };
+}

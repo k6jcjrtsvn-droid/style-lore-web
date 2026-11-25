@@ -10,7 +10,7 @@ import { loadBase, applyMix, groupCentre, styliseHead, shapeFor, sliderMix, MACR
 import { makeBody, armsDown, bodyNormals } from './body.js';
 import { top as mkTop, bottoms as mkBottom, skirt as mkSkirt, shoes as mkShoes }
   from './wardrobe.js';
-import { scalp, buildHair, buildBrows } from './hairgen.js';
+import { scalp, buildHair, buildBrows, buildLashes } from './hairgen.js';
 import { studioEnv } from './env.js';
 
 /* The app's catalogue is not the pipeline's catalogue -- the drawn
@@ -75,6 +75,115 @@ function eyeTex(THREE, hex){
   return t;
 }
 
+/* Fine detail, generated rather than downloaded.
+
+   The baked skin maps carry the shape of a face -- the socket, the lash
+   line, the lip. What they cannot carry is pores: at 1024 across a whole
+   body, one texel is about two millimetres of skin, so the pore is
+   smaller than the texel that would have to hold it. Raising the bake to
+   2048 would quadruple a map that is already the largest file the figure
+   downloads, and still only halve the texel.
+
+   So the fine detail is a small tiling map, built on a canvas at load
+   time, repeated across the body and added to the baked normal. It costs
+   no download at all, it is the same on every device because the
+   generator is explicit, and because it tiles it has no resolution: the
+   closer the camera gets, the more of it there is to see. */
+export function detailNormal(THREE, kind, seed){
+  const N = 256;
+  const h = new Float32Array(N * N);
+  let s0 = ((seed | 0) * 2654435761 + 1) >>> 0 || 1;
+  const rnd = () => {
+    let x = s0;
+    x = (x ^ (x << 13)) >>> 0; x = (x ^ (x >>> 17)) >>> 0; x = (x ^ (x << 5)) >>> 0;
+    s0 = x; return x / 4294967296;
+  };
+  const wrap = i => (i % N + N) % N;
+  const dent = (cx, cy, r, depth) => {
+    const r2 = r * r;
+    for(let y = Math.floor(cy - r); y <= cy + r; y++){
+      for(let x = Math.floor(cx - r); x <= cx + r; x++){
+        const dx = x - cx, dy = y - cy, d2 = dx*dx + dy*dy;
+        if(d2 > r2) continue;
+        const f = 1 - d2 / r2;
+        h[wrap(y) * N + wrap(x)] += depth * f * f;
+      }
+    }
+  };
+  if(kind === 'skin'){
+    // pores: many small ones, a few larger, none of them round enough to
+    // tile into a pattern the eye can lock on to
+    for(let i = 0; i < 2600; i++)
+      dent(rnd()*N, rnd()*N, 1.1 + rnd()*2.2, -(0.35 + rnd()*0.65));
+    for(let i = 0; i < 260; i++)
+      dent(rnd()*N, rnd()*N, 2.6 + rnd()*3.0, -(0.25 + rnd()*0.45));
+    // and the faint creases between them, which is what stops skin
+    // reading as orange peel
+    for(let i = 0; i < 420; i++){
+      let x = rnd()*N, y = rnd()*N;
+      const a = rnd() * Math.PI * 2, len = 6 + rnd()*22, d = .18 + rnd()*.3;
+      for(let t = 0; t < len; t++){
+        x += Math.cos(a) + (rnd()-.5)*.6; y += Math.sin(a) + (rnd()-.5)*.6;
+        dent(x, y, 0.9 + rnd()*0.6, -d);
+      }
+    }
+  } else {
+    // a weave: two sets of threads crossing, the over-under of them is
+    // what makes cloth read as cloth instead of as painted plastic
+    const pitch = 8;
+    for(let y = 0; y < N; y++) for(let x = 0; x < N; x++){
+      const u = (x % pitch) / pitch, v = (y % pitch) / pitch;
+      const over = ((x / pitch | 0) + (y / pitch | 0)) % 2 === 0;
+      const a = Math.sin(u * Math.PI), b = Math.sin(v * Math.PI);
+      h[y*N+x] = (over ? a*a*1.0 + b*b*0.35 : b*b*1.0 + a*a*0.35) - 0.6;
+    }
+    for(let i = 0; i < 1400; i++) dent(rnd()*N, rnd()*N, 1 + rnd()*1.6, -(0.1 + rnd()*0.3));
+  }
+  const c = document.createElement('canvas'); c.width = c.height = N;
+  const g = c.getContext('2d');
+  const img = g.createImageData(N, N);
+  const S = kind === 'skin' ? 2.2 : 1.5;
+  for(let y = 0; y < N; y++) for(let x = 0; x < N; x++){
+    const gx = (h[y*N + wrap(x+1)] - h[y*N + wrap(x-1)]) * S;
+    const gy = (h[wrap(y+1)*N + x] - h[wrap(y-1)*N + x]) * S;
+    const L = Math.hypot(gx, gy, 1);
+    const o = (y*N + x) * 4;
+    img.data[o]   = Math.round((-gx/L * .5 + .5) * 255);
+    img.data[o+1] = Math.round(( gy/L * .5 + .5) * 255);
+    img.data[o+2] = Math.round(( 1/L  * .5 + .5) * 255);
+    img.data[o+3] = 255;
+  }
+  g.putImageData(img, 0, 0);
+  const t = new THREE.CanvasTexture(c);
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  t.colorSpace = THREE.NoColorSpace;
+  t.anisotropy = 8;
+  return t;
+}
+
+/* Add a tiling detail normal on top of whatever normal map a material
+   already has, by rewriting the one chunk that consumes it. */
+export function withDetail(THREE, m, map, repeat, scale){
+  const prev = m.onBeforeCompile;
+  m.onBeforeCompile = sh => {
+    if(prev) prev(sh);
+    sh.uniforms.detailMap = { value: map };
+    sh.uniforms.detailRepeat = { value: repeat };
+    sh.uniforms.detailScale = { value: scale };
+    sh.fragmentShader = sh.fragmentShader
+      .replace('#include <common>', '#include <common>\n' +
+        'uniform sampler2D detailMap; uniform float detailRepeat; uniform float detailScale;')
+      .replace(
+        'vec3 mapN = texture2D( normalMap, vNormalMapUv ).xyz * 2.0 - 1.0;\n\tmapN.xy *= normalScale;',
+        'vec3 mapN = texture2D( normalMap, vNormalMapUv ).xyz * 2.0 - 1.0;\n' +
+        '\tmapN.xy *= normalScale;\n' +
+        '\tvec3 dN = texture2D( detailMap, vNormalMapUv * detailRepeat ).xyz * 2.0 - 1.0;\n' +
+        '\tmapN.xy += dN.xy * detailScale;');
+  };
+  m.customProgramCacheKey = () => 'detail' + repeat + '_' + scale;
+  return m;
+}
+
 export async function mount(canvas, opts){
   const o = opts || {};
   const W = o.width || 360, H = o.height || 560;
@@ -82,7 +191,7 @@ export async function mount(canvas, opts){
   // Render above the display resolution and let the browser downscale.
   // Alpha-tested hair cards alias badly at 1:1 and a figure seen close up
   // is mostly edges; this is the cheapest sharpness there is.
-  const SS = o.supersample == null ? 1.6 : o.supersample;
+  const SS = o.supersample == null ? 1.9 : o.supersample;
   r.setPixelRatio(Math.min((window.devicePixelRatio || 1) * SS, 3.2));
   r.setSize(W, H, false);
   r.outputColorSpace = THREE.SRGBColorSpace;
@@ -130,6 +239,9 @@ export async function mount(canvas, opts){
     loadBase(o.bundle || './assets/avatar-base-v1.bin'),
   ]);
   const SK = { mask, warm, normal, rough };
+  const PORE = detailNormal(THREE, 'skin', 5);
+  const FABRIC = detailNormal(THREE, 'cloth', 9);
+  FABRIC.repeat.set(115, 115);
 
   let group = null, yaw = .30, pitch = 0, raf = 0, alive = true;
   let refSpan = 0;
@@ -183,7 +295,7 @@ export async function mount(canvas, opts){
     const m = new THREE.MeshPhysicalMaterial({
       color:new THREE.Color().setRGB(...(SKIN[skinKey] || SKIN.s4)),
       roughness:1, metalness:0, roughnessMap:SK.rough, normalMap:SK.normal,
-      normalScale:new THREE.Vector2(.30,.30), clearcoat:.18, clearcoatRoughness:.52,
+      normalScale:new THREE.Vector2(.34,.34), clearcoat:.18, clearcoatRoughness:.52,
       sheen:.5, sheenRoughness:.9, sheenColor:new THREE.Color(0xff9a80),
       envMapIntensity:.78, side:THREE.DoubleSide });
     m.onBeforeCompile = sh => {
@@ -207,7 +319,7 @@ export async function mount(canvas, opts){
           '  b = mix(b, vec3(0.10,0.07,0.07), mk.g * 0.70);\n' +
           '  diffuseColor.rgb = b; }');
     };
-    return m;
+    return withDetail(THREE, m, PORE, 34, .95);
   };
   const cardMat = hex => new THREE.MeshPhysicalMaterial({
     color:hex, map:STRAND, alphaTest:.40, transparent:false, vertexColors:true,
@@ -230,12 +342,23 @@ export async function mount(canvas, opts){
      colour it was lighter than the cards around it under a strong key,
      and it showed through as a bright tiled patch at the crown that read
      as a bald spot. It wants to be the darkest thing on the head. */
+  /* Lashes are nearly black and nearly matt: a lash that catches a
+     highlight reads as a stray hair on the lens. */
+  const lashMat = () => new THREE.MeshPhysicalMaterial({
+    color:0x15100f, vertexColors:true, roughness:.55, metalness:0,
+    clearcoat:.25, clearcoatRoughness:.4, sheen:0, specularIntensity:.25,
+    envMapIntensity:.14, side:THREE.DoubleSide });
   const capMat = hex => new THREE.MeshStandardMaterial({
     color:new THREE.Color(hex).multiplyScalar(.08), roughness:.95, metalness:0,
     envMapIntensity:.06, side:THREE.DoubleSide });
+  /* Cloth gets the weave as its normal map. The garments carry the
+     body's UVs now, so it tiles across them properly instead of sampling
+     one texel for the whole shirt, which is what the roughness map had
+     been doing. */
   const clothMat = (hex, rough) => new THREE.MeshPhysicalMaterial({
     color:hex, roughness:rough == null ? .86 : rough, metalness:0,
-    roughnessMap:SK.rough, sheen:.7, sheenRoughness:.75,
+    roughnessMap:SK.rough, normalMap:FABRIC,
+    normalScale:new THREE.Vector2(.20,.20), sheen:.7, sheenRoughness:.75,
     sheenColor:new THREE.Color(0xffffff), envMapIntensity:.85, side:THREE.DoubleSide });
   const leather = hex => new THREE.MeshPhysicalMaterial({
     color:hex == null ? 0x16161a : hex, roughness:.34, metalness:0, clearcoat:.85,
@@ -305,6 +428,16 @@ export async function mount(canvas, opts){
       for(const i of ids)
         rad = Math.max(rad, Math.hypot(helper[i*3]-c[0], helper[i*3+1]-c[1], helper[i*3+2]-c[2]));
       group.add(eyeball(c, rad, 0x5d7f52));
+      /* Lashes, rooted on the mesh's own lid rims. The side is whichever
+         eye this is; the two strips are the lower and the upper lid. */
+      const sd = g === 'helper-l-eye' ? 'l' : 'r';
+      const lash = buildLashes(helper, [
+        { ids: B.helpers['helper-' + sd + '-eyelashes-2'], upper:true,
+          count:112, len:.30, wid:.022, up:.55, fwd:.80, sweep:.55, curl:.45 },
+        { ids: B.helpers['helper-' + sd + '-eyelashes-1'], upper:false,
+          count:62, len:.15, wid:.020, up:.70, fwd:.70, sweep:.35, curl:.10 },
+      ], c, rad, 17, c[0]);
+      add(lash, lashMat(), 'lashes');
     }
 
     const hs = HAIR[fig.hair];
@@ -349,7 +482,7 @@ export async function mount(canvas, opts){
     key.shadow.camera.left = -span*.45; key.shadow.camera.right = span*.45;
     key.shadow.camera.top = span*1.1; key.shadow.camera.bottom = -span*.1;
     key.shadow.camera.far = span*4; key.shadow.bias = -.0012;
-    key.shadow.normalBias = span*.004; key.shadow.radius = 6;
+    key.shadow.normalBias = span*.013; key.shadow.radius = 6;
     scene.add(key);
     const fill = new THREE.DirectionalLight(0xa8c4ec, .85);
     fill.position.set(span*.9, span*.45, span*.7); scene.add(fill);
@@ -384,7 +517,7 @@ export async function mount(canvas, opts){
     alive = false; cancelAnimationFrame(raf);
     if(group) disposeTree(group);
     for(const k in SK) SK[k].dispose();
-    STRAND.dispose();
+    STRAND.dispose(); PORE.dispose(); FABRIC.dispose();
     if(scene.environment) scene.environment.dispose();
     r.dispose();
   }

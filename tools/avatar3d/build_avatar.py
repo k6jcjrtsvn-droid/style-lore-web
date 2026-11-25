@@ -213,8 +213,30 @@ def build(spec):
     if spec.get('bottom'):
         out['bottom']=wardrobe2.bottoms(B2, FACES, nrm, spec.get('bottom'))
     out['shoes']=footwear.build(B2, spec.get('shoes','flat'))
-    out['lashes']=simple(v,{'helper-l-eyelashes-1','helper-l-eyelashes-2',
-                            'helper-r-eyelashes-1','helper-r-eyelashes-2'})
+    # Strands, not the helper band. The band is fitting geometry -- a
+    # strip around the lid -- and drawn as it stands it reads as a thick
+    # black line painted round the eye. The lashes are grown off its
+    # inner edge instead, the same way the browser does it.
+    def _ids(gname):
+        return sorted({i for g, idx in FACES if g == gname for i in idx})
+    lashes = []
+    for side, sgn in (('l', 1.0), ('r', -1.0)):
+        eye = ball(v, 'helper-%s-eye' % side)
+        if not eye: continue
+        d = hairgen.build_lashes(v, [
+            dict(ids=_ids('helper-%s-eyelashes-2' % side), upper=True,  count=112,
+                 len=.30, wid=.022, up=.55, fwd=.80, sweep=.55, curl=.45),
+            dict(ids=_ids('helper-%s-eyelashes-1' % side), upper=False, count=62,
+                 len=.15, wid=.020, up=.70, fwd=.70, sweep=.35, curl=.10),
+        ], eye['c'], eye['r'], 17, eye['c'][0])
+        if d: lashes.append(d)
+    if lashes:
+        P = []; N = []; C = []; I = []
+        for d in lashes:
+            off = len(P) // 3
+            P += d['position']; N += d['normal']; C += d['color']
+            I += [i + off for i in d['index']]
+        out['lashes'] = {'position':P, 'normal':N, 'color':C, 'index':I, 'n':len(P)//3}
     eye=ball(v,'helper-l-eye'); out['eyeL']=eye; out['eyeR']=ball(v,'helper-r-eye')
     # The brows are strands on the skin, not a smudge in the texture: the
     # head's UV island gives a painted brow about thirty texels across,

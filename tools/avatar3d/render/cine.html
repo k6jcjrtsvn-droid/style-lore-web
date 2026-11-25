@@ -361,8 +361,12 @@ window.show = (name, mode) => {
   if(E.brows) g.add(mesh(E.brows, flat
     ? new THREE.MeshLambertMaterial({ vertexColors:true, color:hairHex, side:THREE.DoubleSide })
     : browMat(hairHex)));
-  if(E.lashes) g.add(mesh(E.lashes, new THREE.MeshStandardMaterial({
-    color:0x120b0a, roughness:.55, side:THREE.DoubleSide })));
+  /* Strands now, not the helper band: dark, nearly matt -- a lash that
+     catches a highlight reads as a stray hair on the lens. */
+  if(E.lashes) g.add(mesh(E.lashes, new THREE.MeshPhysicalMaterial({
+    color:0x15100f, vertexColors:true, roughness:.55, metalness:0,
+    clearcoat:.25, clearcoatRoughness:.4, sheen:0, specularIntensity:.25,
+    envMapIntensity:.14, side:THREE.DoubleSide })));
   for(const k of ['eyeL','eyeR']){
     const e2 = E[k]; if(!e2) continue;
     if(flat){

@@ -15,15 +15,15 @@ const limbY = (B, fracOfArm) => {
 };
 
 export const TOPS = {
-  'tee':          {hem:.46, neck:.95, sleeve:.30},
-  'long-sleeve':  {hem:.45, neck:.95, sleeve:.78},
-  'tank':         {hem:.46, neck:.80, sleeve:.02, strap:true},
-  'vneck':        {hem:.46, neck:1.30, sleeve:.30, vee:true},
+  'tee':          {hem:.515, neck:.76, sleeve:.30},
+  'long-sleeve':  {hem:.510, neck:.76, sleeve:.78},
+  'tank':         {hem:.515, neck:.80, sleeve:.02, strap:true},
+  'vneck':        {hem:.515, neck:1.30, sleeve:.30, vee:true},
   'crop':         {hem:.60, neck:.95, sleeve:.22},
 };
 export const BOTTOMS = {
   'leggings': {waist:.56, hem:.075},
-  'trousers': {waist:.57, hem:.065, thick:.13},
+  'trousers': {waist:.57, hem:.065, thick:.075},
   'shorts':   {waist:.56, hem:.38},
   'capri':    {waist:.56, hem:.20},
 };
@@ -48,7 +48,13 @@ export function top(B, index, nrm, style, thick){
     let nd = B.neckDist(p);
     if(o.vee) nd = nd + Math.max(0, 0.55 - Math.abs(p[0])) * (p[2] > 0 ? 1 : 0) * 1.1;
     d.push(nd - neckR);
-    d.push(B.sy + 0.38 - p[1]);                   // never the head
+    /* A ceiling so a top can never climb onto the head. It used to sit
+       0.38 above the shoulder, which is low enough to slice across the
+       top of the shoulder itself where it rises toward the neck -- the
+       pair of small dark notches either side of the collar. The neckline
+       is the neck-distance term's job; this one only has to be out of
+       its way. */
+    d.push(B.sy + 0.38 + 1.05 * sstep((Math.abs(p[0]) - 0.42) / 0.75) - p[1]);
     /* The cuff is cut ALONG THE ARM, not at a height. A horizontal plane
        through an arm that hangs at an angle is an ellipse, and what came
        out was a long diagonal tongue down the outside of each sleeve.
@@ -74,13 +80,20 @@ export function top(B, index, nrm, style, thick){
     }
     return Math.min.apply(null, d);
   };
+  /* Thicker than the bottoms, and not by accident: where a tee overlaps
+     a waistband the two shells are within a few thousandths of each
+     other, each one wins the depth test over half the pixels, and with
+     the picture supersampled the two colours average into what looks
+     like a transparent shirt. Layering the offsets is the whole fix --
+     the top is simply further out than what it is worn over. */
   return shell(B, index, nrm, field, thick == null ? .085 : thick,
-               { relax: (window.__RELAX == null ? .35 : window.__RELAX), smooth: 2 });
+               { relax: (window.__RELAX == null ? .22 : window.__RELAX),
+                 smooth: 2, drape: true, edgeLift: 1.0 });
 }
 
 export function bottoms(B, index, nrm, style){
   const o = BOTTOMS[style] || BOTTOMS['leggings'];
-  const th = o.thick == null ? .095 : o.thick;
+  const th = o.thick == null ? .055 : o.thick;
   const v = B.v;
   const field = i => {
     if(B.limb(i)) return -1.0;
@@ -88,7 +101,7 @@ export function bottoms(B, index, nrm, style){
     const f = B.fracP(p);
     return Math.min((f - o.hem) * B.h, (o.waist - f) * B.h);
   };
-  return shell(B, index, nrm, field, th, { relax: .3, smooth: 2 });
+  return shell(B, index, nrm, field, th, { relax: .22, smooth: 2, drape: true, edgeLift: 1.0 });
 }
 
 export function skirt(B, index, nrm, style, rings, seg){
