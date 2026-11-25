@@ -181,6 +181,10 @@ if __name__ == '__main__':
     v = np.array(BA.RAW, dtype=np.float64).tolist()
     v = [list(p) for p in BA.RAW]
     BA.apply(v, [('macrodetails/caucasian-female-young', 1.0)] + kibbe.shape_for({'classic': 1.0}))
+    # Bake against the same head the pipeline ships. The UVs do not move
+    # when the head is scaled, but the landmarks do, and the masks are
+    # placed from the landmarks.
+    BA.stylise_head(v)
     v = np.array(v, dtype=np.float64)
     mask, warm, normal, rough = bake(v, N)
     out = '/home/claude/cine'

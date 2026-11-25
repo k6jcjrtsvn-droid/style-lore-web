@@ -94,6 +94,41 @@ HAIRC={'h1':[0.149,0.090,0.067],'h2':[0.286,0.176,0.114],'h3':[0.420,0.271,0.157
        'h4':[0.561,0.392,0.212],'h5':[0.714,0.561,0.322],'h6':[0.824,0.702,0.467],
        'h7':[0.478,0.149,0.071],'h8':[0.251,0.251,0.263]}
 
+def stylise_head(v, headK=1.12, eyeK=1.30):
+    """Stylisation applied to the geometry, not to the shading.
+
+       Every avatar system people actually like has a head a tenth larger
+       than life and eyes a third larger. Trying for exact human
+       proportions at this asset budget lands in the uncanny valley --
+       which looks worse than either honest option -- so this commits to
+       the other one. The neck takes the difference over a short falloff
+       so nothing snaps."""
+    eye = lambda g: [sum(v[i][k] for q,idx in FACES if q==g for i in idx)
+                     / max(1, sum(1 for q,idx in FACES if q==g for i in idx))
+                     for k in range(3)]
+    eL = eye('helper-l-eye'); eR = eye('helper-r-eye')
+    gap = abs(eL[0]-eR[0]) or 1.0
+    eyeY = (eL[1]+eR[1])*0.5
+    chin = eyeY - gap*7.0
+    neck = chin - gap*3.4
+    pivot = [0.0, chin, (eL[2]+eR[2])*0.5]
+    for p in v:
+        t = (p[1]-neck)/((chin-neck) or 1.0)
+        t = max(0.0, min(1.0, t)); t = t*t*(3-2*t)
+        if t <= 0: continue
+        k = 1 + (headK-1)*t
+        p[0] *= k
+        p[1] = pivot[1] + (p[1]-pivot[1])*k
+        p[2] = pivot[2] + (p[2]-pivot[2])*k
+    # the eyes get their own extra scale, about each eyeball's own centre
+    for g in ('helper-l-eye','helper-r-eye','helper-l-eyelashes-1','helper-l-eyelashes-2',
+              'helper-r-eyelashes-1','helper-r-eyelashes-2'):
+        ids = sorted({i for q,idx in FACES if q==g for i in idx})
+        if not ids: continue
+        c = [sum(v[i][k] for i in ids)/len(ids) for k in range(3)]
+        for i in ids:
+            for k in range(3): v[i][k] = c[k] + (v[i][k]-c[k])*eyeK
+
 def skin_colours(P, src, B, N, adj, skinKey, hairKey):
     base=SKIN[skinKey]; hc=HAIRC[hairKey]
     # cheap cavity AO: how far the neighbour centroid sits along the normal
@@ -153,6 +188,8 @@ def build(spec):
     ensure_reference()
     v=[list(p) for p in RAW]
     apply(v, spec['mix'])
+    if spec.get('stylised', True):
+        stylise_head(v, spec.get('headK', 1.12), spec.get('eyeK', 1.30))
     B=anat.Body(v, BODYIDX)
     if not hasattr(B,'cls'): B.classify()
     anat.arms_down(B, 34.0)

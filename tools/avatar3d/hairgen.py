@@ -75,9 +75,20 @@ STYLES = {
     'crop':  dict(cards=560, length=0.32, segs=5,  width=.085, gravity=.78, volume=.18, curl=.12),
 }
 
-def build(scalp_pos, scalp_nrm, scalp_tris, style='long', seed=3, slices=8):
+STYLISED = {
+    'long':  dict(cards=520, length=2.05, segs=12, width=.165, gravity=.90, volume=.26, curl=.06),
+    'bob':   dict(cards=470, length=1.00, segs=9,  width=.165, gravity=.94, volume=.22, curl=.05),
+    'wavy':  dict(cards=540, length=1.80, segs=13, width=.175, gravity=.84, volume=.30, curl=.18),
+    'curls': dict(cards=600, length=1.10, segs=13, width=.145, gravity=.60, volume=.40, curl=.46),
+    'short': dict(cards=440, length=0.56, segs=8,  width=.150, gravity=.82, volume=.28, curl=.10),
+    'crop':  dict(cards=390, length=0.34, segs=7,  width=.145, gravity=.76, volume=.24, curl=.12),
+}
+
+def build(scalp_pos, scalp_nrm, scalp_tris, style='long', seed=3, slices=8,
+          stylised=True):
     """scalp_* describe the cap the hair grows out of, in world units."""
-    o = STYLES.get(style, STYLES['long'])
+    table = STYLISED if stylised else STYLES
+    o = table.get(style, table['long'])
     rng = random.Random(seed)
 
     # roots, distributed over the cap by triangle area so the parting is
@@ -106,8 +117,13 @@ def build(scalp_pos, scalp_nrm, scalp_tris, style='long', seed=3, slices=8):
     # Two passes: a short dense under-layer that fills, then the long cards
     # that make the silhouette. One layer alone is either see-through or a
     # solid slab.
-    LAYERS = ((int(o['cards'] * .45), .34, .80), (o['cards'], 1.0, 1.0))
-    for layer, (count, lenK, widK) in enumerate(LAYERS):
+    # Each layer sits on its own shell, and every card inside a layer gets
+    # a hair's breadth more offset than the last. Without it the cards are
+    # near-coincident, they fight for depth, and the whole head renders as
+    # a woven basket -- which looks like a texture bug and is not one.
+    LAYERS = ((int(o['cards'] * .45), .34, .80, .004),
+              (o['cards'],            1.0, 1.0, .040))
+    for layer, (count, lenK, widK, shell) in enumerate(LAYERS):
       for k in range(count):
           r = rng.random()
           lo, hi = 0, len(cum) - 1
@@ -139,7 +155,18 @@ def build(scalp_pos, scalp_nrm, scalp_tris, style='long', seed=3, slices=8):
           if sum(x*x for x in away) < 1e-8: away = side[:]
           away = _norm(away)
           d = _norm(_add(_mul(away, .78), _mul(nrm, .22)))
+          off = shell + (k % 97) * .00035
+          root = _add(root, _mul(nrm, off))
           p = root[:]
+          # A frame carried along the strand. Taking cross(d, nrm) fresh at
+          # every step degenerates the moment the strand falls parallel to
+          # the scalp normal, and the side vector flips sign -- so adjacent
+          # cards ended up with opposite normals and the lit head rendered
+          # as a woven basket. Rendering the same cards unlit showed a
+          # clean mass, and as raw normals showed chaos, which is what
+          # pointed at the frame rather than at the geometry.
+          frame = _norm(_cross(d, nrm))
+          if sum(x*x for x in frame) < 1e-6: frame = side[:]
           ph = rng.uniform(0, 6.283)
           wid = o['width'] * widK * rng.uniform(.75, 1.3)
           base = len(P)
@@ -157,9 +184,16 @@ def build(scalp_pos, scalp_nrm, scalp_tris, style='long', seed=3, slices=8):
                   # volume early, then the clump draws back in
                   push = o['volume'] * math.sin(min(1.0, t * 1.9) * math.pi) * .16
                   p = _add(p, _mul(nrm, push))
-              sd = _norm(_cross(d, nrm))
-              if sum(x*x for x in sd) < 1e-6: sd = side
-              fn = _norm(_cross(sd, d))
+              # re-orthogonalise rather than rebuild: a rotation-minimising
+              # frame has no singularity to fall into
+              dp = sum(frame[i] * d[i] for i in range(3))
+              sd = [frame[i] - d[i] * dp for i in range(3)]
+              if sum(x*x for x in sd) < 1e-8: sd = side[:]
+              sd = _norm(sd); frame = sd
+              geo = _norm(_cross(sd, d))
+              # Shade the hair as one mass, not as hundreds of separate
+              # ribbons: lean the card's normal toward the scalp's.
+              fn = _norm([nrm[i] * .72 + geo[i] * .28 for i in range(3)])
               half = wid * (1.0 - .62 * (t ** 1.4)) * .5
               uslice = rng.randrange(slices) if s == 0 else uslice
               u0 = uslice / slices; u1b = (uslice + 1) / slices
@@ -184,3 +218,49 @@ def cap_mesh(cap):
     return {'position':[x for q in P for x in q],
             'normal':[x for q in NN for x in q],
             'index':[i for f in T for i in f], 'n':len(P)}
+
+
+# ---------------------------------------------------------------- clumps
+def clump_texture(W=512, H=512, slices=8, seed=9):
+    """Hair for a stylised figure.
+
+       Fine strands are a realism cue: at avatar size they read as noise,
+       and cutting them with alphaTest turns each one into a shard. A
+       stylised head of hair is a handful of sculpted CLUMPS with soft
+       edges and one bright band running across them -- which is also
+       kinder to the renderer, because soft alpha hides the card edges
+       instead of advertising them."""
+    import math as _m
+    rng = random.Random(seed)
+    px = bytearray(W * H * 4)
+    sw = W // slices
+    for s in range(slices):
+        x0 = s * sw
+        n = rng.randint(1, 2)
+        for _ in range(n):
+            cx = x0 + rng.uniform(sw * .22, sw * .78)
+            wdt = rng.uniform(sw * .28, sw * .42)
+            drift = rng.uniform(-sw * .16, sw * .16)
+            tipF = rng.uniform(.80, 1.0)
+            band = rng.uniform(.26, .46)          # where the highlight sits
+            for y in range(H):
+                t = y / (H - 1.0)
+                if t > tipF: break
+                xc = cx + drift * (t ** 1.5)
+                w = wdt * (1.0 - .70 * (t / max(tipF, 1e-6)) ** 1.25)
+                a_end = 1.0 - smooth((t / max(tipF, 1e-6) - .62) / .38)
+                lo = int(max(x0, xc - w)); hi = int(min(x0 + sw - 1, xc + w))
+                for x in range(lo, hi + 1):
+                    d = abs(x - xc) / (w or 1)
+                    a = max(0.0, 1.0 - d ** 6) ** .60 * a_end   # plateau, narrow shoulder
+                    if a <= .004: continue
+                    i = (y * W + x) * 4
+                    # one highlight band across the clump, and the clump is
+                    # darker where it folds away at the edges
+                    hl = _m.exp(-((t - band) ** 2) / .010) * (1.0 - d * .7)
+                    v = int(255 * min(1.0, .30 + .34 * (1 - d) + .55 * hl))
+                    if a * 255 > px[i + 3]:
+                        px[i] = px[i+1] = px[i+2] = v
+                        px[i+3] = int(min(255, a * 255))
+    return bytes(px), W, H
+
