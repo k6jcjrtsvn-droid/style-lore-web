@@ -1,0 +1,346 @@
+<!doctype html><html><head><meta charset="utf-8">
+<style>html,body{margin:0;background:#0b0c0e}canvas{display:block}</style></head><body>
+<script type="module">
+import * as THREE from './three.js';
+import { studioEnv, skinMaps } from './env.js';
+
+const D = await (await fetch('./avatars.json')).json();
+const W = 460, H = 620;
+const r = new THREE.WebGLRenderer({ antialias:true, alpha:false });
+r.setPixelRatio(2); r.setSize(W, H);
+r.outputColorSpace = THREE.SRGBColorSpace;
+r.toneMapping = THREE.ACESFilmicToneMapping;
+r.toneMappingExposure = 0.95;
+r.shadowMap.enabled = true;
+r.shadowMap.type = THREE.PCFSoftShadowMap;
+document.body.appendChild(r.domElement);
+
+const scene = new THREE.Scene();
+const env = studioEnv(THREE, r);
+const maps = skinMaps(THREE);
+/* The baked skin maps. One set serves everybody: the texture stores masks
+   -- brow, lash line, lip, ambient shading -- not colour, so skin tone
+   still comes from the vertex colours and brow colour from the member's
+   own hair colour. Eight skin tones times twelve hair colours is three
+   textures, not ninety-six. */
+const tl = new THREE.TextureLoader();
+const load = (f, srgb) => {
+  const t = tl.load(f);
+  t.colorSpace = srgb ? THREE.SRGBColorSpace : THREE.NoColorSpace;
+  t.flipY = false; t.anisotropy = 8;
+  return t;
+};
+const SKIN = {
+  mask:   load('./skin_mask.png', false),
+  warm:   load('./skin_warm.png', false),
+  normal: load('./skin_normal.png', false),
+  rough:  load('./skin_rough.png', false),
+};
+const cam = new THREE.PerspectiveCamera(22, W/H, .1, 200);
+
+/* ---- materials ----------------------------------------------------- */
+/* Skin. three.js has no subsurface term, so light is wrapped around the
+   terminator and tinted toward blood red as it goes -- which is what you
+   are actually seeing at the edge of a lit cheek. Without it, skin reads
+   as painted plastic however good the mesh is. */
+function skinMat(opt){
+  const o = opt || {};
+  const m = new THREE.MeshPhysicalMaterial({
+    vertexColors:true, roughness:1.0, metalness:0,
+    roughnessMap: SKIN.rough,
+    normalMap: SKIN.normal, normalScale: new THREE.Vector2(.62, .62),
+    clearcoat:.18, clearcoatRoughness:.52,
+    sheen:.5, sheenRoughness:.9, sheenColor:new THREE.Color(0xff9a80),
+    envMapIntensity:.78, side:THREE.DoubleSide,
+  });
+  m.userData.sss = { value: new THREE.Color(0x8c2f1c) };
+  m.onBeforeCompile = sh => {
+    sh.uniforms.sssColor = m.userData.sss;
+    sh.uniforms.sssAmount = { value: 0.55 };
+    sh.uniforms.skinMask = { value: SKIN.mask };
+    sh.uniforms.skinWarm = { value: SKIN.warm };
+    sh.uniforms.browColor = { value: new THREE.Color(o.brow || 0x2b1b10) };
+    sh.uniforms.lipColor  = { value: new THREE.Color(o.lip  || 0xa8554f) };
+    sh.fragmentShader = sh.fragmentShader
+      .replace('#include <common>', `#include <common>
+        uniform vec3 sssColor; uniform float sssAmount;
+        uniform sampler2D skinMask; uniform sampler2D skinWarm;
+        uniform vec3 browColor; uniform vec3 lipColor;`)
+      .replace('#include <color_fragment>', `#include <color_fragment>
+        {
+          vec4 mk = texture2D(skinMask, vNormalMapUv);
+          vec3 wm = texture2D(skinWarm, vNormalMapUv).rgb;
+          vec3 b = diffuseColor.rgb;
+          b = mix(b, b * vec3(1.10, 0.74, 0.70), wm.r * 0.42);   // cheek
+          b = mix(b, b * vec3(0.70, 0.48, 0.44), wm.g * 0.75);   // nostril
+          b *= (0.52 + 0.48 * mk.a);                              // socket, jaw
+          b = mix(b, lipColor, mk.b * 0.88);
+          b = mix(b, browColor * 0.92, mk.r * 0.94);
+          b = mix(b, vec3(0.08, 0.05, 0.05), mk.g * 0.96);        // lash line
+          diffuseColor.rgb = b;
+        }`)
+      .replace('#include <lights_fragment_end>', `#include <lights_fragment_end>
+        {
+          // wrapped diffuse: light creeps past the terminator and comes
+          // back warm, the way it does through a few millimetres of skin
+          #if NUM_DIR_LIGHTS > 0
+          for(int i = 0; i < NUM_DIR_LIGHTS; i++){
+            vec3 L = directionalLights[i].direction;
+            float ndl = dot(normal, L);
+            float wrap = max(0.0, (ndl + 0.62) / 1.62) - max(0.0, ndl);
+            reflectedLight.directDiffuse +=
+              directionalLights[i].color * sssColor * (wrap * sssAmount) * diffuseColor.rgb;
+          }
+          #endif
+        }`);
+  };
+  return m;
+}
+/* Hair is the giveaway. A solid matte cap reads as a helmet; real hair has
+   an anisotropic highlight that runs ACROSS the strands, dark roots and a
+   rough, slightly translucent tip. r169 ships KHR anisotropy, so this is
+   two properties rather than a custom shader. */
+function hairMat(hex){
+  // Hair is dark and rough with ONE bright band across it. Driving the
+  // env map, clearcoat and sheen up turned a brown cap into a chrome
+  // helmet -- brighter is not the same as better lit.
+  return new THREE.MeshPhysicalMaterial({
+    color:hex, roughness:.92, metalness:.0,
+    anisotropy:.25, anisotropyRotation:0,
+    clearcoat:0, sheen:.14, sheenRoughness:.85,
+    sheenColor:new THREE.Color(0x6b4a28),
+    envMapIntensity:.10, side:THREE.DoubleSide,
+  });
+}
+function clothMat(hex, opt){
+  const o = opt || {};
+  return new THREE.MeshPhysicalMaterial({
+    color:hex, roughness:o.rough == null ? .86 : o.rough, metalness:0,
+    roughnessMap: maps.rough,
+    sheen:o.sheen == null ? .85 : o.sheen, sheenRoughness:.75,
+    sheenColor:new THREE.Color(0xffffff),
+    envMapIntensity:.85, side:THREE.DoubleSide,
+  });
+}
+const leatherMat = () => new THREE.MeshPhysicalMaterial({
+  color:0x16161a, roughness:.34, metalness:0, clearcoat:.85,
+  clearcoatRoughness:.22, envMapIntensity:1.2, side:THREE.DoubleSide });
+
+/* An eye is three surfaces, not one: a sclera that is never pure white,
+   an iris with a dark limbal ring and radial fibres, and a clear cornea
+   bulging in front of them. The cornea is what puts a catchlight in the
+   eye, and a catchlight is most of what makes a face look alive. */
+function irisTex(hex){
+  const N = 256, c = document.createElement('canvas'); c.width = c.height = N;
+  const g = c.getContext('2d');
+  const col = new THREE.Color(hex);
+  const hx = '#' + col.getHexString();
+  const dark = '#' + col.clone().multiplyScalar(.35).getHexString();
+  const lit  = '#' + col.clone().lerp(new THREE.Color(0xffffff), .45).getHexString();
+  g.fillStyle = '#05030a'; g.fillRect(0, 0, N, N);
+  const rg = g.createRadialGradient(N/2, N/2, N*.10, N/2, N/2, N*.46);
+  rg.addColorStop(0, dark); rg.addColorStop(.42, hx); rg.addColorStop(.86, lit); rg.addColorStop(1, dark);
+  g.fillStyle = rg; g.beginPath(); g.arc(N/2, N/2, N*.46, 0, 7); g.fill();
+  g.strokeStyle = 'rgba(0,0,0,.30)'; g.lineWidth = 1.1;
+  for(let i = 0; i < 110; i++){
+    const a = i / 110 * Math.PI * 2 + Math.random() * .05;
+    const r0 = N * (.13 + Math.random() * .05), r1 = N * (.34 + Math.random() * .11);
+    g.beginPath();
+    g.moveTo(N/2 + Math.cos(a)*r0, N/2 + Math.sin(a)*r0);
+    g.lineTo(N/2 + Math.cos(a)*r1, N/2 + Math.sin(a)*r1);
+    g.stroke();
+  }
+  g.fillStyle = 'rgba(2,1,4,.92)';                 // limbal ring
+  g.lineWidth = N*.045; g.strokeStyle = 'rgba(6,3,10,.85)';
+  g.beginPath(); g.arc(N/2, N/2, N*.445, 0, 7); g.stroke();
+  g.fillStyle = '#04020a';                          // pupil
+  g.beginPath(); g.arc(N/2, N/2, N*.155, 0, 7); g.fill();
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace;
+  return t;
+}
+function eyeball(e, hex){
+  const grp = new THREE.Group();
+  const R = e.r * 0.96;
+  const sclera = new THREE.Mesh(new THREE.SphereGeometry(R, 32, 24),
+    new THREE.MeshPhysicalMaterial({ color:0xcdc4bd, roughness:.42, clearcoat:.5,
+      clearcoatRoughness:.22, sheen:.4, sheenColor:new THREE.Color(0xff7a6a), envMapIntensity:.45 }));
+  grp.add(sclera);
+  const iris = new THREE.Mesh(new THREE.CircleGeometry(R*.48, 48),
+    new THREE.MeshPhysicalMaterial({ map:irisTex(hex), roughness:.22, clearcoat:1,
+      clearcoatRoughness:.18, envMapIntensity:.45,
+      polygonOffset:true, polygonOffsetFactor:-3, polygonOffsetUnits:-3 }));
+  iris.position.set(0, 0, R*0.893);
+  grp.add(iris);
+  // The cornea is a thin clear shell, not a lens: it exists to catch a
+  // highlight. Making it transmissive washed the iris out completely.
+  const cornea = new THREE.Mesh(new THREE.SphereGeometry(R*1.03, 32, 24),
+    new THREE.MeshPhysicalMaterial({ color:0xffffff, roughness:.015, metalness:0,
+      clearcoat:1, clearcoatRoughness:.01, transparent:true, opacity:.07,
+      envMapIntensity:1.1, depthWrite:false }));
+  grp.add(cornea);
+  grp.position.set(e.c[0], e.c[1], e.c[2] - e.r*0.26);
+  return grp;
+}
+
+function mesh(d, mat){
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(d.position, 3));
+  g.setAttribute('normal', new THREE.Float32BufferAttribute(d.normal, 3));
+  if(d.color) g.setAttribute('color', new THREE.Float32BufferAttribute(d.color, 3));
+  g.setIndex(d.index);
+  // tangents are needed for the anisotropic hair highlight to have a
+  // direction to run along
+  // The mesh's own UVs when it has them -- that is where the skin maps are
+  // painted. Otherwise a cylindrical stand-in, which is only there to give
+  // the anisotropic hair highlight a direction to run along; with the
+  // zeroed UVs it picked one at random per triangle and the hair strobed.
+  let uv;
+  if(d.uv && d.uv.length === d.n * 2){
+    uv = new Float32Array(d.uv);
+    for(let i = 0; i < d.n; i++) uv[i*2+1] = 1 - uv[i*2+1];   // flipY false
+  } else {
+    uv = new Float32Array(d.n * 2);
+    for(let i = 0; i < d.n; i++){
+      const x = d.position[i*3], y = d.position[i*3+1], z = d.position[i*3+2];
+      uv[i*2]   = (Math.atan2(z, x) / (Math.PI*2)) + .5;
+      uv[i*2+1] = y * .04;
+    }
+  }
+  g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+  const m = new THREE.Mesh(g, mat);
+  m.castShadow = true; m.receiveShadow = true;
+  return m;
+}
+
+const TOPC = { t1:0x1d2430, t2:0xb2556b, t3:0x3f5f4c, t4:0xd9c9a8, t5:0x5a6b8c };
+const BOTC = { b1:0x23262e, b2:0x6d4a3a, b3:0x2f4257 };
+const HAIRC = { h1:0x1b1109, h2:0x2e1a0d, h3:0x5c3a1e, h4:0x7f5830, h5:0xa8834a,
+                h6:0xc9a96c, h7:0x6e2310, h8:0x3a3a44 };
+
+let cur = null;
+/* Stylisation, applied to the geometry rather than to the shading: the
+   head comes up about a tenth, the eyes about a third, and the neck
+   takes the difference over a short falloff. Every avatar system people
+   actually like does some version of this -- the realism attempt is the
+   thing that lands in the uncanny valley, not the stylisation. */
+function stylise(E, headK, eyeK){
+  const out = JSON.parse(JSON.stringify(E));
+  const eyes = [out.eyeL, out.eyeR].filter(Boolean);
+  if(!eyes.length) return out;
+  const eyeY = (eyes[0].c[1] + eyes[eyes.length-1].c[1]) / 2;
+  const R = eyes[0].r;
+  const chin = eyeY - R * 7.0;          // about where the jaw ends
+  const neck = chin - R * 3.2;          // falloff finishes here
+  const pivotY = chin, pivotZ = eyes[0].c[2];
+  const grow = p => {
+    let t = (p[1] - neck) / ((chin - neck) || 1);
+    t = Math.max(0, Math.min(1, t)); t = t*t*(3-2*t);
+    const k = 1 + (headK - 1) * t;
+    p[0] *= k;
+    p[1] = pivotY + (p[1] - pivotY) * k;
+    p[2] = pivotZ + (p[2] - pivotZ) * k;
+  };
+  for(const part of ['body','hair','lashes']){
+    const d = out[part]; if(!d) continue;
+    for(let i = 0; i < d.n; i++){
+      const p = [d.position[i*3], d.position[i*3+1], d.position[i*3+2]];
+      grow(p);
+      d.position[i*3] = p[0]; d.position[i*3+1] = p[1]; d.position[i*3+2] = p[2];
+    }
+  }
+  for(const e2 of eyes){ grow(e2.c); e2.r = R * headK * eyeK; }
+  return out;
+}
+
+window.show = (name, mode) => {
+  if(cur) scene.remove(cur);
+  scene.clear();
+  const flat = (mode === 'flat');
+  const styl = (mode === 'styl');
+  const E = styl ? stylise(D[name], 1.11, 1.34) : D[name];
+
+  scene.environment = flat ? null : env;
+  scene.background = new THREE.Color(flat ? 0xfbf7f4 : (styl ? 0x1b2030 : 0x14161a));
+  scene.environmentIntensity = 1.0;
+
+  const g = new THREE.Group();
+  const skin = flat
+    ? new THREE.MeshLambertMaterial({ vertexColors:true, side:THREE.DoubleSide })
+    : skinMat({ brow: HAIRC[E.palette.hair], lip: 0xa8554f });
+  g.add(mesh(E.body, skin));
+  if(E.hair) g.add(mesh(E.hair, flat
+    ? new THREE.MeshLambertMaterial({ color:HAIRC[E.palette.hair], side:THREE.DoubleSide })
+    : hairMat(HAIRC[E.palette.hair])));
+  if(E.lashes) g.add(mesh(E.lashes, new THREE.MeshStandardMaterial({
+    color:0x120b0a, roughness:.55, side:THREE.DoubleSide })));
+  for(const k of ['eyeL','eyeR']){
+    const e2 = E[k]; if(!e2) continue;
+    if(flat){
+      const s = new THREE.Mesh(new THREE.SphereGeometry(e2.r*.96, 20, 14),
+        new THREE.MeshLambertMaterial({ color:0x4a6b52 }));
+      s.position.set(e2.c[0], e2.c[1], e2.c[2] - e2.r*.26); g.add(s);
+    } else g.add(eyeball(e2, 0x5d7f52));
+  }
+  if(E.top)    g.add(mesh(E.top, flat
+    ? new THREE.MeshLambertMaterial({ color:TOPC[E.palette.top], side:THREE.DoubleSide })
+    : clothMat(TOPC[E.palette.top])));
+  if(E.bottom) g.add(mesh(E.bottom, flat
+    ? new THREE.MeshLambertMaterial({ color:BOTC[E.palette.bottom], side:THREE.DoubleSide })
+    : clothMat(BOTC[E.palette.bottom], { rough:.72, sheen:.35 })));
+  if(E.skirt)  g.add(mesh(E.skirt, flat
+    ? new THREE.MeshLambertMaterial({ color:BOTC[E.palette.bottom], side:THREE.DoubleSide })
+    : clothMat(BOTC[E.palette.bottom])));
+  if(E.shoes)  g.add(mesh(E.shoes, flat
+    ? new THREE.MeshLambertMaterial({ color:0x1a1a1f, side:THREE.DoubleSide })
+    : leatherMat()));
+
+  const bb = new THREE.Box3().setFromObject(g);
+  const c0 = bb.getCenter(new THREE.Vector3());
+  const span = bb.max.y - bb.min.y;
+  g.position.set(-c0.x, -bb.min.y, -c0.z);
+  g.rotation.y = (window.YAW == null ? 0.42 : window.YAW);
+  scene.add(g); cur = g;
+
+  if(flat){
+    // the lighting the pipeline shipped with: one lamp and a fill
+    scene.add(new THREE.HemisphereLight(0xdfe6ff, 0x3a2c26, .55));
+    const k = new THREE.DirectionalLight(0xfff2e4, 1.9); k.position.set(-2.4, 2.6, 3.4); scene.add(k);
+    const f = new THREE.DirectionalLight(0xc4d6ff, .45); f.position.set(3.0, .4, 1.8); scene.add(f);
+  } else {
+    // a three-point rig, with the key casting a real shadow
+    const key = new THREE.DirectionalLight(0xfff0dc, 2.6);
+    key.position.set(-span*.7, span*1.05, span*.85);
+    key.castShadow = true;
+    key.shadow.mapSize.set(2048, 2048);
+    key.shadow.camera.left = -span*.45; key.shadow.camera.right = span*.45;
+    key.shadow.camera.top = span*1.1;   key.shadow.camera.bottom = -span*.1;
+    key.shadow.camera.near = .1; key.shadow.camera.far = span*4;
+    key.shadow.bias = -0.0012; key.shadow.normalBias = span*.004;
+    key.shadow.radius = 3;
+    scene.add(key);
+    const fill = new THREE.DirectionalLight(0x9db9e8, .55);
+    fill.position.set(span*.9, span*.45, span*.7); scene.add(fill);
+    const rim = new THREE.DirectionalLight(0xfff7ea, 3.1);
+    rim.position.set(span*.35, span*.9, -span*1.0); scene.add(rim);
+    // ground, so the figure stands on something instead of floating
+    const floor = new THREE.Mesh(new THREE.PlaneGeometry(span*6, span*6),
+      new THREE.ShadowMaterial({ opacity:.46 }));
+    floor.rotation.x = -Math.PI/2; floor.receiveShadow = true;
+    scene.add(floor);
+  }
+
+  // A portrait lens: long enough not to distort, framed on the figure.
+  const head = (window.CROP === 'head');
+  const fov = head ? 16 : 22;
+  cam.fov = fov; cam.updateProjectionMatrix();
+  const target = head ? span*0.92 : span*0.52;
+  const fit = head ? span*0.26 : span*0.56;
+  const dist = fit / Math.tan(fov*Math.PI/360);
+  cam.position.set(0, target, dist);
+  cam.lookAt(0, target, 0);
+
+  r.render(scene, cam);
+  return r.domElement.toDataURL('image/png');
+};
+window.ready = true;
+</script></body></html>

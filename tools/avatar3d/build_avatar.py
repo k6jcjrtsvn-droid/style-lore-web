@@ -2,13 +2,23 @@ import json, math, os, sys, collections
 sys.path.insert(0, '/home/claude/mh')
 import anat, wardrobe, wardrobe2, footwear, cutter, hair as HAIR
 
-RAW=[]; FACES=[]; cur=None
+RAW=[]; FACES=[]; UVRAW=[]; UVOF={}; cur=None
 for line in open('base.obj'):
     if line.startswith('v '):
         p=line.split(); RAW.append([float(p[1]),float(p[2]),float(p[3])])
+    elif line.startswith('vt '):
+        p=line.split(); UVRAW.append([float(p[1]),float(p[2])])
     elif line.startswith('g '): cur=line[2:].strip()
     elif line.startswith('f '):
-        FACES.append((cur,[int(t.split('/')[0])-1 for t in line.split()[1:]]))
+        toks=line.split()[1:]
+        FACES.append((cur,[int(t.split('/')[0])-1 for t in toks]))
+        # The base mesh ships a full UV layout and this parser was dropping
+        # it on the floor. Everything that makes a face read as a face --
+        # brows, lashes, lips -- has to be painted into that layout.
+        for t in toks:
+            a=t.split('/')
+            if len(a)>1 and a[1]:
+                UVOF.setdefault(int(a[0])-1, int(a[1])-1)
 BODYIDX=sorted({i for g,idx in FACES if g=='body' for i in idx})
 
 C={}
@@ -149,9 +159,15 @@ def build(spec):
     B2=anat.Body(v, BODYIDX); B2.cls=B.cls        # heights after posing
     P,TT,src=part(v,{'body'})
     N,adj=normals(P,TT)
+    uv=[]
+    for i in src:
+        t=UVOF.get(i)
+        q=UVRAW[t] if t is not None and t < len(UVRAW) else [0.0,0.0]
+        uv += [q[0], q[1]]
     out={'body':{'position':[c for q in P for c in q],
                  'normal':[c for q in N for c in q],
                  'color':skin_colours(P,src,B2,N,adj,spec['skin'],spec['hairColor']),
+                 'uv':uv,
                  'index':[i for f in TT for i in f],'n':len(P)}}
     nrm = cutter.body_normals(B2, FACES)
     out['top']=wardrobe2.top(B2, FACES, nrm, spec.get('top','tee'))
