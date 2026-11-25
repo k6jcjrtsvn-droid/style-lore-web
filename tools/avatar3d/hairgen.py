@@ -14,6 +14,31 @@
    A dark under-cap stays underneath so no scalp shows through the gaps."""
 import math, random
 
+class RNG:
+    """An explicit generator, because the same hair has to come out of the
+       build and out of the browser. Python's Mersenne Twister and the
+       browser's Math.random agree about nothing, and the member's device
+       renders the cached portrait -- so a figure that differs between the
+       two is a figure that changes when you look at it."""
+    __slots__ = ('s',)
+    def __init__(self, seed):
+        self.s = (int(seed) * 2654435761 + 1) & 0xFFFFFFFF or 1
+    def next(self):
+        x = self.s
+        x ^= (x << 13) & 0xFFFFFFFF
+        x ^= x >> 17
+        x ^= (x << 5) & 0xFFFFFFFF
+        self.s = x & 0xFFFFFFFF
+        return self.s
+    def random(self):
+        return self.next() / 4294967296.0
+    def uniform(self, a, b):
+        return a + (b - a) * self.random()
+    def randint(self, a, b):
+        return a + int(self.random() * (b - a + 1))
+    def randrange(self, n):
+        return int(self.random() * n)
+
 # ---------------------------------------------------------------- strands
 def strand_texture(W=512, H=512, slices=8, seed=5):
     """One texture, several vertical slices of it, each a different clump.
@@ -89,7 +114,7 @@ def build(scalp_pos, scalp_nrm, scalp_tris, style='long', seed=3, slices=8,
     """scalp_* describe the cap the hair grows out of, in world units."""
     table = STYLISED if stylised else STYLES
     o = table.get(style, table['long'])
-    rng = random.Random(seed)
+    rng = RNG(seed)
 
     # roots, distributed over the cap by triangle area so the parting is
     # not denser than the back of the head

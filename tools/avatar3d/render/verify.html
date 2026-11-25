@@ -1,0 +1,66 @@
+<!doctype html><html><body><script type="module">
+import { loadBase, applyMix, groupCentre, styliseHead, normals } from './avatar.js';
+import { makeBody, armsDown, bodyNormals } from './body.js';
+import { scalp, buildHair } from './hairgen.js';
+import { top, bottoms, skirt, shoes } from './wardrobe.js';
+const B = await loadBase('./avatar-base-v1.bin');
+window.info = { n: B.n, tris: B.index.length/3, targets: Object.keys(B.byName).length };
+
+window.buildAvatar = spec => {
+  const t0 = performance.now();
+  const { body, helper } = applyMix(B, spec.mix);
+  const eL = groupCentre(B, helper, 'helper-l-eye');
+  const eR = groupCentre(B, helper, 'helper-r-eye');
+  const eyeY = (eL[1]+eR[1])*.5, eyeZ = (eL[2]+eR[2])*.5;
+  const gap = Math.abs(eL[0]-eR[0]) || 1;
+  styliseHead(body, eyeY, eyeZ, gap, 1.12);
+  styliseHead(helper, eyeY, eyeZ, gap, 1.12);
+  const t1 = performance.now();
+
+  const Bd = makeBody(B, body);
+  window.__clsCount = Object.keys(Bd.cls).length;
+  window.__before = body.slice();
+  armsDown(Bd, 34.0);
+  let moved = 0;
+  for(let i = 0; i < body.length; i += 3) if(Math.abs(body[i]-window.__before[i]) > 1e-6) moved++;
+  window.__moved = moved;
+  window.__axis = JSON.parse(JSON.stringify(Bd.axis));
+  const Bd2 = makeBody(B, body);
+  const t2 = performance.now();
+
+  window.__posed = body;
+  const nrm = bodyNormals(Bd2, B.index);
+  const out = {};
+  out.body = { n: B.n, tris: B.index.length/3, position: body };
+  if(spec.top)    out.top    = top(Bd2, B.index, nrm, spec.top);
+  if(spec.bottom) out.bottom = bottoms(Bd2, B.index, nrm, spec.bottom);
+  if(spec.skirt)  out.skirt  = skirt(Bd2, B.index, nrm, spec.skirt);
+  out.shoes = shoes(Bd2, spec.shoes || 'flat');
+  const t3 = performance.now();
+
+  const eL2 = groupCentre(B, helper, 'helper-l-eye');
+  const eR2 = groupCentre(B, helper, 'helper-r-eye');
+  const cap = scalp(body, B.index, nrm, (eL2[1]+eR2[1])*.5, { front:.76, thick:.030 });
+  if(cap) out.hair = buildHair(cap.pos, cap.nrm, cap.tris, spec.hairStyle || 'long',
+                               spec.hairSeed == null ? 7 : spec.hairSeed);
+  const t4 = performance.now();
+
+  const summary = {};
+  for(const k in out) if(out[k])
+    summary[k] = { n: out[k].n, tris: (out[k].index ? out[k].index.length/3 : out[k].tris),
+                   bbox: bbox(out[k].position) };
+  return { summary, ms: { morph:+(t1-t0).toFixed(1), pose:+(t2-t1).toFixed(1),
+                          clothes:+(t3-t2).toFixed(1), hair:+(t4-t3).toFixed(1),
+                          total:+(t4-t0).toFixed(1) } };
+};
+function bbox(p){
+  let r = [Infinity,Infinity,Infinity,-Infinity,-Infinity,-Infinity];
+  for(let i = 0; i < p.length; i += 3) for(let k = 0; k < 3; k++){
+    if(p[i+k] < r[k]) r[k] = p[i+k];
+    if(p[i+k] > r[k+3]) r[k+3] = p[i+k];
+  }
+  return r.map(x => +x.toFixed(3));
+}
+window.posed = s => { window.buildAvatar(s); return Array.from(window.__posed); };
+window.ready = true;
+</script></body></html>
