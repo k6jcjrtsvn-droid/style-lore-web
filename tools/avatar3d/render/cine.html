@@ -31,6 +31,15 @@ const load = (f, srgb) => {
   return t;
 };
 const STRAND = load('./hair_strand.png', true);
+/* flipY, because mesh() flips V for the skin atlas and the hair texture
+   goes through the same path: without it the cards are drawn upside
+   down, with soft tapered roots and blunt square tips. And no mipmaps,
+   because one level averages the fine strands into the gaps, the
+   averaged alpha falls under alphaTest, and every card renders as its
+   solid core -- a rectangle. */
+STRAND.flipY = true;
+STRAND.generateMipmaps = false;
+STRAND.minFilter = THREE.LinearFilter; STRAND.magFilter = THREE.LinearFilter;
 STRAND.wrapS = STRAND.wrapT = THREE.ClampToEdgeWrapping;
 const SKIN = {
   mask:   load('./skin_mask.png', false),
@@ -77,7 +86,7 @@ function skinMat(opt){
           b = mix(b, b * vec3(0.70, 0.48, 0.44), wm.g * 0.75);   // nostril
           b *= (0.66 + 0.34 * mk.a);                              // socket, jaw
           b = mix(b, lipColor, mk.b * 0.88);
-          b = mix(b, browColor * 0.92, mk.r * 0.82);
+          b = mix(b, browColor * 0.92, mk.r * 0.42);
           b = mix(b, vec3(0.10, 0.07, 0.07), mk.g * 0.70);        // lash line
           diffuseColor.rgb = b;
         }`)
@@ -130,16 +139,31 @@ function cardMat(hex){
     // it did here -- the hair looked shredded, and it was the blend mode
     // doing it, not the cards.
     alphaToCoverage:false,
-    vertexColors:true, roughness:.42, metalness:0,
-    anisotropy:.70, anisotropyRotation:Math.PI/2,
-    sheen:0, envMapIntensity:.16, side:THREE.DoubleSide,
+    vertexColors:true, roughness:.62, metalness:0,
+    anisotropy:.45, anisotropyRotation:Math.PI/2,
+    // Left at full specular strength the anisotropic lobe under a strong
+    // rim light turns the crown white, and a white crown on brown hair
+    // reads as a bald patch.
+    sheen:0, specularIntensity:.30, envMapIntensity:.10, side:THREE.DoubleSide,
   });
   m.shadowSide = THREE.DoubleSide;
   return m;
 }
+/* The cap under the cards is not hair, it is the absence of a gap: it
+   exists so no scalp shows between the strands. At .45 of the hair
+   colour it was lighter than the cards around it under a strong key and
+   showed through at the crown as a bright tiled patch that read as a
+   bald spot. It wants to be the darkest thing on the head. */
 const capMat = hex => new THREE.MeshStandardMaterial({
-  color:new THREE.Color(hex).multiplyScalar(.45), roughness:.95,
+  color:new THREE.Color(hex).multiplyScalar(.08), roughness:.95,
   metalness:0, envMapIntensity:.06, side:THREE.DoubleSide });
+
+/* The brow strands: dark, barely reflective. A brow that catches the
+   environment map reads as wet paint. */
+const browMat = hex => new THREE.MeshPhysicalMaterial({
+  color:new THREE.Color(hex).multiplyScalar(.88), vertexColors:true,
+  roughness:.48, metalness:0, clearcoat:.30, clearcoatRoughness:.38,
+  sheen:0, envMapIntensity:.20, side:THREE.DoubleSide });
 
 function hairMat(hex){
   // Hair is dark and rough with ONE bright band across it. Driving the
@@ -334,6 +358,9 @@ window.show = (name, mode) => {
   if(E.hair) g.add(mesh(E.hair, flat
     ? new THREE.MeshLambertMaterial({ color:hairHex, side:THREE.DoubleSide })
     : (E.hair.uv ? cardMat(hairHex) : hairMat(hairHex))));
+  if(E.brows) g.add(mesh(E.brows, flat
+    ? new THREE.MeshLambertMaterial({ vertexColors:true, color:hairHex, side:THREE.DoubleSide })
+    : browMat(hairHex)));
   if(E.lashes) g.add(mesh(E.lashes, new THREE.MeshStandardMaterial({
     color:0x120b0a, roughness:.55, side:THREE.DoubleSide })));
   for(const k of ['eyeL','eyeR']){

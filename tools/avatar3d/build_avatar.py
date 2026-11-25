@@ -216,6 +216,11 @@ def build(spec):
     out['lashes']=simple(v,{'helper-l-eyelashes-1','helper-l-eyelashes-2',
                             'helper-r-eyelashes-1','helper-r-eyelashes-2'})
     eye=ball(v,'helper-l-eye'); out['eyeL']=eye; out['eyeR']=ball(v,'helper-r-eye')
+    # The brows are strands on the skin, not a smudge in the texture: the
+    # head's UV island gives a painted brow about thirty texels across,
+    # which can only ever be a smear.
+    brows=hairgen.build_brows(P,N,eye['c'],out['eyeR']['c'],11)
+    if brows: out['brows']=brows
     hopt={'front':.76,'thick':.05,'puff':.075,
           'rings':11,'length':spec.get('hairLen',1.55)}
     # The cap stays, but dark and tight to the skull: it is only there so

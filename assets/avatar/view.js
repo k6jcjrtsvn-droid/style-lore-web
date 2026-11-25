@@ -10,7 +10,7 @@ import { loadBase, applyMix, groupCentre, styliseHead, shapeFor, sliderMix, MACR
 import { makeBody, armsDown, bodyNormals } from './body.js';
 import { top as mkTop, bottoms as mkBottom, skirt as mkSkirt, shoes as mkShoes }
   from './wardrobe.js';
-import { scalp, buildHair } from './hairgen.js';
+import { scalp, buildHair, buildBrows } from './hairgen.js';
 import { studioEnv } from './env.js';
 
 /* The app's catalogue is not the pipeline's catalogue -- the drawn
@@ -103,15 +103,30 @@ export async function mount(canvas, opts){
      maps arrive samples an empty texture, and the face comes out with no
      eyebrows, no lip and no shading in the socket. It looks like a
      shader bug and is a race. */
-  const tex = (f, srgb) => new Promise((res, rej) => {
+  const tex = (f, srgb, o2) => new Promise((res, rej) => {
     tl.load(base + f, t => {
       t.colorSpace = srgb ? THREE.SRGBColorSpace : THREE.NoColorSpace;
-      t.flipY = false; t.anisotropy = 8; res(t);
+      t.flipY = (o2 && o2.flipY) || false; t.anisotropy = 8;
+      if(o2 && o2.crisp){
+        // Fine strands are two texels wide. One mip level averages them
+        // into the gaps, the averaged alpha falls under alphaTest, and
+        // every card loses its strands and renders as the solid core --
+        // a rectangle. The cards are drawn once per change, not per
+        // frame, so there is no shimmer to trade away by not mipping.
+        t.generateMipmaps = false;
+        t.minFilter = THREE.LinearFilter; t.magFilter = THREE.LinearFilter;
+      }
+      res(t);
     }, undefined, rej);
   });
   const [mask, warm, normal, rough, STRAND, B] = await Promise.all([
     tex('skin_mask.png'), tex('skin_warm.png'), tex('skin_normal.png'),
-    tex('skin_rough.png'), tex('hair_strand.png', true),
+    /* flipY, because geom() flips V for the skin atlas and the hair
+       texture goes through the same path: without this the cards are
+       drawn upside down -- soft tapered roots and blunt square tips,
+       which is the opposite of hair and was most of why the first pass
+       looked like strips of tape. */
+    tex('skin_rough.png'), tex('hair_strand.png', true, { flipY:true, crisp:true }),
     loadBase(o.bundle || './assets/avatar-base-v1.bin'),
   ]);
   const SK = { mask, warm, normal, rough };
@@ -188,7 +203,7 @@ export async function mount(canvas, opts){
           '  b = mix(b, b * vec3(0.70,0.48,0.44), wm.g * 0.75);\n' +
           '  b *= (0.66 + 0.34 * mk.a);\n' +
           '  b = mix(b, lipColor, mk.b * 0.88);\n' +
-          '  b = mix(b, browColor * 0.92, mk.r * 0.82);\n' +
+          '  b = mix(b, browColor * 0.92, mk.r * 0.42);\n' +
           '  b = mix(b, vec3(0.10,0.07,0.07), mk.g * 0.70);\n' +
           '  diffuseColor.rgb = b; }');
     };
@@ -196,10 +211,27 @@ export async function mount(canvas, opts){
   };
   const cardMat = hex => new THREE.MeshPhysicalMaterial({
     color:hex, map:STRAND, alphaTest:.40, transparent:false, vertexColors:true,
-    roughness:.42, metalness:0, anisotropy:.70, anisotropyRotation:Math.PI/2,
-    sheen:0, envMapIntensity:.16, side:THREE.DoubleSide });
+    roughness:.62, metalness:0, anisotropy:.45, anisotropyRotation:Math.PI/2,
+    /* The hair's highlight is the one place it can go wrong in a hurry.
+       Left at the default specular strength the anisotropic lobe under a
+       strong rim light turns the crown white, and a white crown on brown
+       hair reads as a bald patch. */
+    sheen:0, specularIntensity:.30, envMapIntensity:.10, side:THREE.DoubleSide });
+  /* The brow strands. Dark, slightly cooler than the hair, barely
+     reflective -- a brow that catches the environment map reads as wet
+     paint. Lit mostly by the key, which is what gives the strands their
+     edge. */
+  const browMat = hex => new THREE.MeshPhysicalMaterial({
+    color:new THREE.Color(hex).multiplyScalar(.88), vertexColors:true,
+    roughness:.48, metalness:0, clearcoat:.30, clearcoatRoughness:.38,
+    sheen:0, envMapIntensity:.20, side:THREE.DoubleSide });
+  /* The cap under the cards is not hair, it is the absence of a gap: it
+     exists so no scalp shows between the strands. At .45 of the hair
+     colour it was lighter than the cards around it under a strong key,
+     and it showed through as a bright tiled patch at the crown that read
+     as a bald spot. It wants to be the darkest thing on the head. */
   const capMat = hex => new THREE.MeshStandardMaterial({
-    color:new THREE.Color(hex).multiplyScalar(.45), roughness:.95, metalness:0,
+    color:new THREE.Color(hex).multiplyScalar(.08), roughness:.95, metalness:0,
     envMapIntensity:.06, side:THREE.DoubleSide });
   const clothMat = (hex, rough) => new THREE.MeshPhysicalMaterial({
     color:hex, roughness:rough == null ? .86 : rough, metalness:0,
@@ -256,6 +288,13 @@ export async function mount(canvas, opts){
     if(ts && TOP[ts]) add(mkTop(Bd2, B.index, nrm, TOP[ts]), clothMat(col('top')), 'top');
     const ss = sty('shoes');
     add(mkShoes(Bd2, SHOE[ss] || 'flat'), leather(ss ? col('shoes') : 0x16161a), 'shoes');
+
+    /* The brows, as strands on the skin rather than as a smudge in the
+       texture. They are built from the same positions and normals the
+       body mesh uses, so they stay seated through every slider. */
+    const eLs = groupCentre(B, helper, 'helper-l-eye');   // after styliseHead:
+    const eRs = groupCentre(B, helper, 'helper-r-eye');   // the eyes have moved
+    add(buildBrows(body, nrm, eLs, eRs, 11), browMat(hairHex), 'brows');
 
     // the eyes, from the morphed helper spheres
     for(const g of ['helper-l-eye', 'helper-r-eye']){

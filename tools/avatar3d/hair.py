@@ -12,7 +12,24 @@ def build_hair(pos, tris, N, eye, opts):
         zf=max(0.0,min(1.0,(p[2]-zMin)/((zMax-zMin) or 1)))
         return eyeY + front*(zf**1.5) - 0.06 + lift - 0.20*(abs(p[0])/xMax)
 
-    sc=[p[1] > hairline(p) for p in pos]
+    # A hairline is not a drawn curve. Cutting the cap on a smooth
+    # function of position gives one, and a smooth dark edge across the
+    # forehead is what makes a head of hair look like a swimming cap. The
+    # threshold is jittered per vertex instead, by about one ring of the
+    # mesh, so the cap ends raggedly -- and because the cards are grown
+    # from the cap, the hair itself ends raggedly with it.
+    #
+    # The jitter is hashed from the vertex INDEX, not its position: the
+    # index is the same integer in the build and in the browser, where a
+    # position is the same float only as long as every morph before it
+    # agrees to the last bit.
+    ragged = o.get('ragged', 0.13)
+    def _jit(i):
+        h = ((i ^ 0x9e3779b9) * 2246822507) & 0xFFFFFFFF
+        h = ((h ^ (h >> 13)) * 3266489909) & 0xFFFFFFFF
+        h = (h ^ (h >> 16)) & 0xFFFFFFFF
+        return (h / 4294967296.0 - .5) * ragged
+    sc=[p[1] > hairline(p) + _jit(i) for i, p in enumerate(pos)]
     cap=[t for t in tris if sc[t[0]] and sc[t[1]] and sc[t[2]]]
     if not cap: return None
 
@@ -112,7 +129,24 @@ def scalp(pos, tris, N, eye, opts):
     def hairline(p):
         zf=max(0.0,min(1.0,(p[2]-zMin)/((zMax-zMin) or 1)))
         return eyeY + front*(zf**1.5) - 0.06 + lift - 0.20*(abs(p[0])/xMax)
-    sc=[p[1] > hairline(p) for p in pos]
+    # A hairline is not a drawn curve. Cutting the cap on a smooth
+    # function of position gives one, and a smooth dark edge across the
+    # forehead is what makes a head of hair look like a swimming cap. The
+    # threshold is jittered per vertex instead, by about one ring of the
+    # mesh, so the cap ends raggedly -- and because the cards are grown
+    # from the cap, the hair itself ends raggedly with it.
+    #
+    # The jitter is hashed from the vertex INDEX, not its position: the
+    # index is the same integer in the build and in the browser, where a
+    # position is the same float only as long as every morph before it
+    # agrees to the last bit.
+    ragged = o.get('ragged', 0.13)
+    def _jit(i):
+        h = ((i ^ 0x9e3779b9) * 2246822507) & 0xFFFFFFFF
+        h = ((h ^ (h >> 13)) * 3266489909) & 0xFFFFFFFF
+        h = (h ^ (h >> 16)) & 0xFFFFFFFF
+        return (h / 4294967296.0 - .5) * ragged
+    sc=[p[1] > hairline(p) + _jit(i) for i, p in enumerate(pos)]
     cap=[t for t in tris if sc[t[0]] and sc[t[1]] and sc[t[2]]]
     if not cap: return None
     m={}; P=[]; NN=[]; T=[]

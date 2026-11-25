@@ -100,13 +100,17 @@ STYLES = {
     'crop':  dict(cards=560, length=0.32, segs=5,  width=.085, gravity=.78, volume=.18, curl=.12),
 }
 
+# Narrower cards than the first pass, and more of them. A card .165 wide
+# is an eighth of the width of the head: at the root, where the clump
+# texture is at full width, it draws a rectangle, and a head of hair made
+# of rectangles is a head of hair you can count the pieces of.
 STYLISED = {
-    'long':  dict(cards=520, length=2.05, segs=12, width=.165, gravity=.90, volume=.26, curl=.06),
-    'bob':   dict(cards=470, length=1.00, segs=9,  width=.165, gravity=.94, volume=.22, curl=.05),
-    'wavy':  dict(cards=540, length=1.80, segs=13, width=.175, gravity=.84, volume=.30, curl=.18),
-    'curls': dict(cards=600, length=1.10, segs=13, width=.145, gravity=.60, volume=.40, curl=.46),
-    'short': dict(cards=440, length=0.56, segs=8,  width=.150, gravity=.82, volume=.28, curl=.10),
-    'crop':  dict(cards=390, length=0.34, segs=7,  width=.145, gravity=.76, volume=.24, curl=.12),
+    'long':  dict(cards=980, length=2.05, segs=12, width=.100, gravity=.90, volume=.26, curl=.06),
+    'bob':   dict(cards=900, length=1.00, segs=9,  width=.100, gravity=.94, volume=.22, curl=.05),
+    'wavy':  dict(cards=1010,length=1.80, segs=13, width=.106, gravity=.84, volume=.30, curl=.18),
+    'curls': dict(cards=1120,length=1.10, segs=13, width=.090, gravity=.60, volume=.40, curl=.46),
+    'short': dict(cards=840, length=0.56, segs=8,  width=.092, gravity=.82, volume=.28, curl=.10),
+    'crop':  dict(cards=740, length=0.34, segs=7,  width=.088, gravity=.76, volume=.24, curl=.12),
 }
 
 def build(scalp_pos, scalp_nrm, scalp_tris, style='long', seed=3, slices=8,
@@ -146,9 +150,19 @@ def build(scalp_pos, scalp_nrm, scalp_tris, style='long', seed=3, slices=8,
     # a hair's breadth more offset than the last. Without it the cards are
     # near-coincident, they fight for depth, and the whole head renders as
     # a woven basket -- which looks like a texture bug and is not one.
-    LAYERS = ((int(o['cards'] * .45), .34, .80, .004),
-              (o['cards'],            1.0, 1.0, .040))
-    for layer, (count, lenK, widK, shell) in enumerate(LAYERS):
+    # Four passes. A dense short under-layer that fills; the main cards
+    # that carry the shape; a thin scatter of flyaways sitting further off
+    # the scalp, which is what stops the silhouette reading as a moulded
+    # shell; and short baby hairs at the front hairline, because the hard
+    # line where the cap meets the forehead is the single thing that most
+    # gives a wig away.
+    #   count, length x, width x, shell offset, mode
+    #   mode 0 normal  1 flyaway  2 baby hair at the hairline
+    LAYERS = ((int(o['cards'] * .60), .34, .80, .004, 0),
+              (o['cards'],            1.0, 1.0, .040, 0),
+              (int(o['cards'] * .08), .80, .38, .062, 1),
+              (int(o['cards'] * .16), .10, .34, .012, 2))
+    for layer, (count, lenK, widK, shell, mode) in enumerate(LAYERS):
       for k in range(count):
           r = rng.random()
           lo, hi = 0, len(cum) - 1
@@ -166,9 +180,15 @@ def build(scalp_pos, scalp_nrm, scalp_tris, style='long', seed=3, slices=8,
           # The front of the head keeps its hair short or it hangs over the
           # face; the back and sides carry the length.
           zf = (root[2] - zB) / ((zF - zB) or 1)
+          if mode == 2 and zf < .76: continue    # baby hairs: the front only
+          # and no flyaway over the face: at this length one reads as a
+          # scratch across the picture rather than as a loose hair
+          if mode == 1 and zf > .74: continue
           fall = smooth((.80 - zf) / .34)
           L = o['length'] * lenK * (.28 + .72 * fall) * rng.uniform(.80, 1.18)
-          segs = max(3, int(o['segs'] * (.55 + .45 * fall)))
+          if mode == 2: L = o['length'] * lenK * rng.uniform(.70, 1.55)
+          if mode == 1: L *= rng.uniform(.85, 1.35)
+          segs = 3 if mode == 2 else max(3, int(o['segs'] * (.55 + .45 * fall)))
 
           side = _norm(_cross(nrm, [0, 1, 0]))
           if sum(x*x for x in side) < 1e-6: side = [1, 0, 0]
@@ -179,7 +199,27 @@ def build(scalp_pos, scalp_nrm, scalp_tris, style='long', seed=3, slices=8,
               away = [root[0] - crown[0], 0, root[2] - crown[2]]
           if sum(x*x for x in away) < 1e-8: away = side[:]
           away = _norm(away)
+          # Hair that grows in front of the crown wants to fall straight
+          # forward, which puts a curtain over the face -- the first
+          # version had a fringe down to the nose on every style. Past the
+          # crown the fall is bent outward instead, which is what a
+          # parting is, and shortened, because the front of a head of hair
+          # is always the short part of it.
+          fr = smooth((zf - .55) / .45)
+          if fr > 0:
+              away = _norm([away[0] * (1 + 2.1 * fr), away[1], away[2] * (1 - .88 * fr)])
+              # and no two of them the same length, or it is a bowl cut
+              L *= (1 - .42 * fr) * (1 + fr * rng.uniform(-.38, .38))
           d = _norm(_add(_mul(away, .78), _mul(nrm, .22)))
+          if mode == 1:
+              # a flyaway leaves at its own angle, which is the point of it
+              d = _norm([d[0] + rng.uniform(-.42, .42), d[1] + rng.uniform(-.14, .34),
+                         d[2] + rng.uniform(-.42, .42)])
+          elif mode == 2:
+              # baby hairs lie back along the forehead rather than stand up
+              d = _norm([d[0] * .5 + rng.uniform(-.5, .5),
+                         d[1] * .3 - rng.uniform(.0, .35),
+                         d[2] * .5 - .55])
           off = shell + (k % 97) * .00035
           root = _add(root, _mul(nrm, off))
           p = root[:]
@@ -194,12 +234,18 @@ def build(scalp_pos, scalp_nrm, scalp_tris, style='long', seed=3, slices=8,
           if sum(x*x for x in frame) < 1e-6: frame = side[:]
           ph = rng.uniform(0, 6.283)
           wid = o['width'] * widK * rng.uniform(.75, 1.3)
+          # Hair is not one colour. Letting each card sit a little lighter
+          # or darker than its neighbours does more for the look of it
+          # than any amount of shader work, because it is what the eye
+          # reads as depth.
+          bright = rng.uniform(.78, 1.22)
           base = len(P)
           for s in range(segs + 1):
               t = s / segs
               # the strand leaves the scalp along its normal, then gravity
               # takes over; a little curl keeps it off a perfect arc
-              g = smooth(t / .40) * o['gravity']
+              g = smooth(t / .40) * (o['gravity'] * .55 if mode == 1 else
+                                     o['gravity'] * .30 if mode == 2 else o['gravity'])
               d = _norm(_lerp(d, [0, -1, 0], g * .62))
               d = _add(d, _mul(_norm([math.cos(ph + t*5.0), 0, math.sin(ph + t*5.0)]),
                                o['curl'] * .22))
@@ -222,7 +268,7 @@ def build(scalp_pos, scalp_nrm, scalp_tris, style='long', seed=3, slices=8,
               half = wid * (1.0 - .62 * (t ** 1.4)) * .5
               uslice = rng.randrange(slices) if s == 0 else uslice
               u0 = uslice / slices; u1b = (uslice + 1) / slices
-              shade = .34 + .46 * (t ** .8)            # dark roots, lit tips
+              shade = (.30 + .38 * (t ** .8)) * bright   # dark roots, lit tips
               for sgn, uu in ((-1, u0), (1, u1b)):
                   P.append(_add(p, _mul(sd, sgn * half)))
                   N.append(fn[:])
@@ -289,3 +335,126 @@ def clump_texture(W=512, H=512, slices=8, seed=9):
                         px[i+3] = int(min(255, a * 255))
     return bytes(px), W, H
 
+
+
+# ------------------------------------------------------------------ brows
+def _brow_sampler(pos, nrm, e, g):
+    """A smooth read of the head's surface anywhere along the brow.
+
+       Snapping each strand to its nearest vertex would quantise seventy
+       strands onto the ten or so vertices the mesh has there and give a
+       brow built out of steps, so this is a Gaussian-weighted average of
+       the vertices around a target (x, y) instead."""
+    sgn = 1.0 if e[0] >= 0 else -1.0
+    idx = []
+    for i, p in enumerate(pos):
+        if p[0] * sgn < -.06 * g: continue
+        if abs(p[0]) > 1.45 * g: continue
+        if p[1] < e[1] - .10 * g or p[1] > e[1] + 1.15 * g: continue
+        if p[2] < e[2] - .80 * g: continue
+        idx.append(i)
+    hx = .17 * g; hy = .14 * g
+    def sample(tx, ty):
+        W = 0.0; P = [0.0, 0.0, 0.0]; N = [0.0, 0.0, 0.0]
+        for i in idx:
+            p = pos[i]
+            dx = (p[0] - tx) / hx; dy = (p[1] - ty) / hy
+            w = math.exp(-(dx*dx + dy*dy))
+            if w < 1e-4: continue
+            W += w
+            for k in range(3):
+                P[k] += p[k] * w; N[k] += nrm[i][k] * w
+        if not W: return None
+        P = [c / W for c in P]; N = _norm([c / W for c in N])
+        # A weighted average of points on a curved surface lands INSIDE
+        # it. The bias is small -- a fraction of the kernel width -- but
+        # so is the height a brow hair sits at, and the first version of
+        # this had the whole brow submerged in the forehead.
+        out = 0.0
+        for i in idx:
+            p = pos[i]
+            dx = (p[0] - tx) / hx; dy = (p[1] - ty) / hy
+            if dx*dx + dy*dy > 4: continue
+            d = sum((p[k] - P[k]) * N[k] for k in range(3))
+            if d > out: out = d
+        return ([P[k] + N[k] * out for k in range(3)], N)
+    return sample
+
+
+def build_brows(pos, nrm, eL, eR, seed=11, hairs=160):
+    """Eyebrows as strands rather than as a smudge in the skin texture.
+
+       The head's UV island gives the brow about thirty texels across its
+       thickness, so a painted brow can only ever be a smear; and a
+       painted brow has no edge of its own, while the thing that makes a
+       real brow read as hair is that its outline is made of the hairs
+       sticking out of it. Around a hundred and sixty tapered strands a
+       side cost some twenty-five hundred vertices for the pair, against
+       the thirteen thousand the body already spends."""
+    g = abs(eL[0] - eR[0]) or 1.0
+    P = []; N = []; C = []; T = []
+    for e in (eL, eR):
+        sample = _brow_sampler(pos, nrm, e, g)
+        if sample is None: continue
+        sgn = 1.0 if e[0] >= 0 else -1.0
+        # the same stream both sides: a face whose brows disagree looks
+        # wrong in a way nobody can name but everybody sees
+        rng = RNG(seed)
+        xIn = .18 * g; xOut = .93 * g
+        arch = lambda s: e[1] + (.385 + .100 * math.sin(math.pi * (s ** .85))) * g
+        ax = lambda s: sgn * (xIn + (xOut - xIn) * s)
+        thick = lambda s: (.072 - .040 * (s ** 1.5)) * g
+        for k in range(hairs):
+            # Hairs are spaced so the HEAD of the brow is the dense end.
+            # Laying them out evenly along s does the opposite: the head
+            # is the thick part, so an even count spread across a thicker
+            # band comes out sparser than the thin tail, and the brow
+            # ends up as a dark comma pointing at the nose.
+            s = ((k + rng.uniform(.1, .9)) / hairs) ** 1.32
+            u = (rng.random() + rng.random() - 1) * thick(s) + .14 * thick(s)
+            seat = sample(ax(s), arch(s) + u)
+            if seat is None: continue
+            nS = seat[1]
+            ds = .02
+            a = sample(ax(max(0.0, s - ds)), arch(max(0.0, s - ds)) + u)
+            b = sample(ax(min(1.0, s + ds)), arch(min(1.0, s + ds)) + u)
+            if a is None or b is None: continue
+            Tt = _norm(_sub(b[0], a[0]))
+            U = _norm(_cross(nS, Tt))
+            if U[1] < 0: U = _mul(U, -1)
+            # inner hairs sweep up, the body lies along the arch, the
+            # tail drops
+            sweep = (.62 - 1.00 * s) * (1 + rng.uniform(-.13, .13)) - .04
+            d = _norm(_add(_mul(Tt, math.cos(sweep)), _mul(U, math.sin(sweep))))
+            L = (.105 - .042 * (s ** 1.4)) * g * rng.uniform(.72, 1.22)
+            wid = (.0135 + .0055 * (1 - s)) * g * rng.uniform(.70, 1.30)
+            bright = rng.uniform(.74, 1.16)
+            segs = 3
+            base = len(P)
+            # The strand is grown straight from where it is seated, with a
+            # slight droop, and NOT re-seated against the surface at every
+            # step: over a hair this short the surface drops by about a
+            # tenth of a millimetre, while a re-seat that lands on the
+            # eyelid instead of the ridge moves the step by more than the
+            # step itself. The first version did that and the brows
+            # crawled down over the eyes.
+            nn = nS
+            for i in range(segs + 1):
+                t = i / segs
+                lift = (.012 + .026 * t) * g
+                p = _add(_add(_add(seat[0], _mul(d, L * t)),
+                              _mul(U, -.09 * L * t * t)), _mul(nn, lift))
+                side = _norm(_cross(nn, d))
+                half = wid * (1 - .85 * (t ** 1.1)) * .5
+                shade = bright * (.62 + .34 * (t ** .7))
+                for sg in (-1, 1):
+                    P.append(_add(p, _mul(side, sg * half)))
+                    N.append(nn[:])
+                    C.append([shade, shade, shade])
+                if i > 0:
+                    i0 = base + (i-1)*2
+                    T.append([i0, i0+2, i0+1]); T.append([i0+1, i0+2, i0+3])
+    if not P: return None
+    return {'position':[x for q in P for x in q], 'normal':[x for q in N for x in q],
+            'color':[x for q in C for x in q],
+            'index':[i for f in T for i in f], 'n':len(P)}
