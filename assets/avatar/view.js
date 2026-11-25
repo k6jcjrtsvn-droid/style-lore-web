@@ -35,11 +35,55 @@ const GARMC = { c1:0x2A2622, c2:0x4A4F5C, c3:0x3E5C76, c4:0x6E8CA0, c5:0x7D9D7A,
                 c6:0xC2B49A, c7:0xE8DED1, c8:0xFFFFFF, c9:0xB9867A, c10:0xA14B5B,
                 c11:0x8C5A2B, c12:0xD4A24C, c13:0x6B4C8C, c14:0x2F6B6B };
 
+/* An eye is a sphere with the whole eye painted on it -- sclera, limbal
+   ring, iris fibres and pupil -- plus a thin clear shell in front to
+   catch the highlight. A catchlight is most of what makes a face look
+   alive, and a face with none looks dead at any resolution. */
+function eyeTex(THREE, hex){
+  const N = 256, c = document.createElement('canvas'); c.width = c.height = N;
+  const g = c.getContext('2d');
+  const col = new THREE.Color(hex);
+  const hx = '#' + col.getHexString();
+  const dark = '#' + col.clone().multiplyScalar(.34).getHexString();
+  const lit  = '#' + col.clone().lerp(new THREE.Color(0xffffff), .42).getHexString();
+  g.fillStyle = '#d8d0c8'; g.fillRect(0, 0, N, N);
+  const warm = g.createLinearGradient(0, 0, N, 0);
+  warm.addColorStop(0, 'rgba(198,142,128,.55)');
+  warm.addColorStop(.5, 'rgba(255,255,255,0)');
+  warm.addColorStop(1, 'rgba(198,142,128,.55)');
+  g.fillStyle = warm; g.fillRect(0, 0, N, N);
+  const cx = N/2, cy = N/2, IR = N*0.175;
+  const rg = g.createRadialGradient(cx, cy, IR*.22, cx, cy, IR);
+  rg.addColorStop(0, dark); rg.addColorStop(.40, hx);
+  rg.addColorStop(.84, lit); rg.addColorStop(1, dark);
+  g.fillStyle = rg; g.beginPath(); g.arc(cx, cy, IR, 0, 7); g.fill();
+  g.strokeStyle = 'rgba(0,0,0,.28)'; g.lineWidth = 1.0;
+  for(let i = 0; i < 120; i++){
+    const a = i / 120 * Math.PI * 2 + (i * 2654435761 % 97) / 97 * .06;
+    const r0 = IR * .32, r1 = IR * (.74 + (i % 7) * .03);
+    g.beginPath();
+    g.moveTo(cx + Math.cos(a)*r0, cy + Math.sin(a)*r0);
+    g.lineTo(cx + Math.cos(a)*r1, cy + Math.sin(a)*r1);
+    g.stroke();
+  }
+  g.lineWidth = IR*.13; g.strokeStyle = 'rgba(8,4,12,.80)';
+  g.beginPath(); g.arc(cx, cy, IR*.95, 0, 7); g.stroke();
+  g.fillStyle = '#05030a';
+  g.beginPath(); g.arc(cx, cy, IR*.36, 0, 7); g.fill();
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  return t;
+}
+
 export async function mount(canvas, opts){
   const o = opts || {};
   const W = o.width || 360, H = o.height || 560;
   const r = new THREE.WebGLRenderer({ canvas, antialias:true, alpha:false });
-  r.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+  // Render above the display resolution and let the browser downscale.
+  // Alpha-tested hair cards alias badly at 1:1 and a figure seen close up
+  // is mostly edges; this is the cheapest sharpness there is.
+  const SS = o.supersample == null ? 1.6 : o.supersample;
+  r.setPixelRatio(Math.min((window.devicePixelRatio || 1) * SS, 3.2));
   r.setSize(W, H, false);
   r.outputColorSpace = THREE.SRGBColorSpace;
   r.toneMapping = THREE.ACESFilmicToneMapping;
@@ -54,16 +98,46 @@ export async function mount(canvas, opts){
 
   const tl = new THREE.TextureLoader();
   const base = o.assets || './assets/avatar/';
-  const tex = (f, srgb) => { const t = tl.load(base + f);
-    t.colorSpace = srgb ? THREE.SRGBColorSpace : THREE.NoColorSpace;
-    t.flipY = false; t.anisotropy = 8; return t; };
-  const SK = { mask:tex('skin_mask.png'), warm:tex('skin_warm.png'),
-               normal:tex('skin_normal.png'), rough:tex('skin_rough.png') };
-  const STRAND = tex('hair_strand.png', true);
-
-  const B = await loadBase(o.bundle || './assets/avatar-base-v1.bin');
+  /* Awaited, not fired and forgotten. TextureLoader is asynchronous and
+     the figure is rendered once per change: starting a render before the
+     maps arrive samples an empty texture, and the face comes out with no
+     eyebrows, no lip and no shading in the socket. It looks like a
+     shader bug and is a race. */
+  const tex = (f, srgb) => new Promise((res, rej) => {
+    tl.load(base + f, t => {
+      t.colorSpace = srgb ? THREE.SRGBColorSpace : THREE.NoColorSpace;
+      t.flipY = false; t.anisotropy = 8; res(t);
+    }, undefined, rej);
+  });
+  const [mask, warm, normal, rough, STRAND, B] = await Promise.all([
+    tex('skin_mask.png'), tex('skin_warm.png'), tex('skin_normal.png'),
+    tex('skin_rough.png'), tex('hair_strand.png', true),
+    loadBase(o.bundle || './assets/avatar-base-v1.bin'),
+  ]);
+  const SK = { mask, warm, normal, rough };
 
   let group = null, yaw = .30, raf = 0, alive = true;
+  const EYE = { tex: null, hex: null };
+  function eyeball(centre, radius, hex){
+    if(EYE.hex !== hex){
+      if(EYE.tex) EYE.tex.dispose();
+      EYE.tex = eyeTex(THREE, hex); EYE.hex = hex;
+    }
+    const grp = new THREE.Group();
+    const R = radius * 0.96;
+    const ball = new THREE.Mesh(new THREE.SphereGeometry(R, 40, 28),
+      new THREE.MeshPhysicalMaterial({ map:EYE.tex, roughness:.30, clearcoat:.85,
+        clearcoatRoughness:.10, envMapIntensity:.55 }));
+    ball.rotation.y = -Math.PI / 2;   // (u .5, v .5) sits on +x
+    grp.add(ball);
+    const cornea = new THREE.Mesh(new THREE.SphereGeometry(R*1.035, 32, 24),
+      new THREE.MeshPhysicalMaterial({ color:0xffffff, roughness:.015, metalness:0,
+        clearcoat:1, clearcoatRoughness:.01, transparent:true, opacity:.08,
+        envMapIntensity:1.4, depthWrite:false }));
+    grp.add(cornea);
+    grp.position.set(centre[0], centre[1], centre[2] - radius*0.26);
+    return grp;
+  }
 
   const geom = d => {
     const g = new THREE.BufferGeometry();
@@ -71,7 +145,13 @@ export async function mount(canvas, opts){
     if(d.normal) g.setAttribute('normal', new THREE.Float32BufferAttribute(d.normal, 3));
     if(d.color)  g.setAttribute('color', new THREE.Float32BufferAttribute(d.color, 3));
     if(d.uv){
-      g.setAttribute('uv', new THREE.Float32BufferAttribute(new Float32Array(d.uv), 2));
+      // The textures are loaded flipY:false, so V has to be flipped here
+      // instead. Without this the skin maps sample the wrong part of the
+      // atlas and the face comes out with no eyebrows at all -- which is
+      // subtle enough at thumbnail size to ship unnoticed.
+      const uv = new Float32Array(d.uv.length);
+      for(let i = 0; i < d.uv.length; i += 2){ uv[i] = d.uv[i]; uv[i+1] = 1 - d.uv[i+1]; }
+      g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
     }
     g.setIndex(Array.from(d.index));
     // Anisotropy needs a tangent frame. Without the attribute three.js
@@ -166,6 +246,17 @@ export async function mount(canvas, opts){
     const ss = sty('shoes');
     add(mkShoes(Bd2, SHOE[ss] || 'flat'), leather(ss ? col('shoes') : 0x16161a));
 
+    // the eyes, from the morphed helper spheres
+    for(const g of ['helper-l-eye', 'helper-r-eye']){
+      const ids = B.helpers[g];
+      if(!ids || !ids.length) continue;
+      const c = groupCentre(B, helper, g);
+      let rad = 0;
+      for(const i of ids)
+        rad = Math.max(rad, Math.hypot(helper[i*3]-c[0], helper[i*3+1]-c[1], helper[i*3+2]-c[2]));
+      group.add(eyeball(c, rad, 0x5d7f52));
+    }
+
     const hs = HAIR[fig.hair];
     if(hs){
       const eL2 = groupCentre(B, helper, 'helper-l-eye');
@@ -196,7 +287,7 @@ export async function mount(canvas, opts){
     rigged = 1;
     const key = new THREE.DirectionalLight(0xfff1e2, 2.1);
     key.position.set(-span*.7, span*1.05, span*.85);
-    key.castShadow = true; key.shadow.mapSize.set(1024, 1024);
+    key.castShadow = true; key.shadow.mapSize.set(2048, 2048);
     key.shadow.camera.left = -span*.45; key.shadow.camera.right = span*.45;
     key.shadow.camera.top = span*1.1; key.shadow.camera.bottom = -span*.1;
     key.shadow.camera.far = span*4; key.shadow.bias = -.0012;

@@ -117,7 +117,11 @@ export function shell(B, index, nrm, field, thick, opt){
     if(x !== undefined) return x;
     const a = F(i), b = F(j);
     let t = (a - b) ? a / (a - b) : 0.5;
-    t = t < 0 ? 0 : t > 1 ? 1 : t;
+    // Keep the cut off the ends of the edge. A crossing at t=0 or t=1
+    // puts the new vertex exactly on an existing one and the triangle it
+    // makes has no area: those zero-area slivers are the row of bright
+    // specks that ran along every hem.
+    t = t < 0.06 ? 0.06 : t > 0.94 ? 0.94 : t;
     const pos = [], nn = [];
     for(let k = 0; k < 3; k++){
       pos.push(v[i*3+k] + (v[j*3+k] - v[i*3+k]) * t);
@@ -149,9 +153,29 @@ export function shell(B, index, nrm, field, thick, opt){
     }
   }
   if(!T.length) return null;
+  /* The cut edge needs more clearance than the middle of the cloth. A
+     boundary vertex sits exactly on the isoline, where the garment and
+     the skin are the same surface, so at a uniform offset the skin
+     punches through along every hem as a bright ragged rim. Lifting the
+     boundary a little further tucks it under instead. */
+  const edge = new Map();
+  for(let f = 0; f < T.length; f += 3){
+    const a=T[f], b=T[f+1], c=T[f+2];
+    for(const [i,j] of [[a,b],[b,c],[c,a]]){
+      const k = i < j ? i + ':' + j : j + ':' + i;
+      edge.set(k, (edge.get(k) || 0) + 1);
+    }
+  }
+  const onEdgeV = new Uint8Array(P.length/3);
+  for(const [k, n] of edge){
+    if(n !== 1) continue;
+    const [i, j] = k.split(':');
+    onEdgeV[+i] = 1; onEdgeV[+j] = 1;
+  }
   for(let i = 0; i < P.length; i += 3){
-    const t = typeof thick === 'function'
-      ? thick([P[i], P[i+1], P[i+2]]) : thick;
+    const v3 = i/3;
+    let t = typeof thick === 'function' ? thick([P[i], P[i+1], P[i+2]]) : thick;
+    if(onEdgeV[v3]) t *= 1.75;
     P[i] += N[i]*t; P[i+1] += N[i+1]*t; P[i+2] += N[i+2]*t;
   }
   if(relax > 0){
@@ -175,7 +199,24 @@ export function shell(B, index, nrm, field, thick, opt){
       for(let i = 0; i < P.length; i++) P[i] = Q[i];
     }
   }
-  return { position: P, normal: faceNormals(P, T), index: T, n: P.length/3 };
+  /* Shade the cloth with the BODY's normals, not with its own.
+     A cut leaves long thin triangles along the hem, and averaging their
+     face normals points the edge sideways -- so every hem picked up a row
+     of bright specks that look like z-fighting and are not. The body's
+     normal at the same point is smooth, and a garment lying on a body
+     should catch the light the way the body does. The boundary takes it
+     almost entirely; the middle of the cloth keeps most of its own. */
+  const FN = faceNormals(P, T);
+  const out = new Float32Array(P.length);
+  for(let i = 0; i < P.length; i += 3){
+    const w = onEdgeV[i/3] ? 0.88 : 0.30;
+    let x = FN[i]*(1-w) + N[i]*w;
+    let y = FN[i+1]*(1-w) + N[i+1]*w;
+    let z = FN[i+2]*(1-w) + N[i+2]*w;
+    const L = Math.hypot(x,y,z) || 1;
+    out[i]=x/L; out[i+1]=y/L; out[i+2]=z/L;
+  }
+  return { position: P, normal: Array.from(out), index: T, n: P.length/3 };
 }
 
 export function faceNormals(P, T){
