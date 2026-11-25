@@ -75,10 +75,10 @@ function skinMat(opt){
           vec3 b = diffuseColor.rgb;
           b = mix(b, b * vec3(1.10, 0.74, 0.70), wm.r * 0.42);   // cheek
           b = mix(b, b * vec3(0.70, 0.48, 0.44), wm.g * 0.75);   // nostril
-          b *= (0.52 + 0.48 * mk.a);                              // socket, jaw
+          b *= (0.66 + 0.34 * mk.a);                              // socket, jaw
           b = mix(b, lipColor, mk.b * 0.88);
-          b = mix(b, browColor * 0.92, mk.r * 0.94);
-          b = mix(b, vec3(0.08, 0.05, 0.05), mk.g * 0.96);        // lash line
+          b = mix(b, browColor * 0.92, mk.r * 0.82);
+          b = mix(b, vec3(0.10, 0.07, 0.07), mk.g * 0.70);        // lash line
           diffuseColor.rgb = b;
         }`)
       .replace('#include <lights_fragment_end>', `#include <lights_fragment_end>
@@ -171,53 +171,63 @@ const leatherMat = () => new THREE.MeshPhysicalMaterial({
    an iris with a dark limbal ring and radial fibres, and a clear cornea
    bulging in front of them. The cornea is what puts a catchlight in the
    eye, and a catchlight is most of what makes a face look alive. */
-function irisTex(hex){
+/* An eye is a sphere with the whole eye painted on it -- sclera, limbal
+   ring, iris fibres and pupil -- plus a thin clear shell in front to
+   catch the highlight. The first version laid a flat iris DISC over a
+   white sphere, and the disc and the sphere could not agree where the
+   surface was: at the stylised scale the iris ended up inside the white
+   of the eye and every avatar stared out blank. A texture cannot
+   disagree with the surface it is painted on. */
+function eyeTex(hex){
   const N = 256, c = document.createElement('canvas'); c.width = c.height = N;
   const g = c.getContext('2d');
   const col = new THREE.Color(hex);
-  const hx = '#' + col.getHexString();
-  const dark = '#' + col.clone().multiplyScalar(.35).getHexString();
-  const lit  = '#' + col.clone().lerp(new THREE.Color(0xffffff), .45).getHexString();
-  g.fillStyle = '#05030a'; g.fillRect(0, 0, N, N);
-  const rg = g.createRadialGradient(N/2, N/2, N*.10, N/2, N/2, N*.46);
-  rg.addColorStop(0, dark); rg.addColorStop(.42, hx); rg.addColorStop(.86, lit); rg.addColorStop(1, dark);
-  g.fillStyle = rg; g.beginPath(); g.arc(N/2, N/2, N*.46, 0, 7); g.fill();
-  g.strokeStyle = 'rgba(0,0,0,.30)'; g.lineWidth = 1.1;
-  for(let i = 0; i < 110; i++){
-    const a = i / 110 * Math.PI * 2 + Math.random() * .05;
-    const r0 = N * (.13 + Math.random() * .05), r1 = N * (.34 + Math.random() * .11);
+  const hx   = '#' + col.getHexString();
+  const dark = '#' + col.clone().multiplyScalar(.34).getHexString();
+  const lit  = '#' + col.clone().lerp(new THREE.Color(0xffffff), .42).getHexString();
+  // sclera, never pure white, with a little warmth toward the corners
+  g.fillStyle = '#d8d0c8'; g.fillRect(0, 0, N, N);
+  const warm = g.createLinearGradient(0, 0, N, 0);
+  warm.addColorStop(0, 'rgba(198,142,128,.55)');
+  warm.addColorStop(.5, 'rgba(255,255,255,0)');
+  warm.addColorStop(1, 'rgba(198,142,128,.55)');
+  g.fillStyle = warm; g.fillRect(0, 0, N, N);
+  const cx = N/2, cy = N/2, IR = N*0.175;
+  const rg = g.createRadialGradient(cx, cy, IR*.22, cx, cy, IR);
+  rg.addColorStop(0, dark); rg.addColorStop(.40, hx);
+  rg.addColorStop(.84, lit); rg.addColorStop(1, dark);
+  g.fillStyle = rg; g.beginPath(); g.arc(cx, cy, IR, 0, 7); g.fill();
+  g.strokeStyle = 'rgba(0,0,0,.28)'; g.lineWidth = 1.0;
+  for(let i = 0; i < 120; i++){
+    const a = i / 120 * Math.PI * 2 + Math.random() * .06;
+    const r0 = IR * (.28 + Math.random() * .10), r1 = IR * (.72 + Math.random() * .22);
     g.beginPath();
-    g.moveTo(N/2 + Math.cos(a)*r0, N/2 + Math.sin(a)*r0);
-    g.lineTo(N/2 + Math.cos(a)*r1, N/2 + Math.sin(a)*r1);
+    g.moveTo(cx + Math.cos(a)*r0, cy + Math.sin(a)*r0);
+    g.lineTo(cx + Math.cos(a)*r1, cy + Math.sin(a)*r1);
     g.stroke();
   }
-  g.fillStyle = 'rgba(2,1,4,.92)';                 // limbal ring
-  g.lineWidth = N*.045; g.strokeStyle = 'rgba(6,3,10,.85)';
-  g.beginPath(); g.arc(N/2, N/2, N*.445, 0, 7); g.stroke();
-  g.fillStyle = '#04020a';                          // pupil
-  g.beginPath(); g.arc(N/2, N/2, N*.155, 0, 7); g.fill();
-  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace;
+  g.lineWidth = IR*.13; g.strokeStyle = 'rgba(8,4,12,.80)';      // limbal ring
+  g.beginPath(); g.arc(cx, cy, IR*.95, 0, 7); g.stroke();
+  g.fillStyle = '#05030a';                                        // pupil
+  g.beginPath(); g.arc(cx, cy, IR*.36, 0, 7); g.fill();
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
   return t;
 }
 function eyeball(e, hex){
   const grp = new THREE.Group();
   const R = e.r * 0.96;
-  const sclera = new THREE.Mesh(new THREE.SphereGeometry(R, 32, 24),
-    new THREE.MeshPhysicalMaterial({ color:0xcdc4bd, roughness:.42, clearcoat:.5,
-      clearcoatRoughness:.22, sheen:.4, sheenColor:new THREE.Color(0xff7a6a), envMapIntensity:.45 }));
-  grp.add(sclera);
-  const iris = new THREE.Mesh(new THREE.CircleGeometry(R*.44, 48),
-    new THREE.MeshPhysicalMaterial({ map:irisTex(hex), roughness:.22, clearcoat:1,
-      clearcoatRoughness:.18, envMapIntensity:.70,
-      polygonOffset:true, polygonOffsetFactor:-3, polygonOffsetUnits:-3 }));
-  iris.position.set(0, 0, R*0.902);
-  grp.add(iris);
-  // The cornea is a thin clear shell, not a lens: it exists to catch a
-  // highlight. Making it transmissive washed the iris out completely.
-  const cornea = new THREE.Mesh(new THREE.SphereGeometry(R*1.03, 32, 24),
+  const ball = new THREE.Mesh(new THREE.SphereGeometry(R, 40, 28),
+    new THREE.MeshPhysicalMaterial({ map:eyeTex(hex), roughness:.30,
+      clearcoat:.85, clearcoatRoughness:.10, envMapIntensity:.55 }));
+  // SphereGeometry puts (u .5, v .5) on +x, so a quarter turn brings the
+  // iris round to face the camera.
+  ball.rotation.y = -Math.PI / 2;
+  grp.add(ball);
+  const cornea = new THREE.Mesh(new THREE.SphereGeometry(R*1.035, 32, 24),
     new THREE.MeshPhysicalMaterial({ color:0xffffff, roughness:.015, metalness:0,
-      clearcoat:1, clearcoatRoughness:.01, transparent:true, opacity:.07,
-      envMapIntensity:1.1, depthWrite:false }));
+      clearcoat:1, clearcoatRoughness:.01, transparent:true, opacity:.08,
+      envMapIntensity:1.4, depthWrite:false }));
   grp.add(cornea);
   grp.position.set(e.c[0], e.c[1], e.c[2] - e.r*0.26);
   return grp;
