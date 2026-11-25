@@ -119,7 +119,6 @@ export function armsDown(B, degrees, opt){
       }
       const t = w; w = next; next = t;
     }
-
     for(let i = 0; i < n; i++){
       const wi = w[i];
       if(wi <= 0.001) continue;
@@ -208,15 +207,23 @@ export function shell(B, index, nrm, field, thick, opt){
     if(a > 0) inside.push(i);
     if(b > 0) inside.push(j);
     if(c > 0) inside.push(k);
+    /* Winding has to follow the ORIGINAL triangle's cycle, not the order
+       the inside vertices happen to come out of the filter. Taking them
+       as [i,j,k] order reverses the piece whenever the odd vertex is the
+       middle one -- a third of the cut faces came out inside-out, and
+       with DoubleSide they are still drawn, just lit from behind. That
+       is the alternating bright-and-dark zigzag along every hem: not the
+       boundary wandering, not z-fighting, not the relax. Backfaces. */
+    const tri = [i, j, k];
     if(inside.length === 3){
       T.push(at(i), at(j), at(k));
     } else if(inside.length === 1){
-      const p = inside[0];
-      const rest = [i,j,k].filter(x => x !== p);
-      T.push(at(p), onEdge(p, rest[0]), onEdge(p, rest[1]));
+      const m = tri.indexOf(inside[0]);
+      const p = tri[m], q = tri[(m+1)%3], r = tri[(m+2)%3];
+      T.push(at(p), onEdge(p, q), onEdge(p, r));
     } else if(inside.length === 2){
-      const p = [i,j,k].find(x => inside.indexOf(x) < 0);
-      const [q, r] = inside;
+      const m = tri.findIndex(x => inside.indexOf(x) < 0);
+      const p = tri[m], q = tri[(m+1)%3], r = tri[(m+2)%3];
       const eq = onEdge(p, q), er = onEdge(p, r);
       T.push(at(q), at(r), er, at(q), er, eq);
     }
@@ -246,6 +253,48 @@ export function shell(B, index, nrm, field, thick, opt){
     let t = typeof thick === 'function' ? thick([P[i], P[i+1], P[i+2]]) : thick;
     if(onEdgeV[v3]) t *= 1.75;
     P[i] += N[i]*t; P[i+1] += N[i+1]*t; P[i+2] += N[i+2]*t;
+  }
+
+  /* Smooth the hem ALONG ITSELF.
+
+     The cut lands exactly on the isoline, so the boundary is where it
+     should be -- but it zigzags, because consecutive cut points sit on
+     edges that run in alternating directions across the mesh, and at
+     this density the zigzag is a visible sawtooth. Relaxing the garment
+     as a whole does not touch it (tried: no change) and nor does
+     clamping the crossing parameter (tried: no change), because neither
+     is where the zigzag comes from.
+
+     A boundary vertex on a manifold has exactly two boundary
+     neighbours, so the hem is a closed loop and can be smoothed as a
+     curve in its own right, which leaves the rest of the cloth alone.
+     The pull is tangential -- along the chord between the neighbours --
+     so the hem stays on the surface it was cut from instead of
+     shrinking off it. */
+  {
+    const nb0 = new Int32Array(P.length/3).fill(-1);
+    const nb1 = new Int32Array(P.length/3).fill(-1);
+    for(const [k, cnt] of edge){
+      if(cnt !== 1) continue;
+      const p = k.indexOf(':');
+      const i = +k.slice(0, p), j = +k.slice(p + 1);
+      if(nb0[i] < 0) nb0[i] = j; else nb1[i] = j;
+      if(nb0[j] < 0) nb0[j] = i; else nb1[j] = i;
+    }
+    const passes = o.hemPasses == null ? 6 : o.hemPasses;
+    const k = o.hemPull == null ? 0.55 : o.hemPull;
+    for(let pass = 0; pass < passes; pass++){
+      const Q = P.slice();
+      for(let i = 0; i < P.length/3; i++){
+        const a = nb0[i], b = nb1[i];
+        if(a < 0 || b < 0) continue;
+        for(let c = 0; c < 3; c++){
+          const mid = (P[a*3+c] + P[b*3+c]) * 0.5;
+          Q[i*3+c] = P[i*3+c] + (mid - P[i*3+c]) * k;
+        }
+      }
+      for(let i = 0; i < P.length; i++) P[i] = Q[i];
+    }
   }
   if(relax > 0){
     const adj = new Map();

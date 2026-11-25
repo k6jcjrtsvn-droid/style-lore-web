@@ -6,6 +6,8 @@
    rather than the nearest staircase of quads. */
 import { shell, faceNormals } from './body.js';
 
+const sstep = t => { t = t < 0 ? 0 : t > 1 ? 1 : t; return t*t*(3-2*t); };
+
 const limbY = (B, fracOfArm) => {
   let armL = 1.0;
   for(const s in B.axis) if(B.axis[s].L > armL) armL = B.axis[s].L;
@@ -47,27 +49,33 @@ export function top(B, index, nrm, style, thick){
     if(o.vee) nd = nd + Math.max(0, 0.55 - Math.abs(p[0])) * (p[2] > 0 ? 1 : 0) * 1.1;
     d.push(nd - neckR);
     d.push(B.sy + 0.38 - p[1]);                   // never the head
-    /* Its own radius, between the two the anatomy offers. limb()'s 1.05
-       drops the outer surface of a thick upper arm, and those vertices
-       then skip the cuff entirely and are kept by the hem -- a ragged
-       sleeve. The wide 2.00 reaches the side of the ribs, and cutting
-       those at the cuff opens a hole under the arm. 1.32 holds the whole
-       arm and nothing else. */
+    /* The cuff is cut ALONG THE ARM, not at a height. A horizontal plane
+       through an arm that hangs at an angle is an ellipse, and what came
+       out was a long diagonal tongue down the outside of each sleeve.
+
+       The radius is its own number, between the two the anatomy offers.
+       limb()'s 1.05 drops the outer surface of a thick upper arm, and
+       those vertices then skip the cuff and are kept by the hem -- a
+       ragged sleeve. The wide 2.00 reaches the side of the ribs, and
+       cutting those at the cuff opens a hole under the arm.
+
+       This is a threshold, and a threshold puts a cliff in the field,
+       which is what leaves the small sawtooth still visible along the
+       cuff. Three attempts at replacing it with a continuous measure of
+       'how much of an arm is this' all came out WORSE -- fading the term
+       left islands of cloth floating off the forearm, and driving it
+       from the smoothed pose weights made the cut wander. The threshold
+       stays until the boundary itself is resampled, which is the real
+       fix and a larger one. */
     const a = B.cls[i];
     if(a && a[1] <= 1.32 && a[0] >= 0.25){
-      /* The cuff is cut ALONG THE ARM, not at a height. A horizontal
-         plane through an arm that hangs at an angle is an ellipse, and
-         what came out was a long diagonal tongue down the outside of each
-         sleeve -- two of them, flapping clear of the body. Cutting at a
-         distance along the arm's own axis stays square to the sleeve
-         whatever the arm is doing. */
       d.push(cuffT - a[0]);
       if(o.strap) d.push(-1.0);                   // no sleeve at all
     }
     return Math.min.apply(null, d);
   };
   return shell(B, index, nrm, field, thick == null ? .085 : thick,
-               { relax: .35, smooth: 2 });
+               { relax: (window.__RELAX == null ? .35 : window.__RELAX), smooth: 2 });
 }
 
 export function bottoms(B, index, nrm, style){

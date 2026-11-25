@@ -63,18 +63,27 @@ def shell(B, FACES, field, thick, nrm=None, smooth=2, relax=0.0):
 
     for (i,j,k) in _tris(FACES):
         a,b,c = F(i),F(j),F(k)
+        tri=(i,j,k)
         inside=[x for x,f in ((i,a),(j,b),(k,c)) if f>0]
         if len(inside)==3:
             T.append([at(i),at(j),at(k)])
         elif len(inside)==0:
             continue
+        # Winding has to follow the ORIGINAL triangle's cycle, not the
+        # order the inside vertices come out of the comprehension. Taking
+        # them as (i,j,k) order reverses the piece whenever the odd vertex
+        # is the middle one, so a third of the cut faces came out
+        # inside-out -- and with DoubleSide they are still drawn, just lit
+        # from behind. That is the alternating bright-and-dark zigzag that
+        # ran along every hem. Not the boundary wandering, not z-fighting,
+        # not the relax pass: backfaces.
         elif len(inside)==1:
-            p=inside[0]
-            q,r=[x for x in (i,j,k) if x!=p]
+            m=tri.index(inside[0])
+            p=tri[m]; q=tri[(m+1)%3]; r=tri[(m+2)%3]
             T.append([at(p), on_edge(p,q), on_edge(p,r)])
         else:
-            p=[x for x in (i,j,k) if x not in inside][0]
-            q,r=inside
+            m=[x for x in range(3) if tri[x] not in inside][0]
+            p=tri[m]; q=tri[(m+1)%3]; r=tri[(m+2)%3]
             eq,er = on_edge(p,q), on_edge(p,r)
             T.append([at(q), at(r), er]); T.append([at(q), er, eq])
     if not T: return None
@@ -83,6 +92,29 @@ def shell(B, FACES, field, thick, nrm=None, smooth=2, relax=0.0):
     for n2 in range(len(P)):
         t=thick(P[n2]) if callable(thick) else thick
         for j in range(3): P[n2][j]+=N[n2][j]*t
+
+    # Smooth the hem along itself. The cut lands exactly on the isoline,
+    # but consecutive crossings sit on edges running in alternating
+    # directions, so the boundary zigzags even when it is in the right
+    # place. A boundary vertex on a manifold has exactly two boundary
+    # neighbours, so the hem is a closed loop and can be relaxed as a
+    # curve of its own without touching the rest of the cloth.
+    cnt={}
+    for a,b,c in T:
+        for e in ((a,b),(b,c),(c,a)):
+            k2=(min(e),max(e)); cnt[k2]=cnt.get(k2,0)+1
+    nb={}
+    for (a,b),v in cnt.items():
+        if v!=1: continue
+        nb.setdefault(a,[]).append(b); nb.setdefault(b,[]).append(a)
+    for _ in range(6):
+        Q=[list(q) for q in P]
+        for i2,ns in nb.items():
+            if len(ns)!=2: continue
+            for c in range(3):
+                mid=(P[ns[0]][c]+P[ns[1]][c])*0.5
+                Q[i2][c]=P[i2][c]+(mid-P[i2][c])*0.55
+        P=Q
 
     if relax>0:
         adj=collections.defaultdict(set)

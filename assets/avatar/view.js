@@ -224,6 +224,7 @@ export async function mount(canvas, opts){
     const Bd = makeBody(B, body);
     armsDown(Bd, 34);
     const Bd2 = makeBody(B, body);
+    Bd2.adj = Bd.adj;        // the adjacency is the same mesh; build it once
     const nrm = bodyNormals(Bd2, B.index);
 
     if(group){ scene.remove(group); disposeTree(group); }
