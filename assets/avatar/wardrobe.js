@@ -35,7 +35,9 @@ export const SKIRTS = {
 
 export function top(B, index, nrm, style, thick){
   const o = TOPS[style] || TOPS['tee'];
-  const cuffY = limbY(B, o.sleeve);
+  let armL = 1.0;
+  for(const s in B.axis) if(B.axis[s].L > armL) armL = B.axis[s].L;
+  const cuffT = o.sleeve * armL;
   const neckR = o.neck;
   const v = B.v;
   const field = i => {
@@ -45,8 +47,21 @@ export function top(B, index, nrm, style, thick){
     if(o.vee) nd = nd + Math.max(0, 0.55 - Math.abs(p[0])) * (p[2] > 0 ? 1 : 0) * 1.1;
     d.push(nd - neckR);
     d.push(B.sy + 0.38 - p[1]);                   // never the head
-    if(B.limb(i)){
-      d.push(p[1] - cuffY);                       // the cuff
+    /* Its own radius, between the two the anatomy offers. limb()'s 1.05
+       drops the outer surface of a thick upper arm, and those vertices
+       then skip the cuff entirely and are kept by the hem -- a ragged
+       sleeve. The wide 2.00 reaches the side of the ribs, and cutting
+       those at the cuff opens a hole under the arm. 1.32 holds the whole
+       arm and nothing else. */
+    const a = B.cls[i];
+    if(a && a[1] <= 1.32 && a[0] >= 0.25){
+      /* The cuff is cut ALONG THE ARM, not at a height. A horizontal
+         plane through an arm that hangs at an angle is an ellipse, and
+         what came out was a long diagonal tongue down the outside of each
+         sleeve -- two of them, flapping clear of the body. Cutting at a
+         distance along the arm's own axis stays square to the sleeve
+         whatever the arm is doing. */
+      d.push(cuffT - a[0]);
       if(o.strap) d.push(-1.0);                   // no sleeve at all
     }
     return Math.min.apply(null, d);

@@ -38,6 +38,7 @@ export function makeBody(B, v){
   }
   const body = {
     v, n, top, bot, h, sx, sy, sz, axis,
+    index: B.index,            // the posing relax needs the mesh's own edges
     cls: B.cls,                       // index -> [t, r] from the bundle
     neckY: bot + R.neckFrac * h,
     neck: [0, sy + 0.30, sz + 0.12],
@@ -65,25 +66,93 @@ export function makeBody(B, v){
    inside the arm rotating the whole way while its neighbour just outside
    did not move at all, and the faces spanning that line stretched into a
    funnel that showed through any clothing built on top. */
-export function armsDown(B, degrees){
+/* Swing each arm about its own shoulder so it hangs at the side.
+
+   The weight is computed from the arm axis and then SMOOTHED OVER THE
+   MESH. That second step is the one that matters. Any weight taken from
+   a distance to an axis has a cliff in it somewhere -- the vertices just
+   outside the arm's tube sit next to vertices just inside it, and the
+   faces that span the two stretch into the pointed wedges that showed up
+   at the elbows and read as triangular flaps. Narrowing the tube makes
+   the cliff sharper and the wedges BIGGER, which is how I found out the
+   radius was never the problem. Relaxing the weight field across the
+   mesh removes the cliff wherever it happens to be. */
+export function armsDown(B, degrees, opt){
+  const o = opt || {};
   const a0deg = (degrees == null ? 34.0 : degrees) * Math.PI / 180;
   const v = B.v;
+  const n = B.n;
+  const passes = o.relaxPasses == null ? 14 : o.relaxPasses;
+  const outX = o.outX == null ? 0.22 : o.outX;
+  const outZ = o.outZ == null ? 0.38 : o.outZ;
+
+  if(!B.adj) B.adj = buildAdjacency(B.index, n);
+  const adj = B.adj;
+
   for(const s of ['1','-1']){
     const side = s === '1' ? 1 : -1;
     const { S } = B.axis[s];
     const a0 = a0deg * (-side);
+
+    let w = new Float32Array(n);
+    const along = new Float32Array(n);
     for(const key in B.cls){
       const i = +key;
       if(v[i*3] * side <= 0) continue;
       const a = B.cls[i];
-      let w = smooth((a[0] + 0.35) / 1.15) * smooth((1.75 - a[1]) / 0.75);
-      if(w <= 0.001) continue;
-      const ang = a0 * w;
+      w[i] = smooth((a[0] + 0.35) / 1.15) * smooth((1.75 - a[1]) / 0.75);
+      along[i] = a[0];
+    }
+    // only this side takes part in the relax, or the two arms bleed into
+    // each other across the chest
+    const mine = new Uint8Array(n);
+    for(let i = 0; i < n; i++) mine[i] = v[i*3] * side > 0 ? 1 : 0;
+    let next = new Float32Array(n);
+    for(let p = 0; p < passes; p++){
+      for(let i = 0; i < n; i++){
+        if(!mine[i]){ next[i] = 0; continue; }
+        const a = adj.start[i], b = adj.start[i+1];
+        if(b <= a){ next[i] = w[i]; continue; }
+        let sum = w[i], cnt = 1;
+        for(let k = a; k < b; k++){ const j = adj.list[k]; if(!mine[j]) continue; sum += w[j]; cnt++; }
+        next[i] = sum / cnt;
+      }
+      const t = w; w = next; next = t;
+    }
+
+    for(let i = 0; i < n; i++){
+      const wi = w[i];
+      if(wi <= 0.001) continue;
+      const ang = a0 * wi;
       const rx = v[i*3] - S[0], ry = v[i*3+1] - S[1];
       v[i*3]   = S[0] + rx*Math.cos(ang) - ry*Math.sin(ang);
       v[i*3+1] = S[1] + rx*Math.sin(ang) + ry*Math.cos(ang);
+      // Arms hang in front of the body, not inside it. Rotating in the XY
+      // plane alone leaves the forearm at the torso's own depth and the
+      // elbow ends up buried in the hip.
+      const down = smooth((along[i] - 0.8) / 2.2);
+      v[i*3]   += side * outX * wi * down;
+      v[i*3+2] += outZ * wi * down;
     }
   }
+}
+
+function buildAdjacency(index, n){
+  const count = new Uint32Array(n + 1);
+  const bump = (a, b) => { count[a]++; count[b]++; };
+  for(let f = 0; f < index.length; f += 3){
+    bump(index[f], index[f+1]); bump(index[f+1], index[f+2]); bump(index[f+2], index[f]);
+  }
+  const start = new Uint32Array(n + 1);
+  let run = 0;
+  for(let i = 0; i <= n; i++){ start[i] = run; run += count[i]; }
+  const list = new Uint32Array(run);
+  const at = start.slice();
+  const put = (a, b) => { list[at[a]++] = b; list[at[b]++] = a; };
+  for(let f = 0; f < index.length; f += 3){
+    put(index[f], index[f+1]); put(index[f+1], index[f+2]); put(index[f+2], index[f]);
+  }
+  return { start, list };
 }
 
 /* Cut a garment along a smooth isoline instead of along face boundaries.

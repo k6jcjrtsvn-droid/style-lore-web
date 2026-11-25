@@ -17,7 +17,8 @@ TOPS = {
 
 def top(B, FACES, nrm, style='tee', thick=.085):
     o=TOPS.get(style, TOPS['tee'])
-    cuffY=_limbY(B, o['sleeve'])
+    armL = max(L for _,_,L in B.axis.values()) if B.axis else 1.0
+    cuffT = o['sleeve'] * armL
     neckR=o['neck']
     def field(p, i):
         d=[]
@@ -28,9 +29,16 @@ def top(B, FACES, nrm, style='tee', thick=.085):
             nd = nd + max(0.0, 0.55-abs(p[0]))*(1.0 if p[2]>0 else 0.0)*1.1
         d.append(nd-neckR)                            # the neckline
         d.append(B.sy + 0.38 - p[1])                  # never the head
-        a=B.limb(i)
-        if a:
-            d.append(p[1]-cuffY)                      # the cuff
+        # The cuff is cut ALONG THE ARM, not at a height. A horizontal
+        # plane through an arm that hangs at an angle is an ellipse, and
+        # what came out was a long diagonal tongue down the outside of
+        # each sleeve. And the radius is its own: limb()'s 1.05 drops the
+        # outer surface of a thick upper arm, which then skips the cuff
+        # and is kept by the hem; the wide 2.00 reaches the ribs and cuts
+        # a hole under the arm. 1.32 holds the whole arm and nothing else.
+        a=B.cls.get(i)
+        if a and a[1] <= 1.32 and a[0] >= 0.25:
+            d.append(cuffT - a[0])                    # the cuff
             if o.get('strap'): d.append(-1.0)         # no sleeve at all
         return min(d)
     return cutter.shell(B, FACES, field, thick, nrm, relax=.35, smooth=2)

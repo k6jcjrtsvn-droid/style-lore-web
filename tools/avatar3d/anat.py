@@ -176,31 +176,74 @@ class Body:
         """Height as a fraction of the figure: 0 at the soles, 1 at the crown."""
         return (p[1]-self.bot)/self.h
 
-def arms_down(B, degrees=34.0):
-    """Swing each arm about its own shoulder so it hangs at the side."""
-    if not hasattr(B,'cls'): B.classify()
-    moved=0
-    for side,(S,d,L) in B.axis.items():
-        a0=math.radians(degrees)*(-side)
+def _adjacency(FACES, n):
+    """Who touches whom, once, so the weight can be relaxed over the mesh."""
+    adj = [[] for _ in range(n)]
+    for g, idx in FACES:
+        if g != 'body': continue
+        for k in range(len(idx)):
+            a = idx[k]; b = idx[(k+1) % len(idx)]
+            if a < n and b < n:
+                adj[a].append(b); adj[b].append(a)
+    return adj
+
+def arms_down(B, degrees=34.0, FACES=None, passes=14, outX=0.22, outZ=0.38):
+    """Swing each arm about its own shoulder so it hangs at the side.
+
+       The weight comes from the arm axis and is then SMOOTHED OVER THE
+       MESH. That second step is the one that matters. Any weight taken
+       from a distance to an axis has a cliff in it somewhere: the
+       vertices just outside the arm's tube sit next to the ones just
+       inside, and the faces spanning the two stretch into pointed wedges
+       at the elbow -- the triangular flaps. Narrowing the tube makes the
+       cliff sharper and the wedges BIGGER, which is how it became clear
+       the radius was never the problem.
+
+       Arms also hang in front of the body rather than inside it.
+       Rotating in the XY plane alone leaves the forearm at the torso's
+       own depth and the elbow ends up buried in the hip."""
+    if not hasattr(B, 'cls'): B.classify()
+    if FACES is None:
+        import build_avatar
+        FACES = build_avatar.FACES
+    n = len(B.v)
+    if getattr(B, '_adj', None) is None:
+        B._adj = _adjacency(FACES, n)
+    adj = B._adj
+    moved = 0
+    for side, (S, d, L) in B.axis.items():
+        a0 = math.radians(degrees) * (-side)
+        w = [0.0] * n
+        along = [0.0] * n
         for i in B.idx:
-            p=B.v[i]
-            if p[0]*side<=0: continue
-            a=B.cls.get(i)
+            if B.v[i][0] * side <= 0: continue
+            a = B.cls.get(i)
             if not a: continue
-            t,r,_=a
-            # The weight has to fall off smoothly in BOTH directions. A hard
-            # radius cut meant a vertex just inside the arm rotated the whole
-            # way while its neighbour just outside did not move at all, and
-            # the faces spanning that line stretched into a funnel that showed
-            # through any clothing built on top. 49 stretched faces; zero on
-            # the unposed body. Continuous fields, not cliffs.
-            w=max(0.0,min(1.0,(t+0.35)/1.15)); w=w*w*(3-2*w)
-            wr=max(0.0,min(1.0,(1.75-r)/0.75)); wr=wr*wr*(3-2*wr)
-            w*=wr
-            if w<=0.001: continue
-            ang=a0*w
-            rx=p[0]-S[0]; ry=p[1]-S[1]
-            p[0]=S[0] + rx*math.cos(ang) - ry*math.sin(ang)
-            p[1]=S[1] + rx*math.sin(ang) + ry*math.cos(ang)
-            moved+=1
+            t, r, _ = a
+            wt = max(0.0, min(1.0, (t + 0.35) / 1.15)); wt = wt*wt*(3-2*wt)
+            wr = max(0.0, min(1.0, (1.75 - r) / 0.75)); wr = wr*wr*(3-2*wr)
+            w[i] = wt * wr
+            along[i] = t
+        mine = [False] * n
+        for i in B.idx: mine[i] = B.v[i][0] * side > 0
+        for _ in range(passes):
+            nxt = list(w)
+            for i in B.idx:
+                if not mine[i]: nxt[i] = 0.0; continue
+                nb = [j for j in adj[i] if mine[j]]
+                if not nb: continue
+                nxt[i] = (w[i] + sum(w[j] for j in nb)) / (len(nb) + 1)
+            w = nxt
+        for i in B.idx:
+            wi = w[i]
+            if wi <= 0.001: continue
+            p = B.v[i]
+            ang = a0 * wi
+            rx = p[0]-S[0]; ry = p[1]-S[1]
+            p[0] = S[0] + rx*math.cos(ang) - ry*math.sin(ang)
+            p[1] = S[1] + rx*math.sin(ang) + ry*math.cos(ang)
+            dn = max(0.0, min(1.0, (along[i] - 0.8) / 2.2)); dn = dn*dn*(3-2*dn)
+            p[0] += side * outX * wi * dn
+            p[2] += outZ * wi * dn
+            moved += 1
     return moved

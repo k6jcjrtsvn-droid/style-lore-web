@@ -117,6 +117,7 @@ export async function mount(canvas, opts){
   const SK = { mask, warm, normal, rough };
 
   let group = null, yaw = .30, raf = 0, alive = true;
+  let only = null;   // isolation: draw one part on its own
   const EYE = { tex: null, hex: null };
   function eyeball(centre, radius, hex){
     if(EYE.hex !== hex){
@@ -229,22 +230,25 @@ export async function mount(canvas, opts){
     group = new THREE.Group();
     const hairHex = HAIRC[fig.hairColor] || HAIRC.h2;
 
-    const bodyMesh = geom({ position:body, normal:nrm, uv:B.uv, index:B.index });
-    bodyMesh.material = skinMat(fig.skin, hairHex);
-    group.add(bodyMesh);
+    if(!only || only === 'body'){
+      const bodyMesh = geom({ position:body, normal:nrm, uv:B.uv, index:B.index });
+      bodyMesh.material = skinMat(fig.skin, hairHex);
+      group.add(bodyMesh);
+    }
 
-    const add = (d, mat) => { if(!d) return; const m = geom(d); m.material = mat; group.add(m); };
+    const add = (d, mat, tag) => { if(!d) return; if(only && tag !== only) return;
+      const m = geom(d); m.material = mat; group.add(m); };
     const wear = fig.wear || {};
     const col = slot => GARMC[(wear[slot] || {}).color] == null ? 0x8a8f98 : GARMC[wear[slot].color];
     const sty = slot => (wear[slot] || {}).style;
 
     const bs = sty('bottom');
-    if(bs && SKIRT[bs]) add(mkSkirt(Bd2, B.index, nrm, SKIRT[bs]), clothMat(col('bottom')));
-    else if(bs && BOTTOM[bs]) add(mkBottom(Bd2, B.index, nrm, BOTTOM[bs]), clothMat(col('bottom'), .72));
+    if(bs && SKIRT[bs]) add(mkSkirt(Bd2, B.index, nrm, SKIRT[bs]), clothMat(col('bottom')), 'bottom');
+    else if(bs && BOTTOM[bs]) add(mkBottom(Bd2, B.index, nrm, BOTTOM[bs]), clothMat(col('bottom'), .72), 'bottom');
     const ts = sty('top');
-    if(ts && TOP[ts]) add(mkTop(Bd2, B.index, nrm, TOP[ts]), clothMat(col('top')));
+    if(ts && TOP[ts]) add(mkTop(Bd2, B.index, nrm, TOP[ts]), clothMat(col('top')), 'top');
     const ss = sty('shoes');
-    add(mkShoes(Bd2, SHOE[ss] || 'flat'), leather(ss ? col('shoes') : 0x16161a));
+    add(mkShoes(Bd2, SHOE[ss] || 'flat'), leather(ss ? col('shoes') : 0x16161a), 'shoes');
 
     // the eyes, from the morphed helper spheres
     for(const g of ['helper-l-eye', 'helper-r-eye']){
@@ -310,6 +314,7 @@ export async function mount(canvas, opts){
     });
   }
   function spin(dx){ yaw += dx * .01; render(); }
+  function setYaw(a){ yaw = a; render(); }
   function snapshot(){ render(); return canvas.toDataURL('image/png'); }
   function dispose(){
     alive = false; cancelAnimationFrame(raf);
@@ -319,5 +324,6 @@ export async function mount(canvas, opts){
     if(scene.environment) scene.environment.dispose();
     r.dispose();
   }
-  return { update, spin, snapshot, dispose };
+  function setOnly(w){ only = w; }
+  return { update, spin, setYaw, setOnly, snapshot, dispose };
 }
