@@ -277,7 +277,7 @@ export function shell(B, index, nrm, field, thick, opt){
     if(x === undefined){ x = field(i); fv.set(i, x); }
     return x;
   };
-  const P = [], N = [], T = [], UV = [];
+  const P = [], N = [], T = [], UV = [], LIMB = [];
   /* A garment gets its OWN UVs, wrapped round the figure, rather than
      the body's.
        A garment had none at all, which left every map on its material
@@ -296,16 +296,26 @@ export function shell(B, index, nrm, field, thick, opt){
     return [a / (Math.PI * 2) + .5, (p[1] - bot) / hh];
   };
   const base = new Map(), cut = new Map();
-  const put = (p, nn, uu) => {
+  const put = (p, nn, uu, lb) => {
     P.push(p[0],p[1],p[2]); N.push(nn[0],nn[1],nn[2]);
     if(bodyUV) UV.push(uu[0], uu[1]);
+    LIMB.push(lb || 0);
     return P.length/3 - 1;
+  };
+  /* "Is this an arm" by the SAME measure the sleeve cut uses, not by
+     limb(): limb() lets go of the outer surface of a thick upper arm, so
+     half a sleeve counted as torso and the drape blew it out into a bat
+     wing. */
+  const isLimb = i => {
+    const a = B.cls && B.cls[i];
+    if(a && a[1] <= 1.32) return 1;
+    return (B.limb && B.limb(i)) ? 1 : 0;
   };
   const at = i => {
     let x = base.get(i);
     if(x === undefined){
       const pp = [v[i*3], v[i*3+1], v[i*3+2]];
-      x = put(pp, [nrm[i*3], nrm[i*3+1], nrm[i*3+2]], uvOf(pp));
+      x = put(pp, [nrm[i*3], nrm[i*3+1], nrm[i*3+2]], uvOf(pp), isLimb(i));
       base.set(i, x);
     }
     return x;
@@ -327,7 +337,7 @@ export function shell(B, index, nrm, field, thick, opt){
       nn.push(nrm[i*3+k] + (nrm[j*3+k] - nrm[i*3+k]) * t);
     }
     const L = Math.hypot(nn[0],nn[1],nn[2]) || 1;
-    x = put(pos, [nn[0]/L, nn[1]/L, nn[2]/L], uvOf(pos));
+    x = put(pos, [nn[0]/L, nn[1]/L, nn[2]/L], uvOf(pos), isLimb(i) & isLimb(j));
     cut.set(key, x);
     return x;
   };
@@ -384,6 +394,116 @@ export function shell(B, index, nrm, field, thick, opt){
     let t = typeof thick === 'function' ? thick([P[i], P[i+1], P[i+2]]) : thick;
     if(onEdgeV[v3]) t *= (o.edgeLift == null ? 1.75 : o.edgeLift);
     P[i] += N[i]*t; P[i+1] += N[i+1]*t; P[i+2] += N[i+2]*t;
+  }
+
+  /* --------------------------------------------------------- the drape
+
+     Up to here a garment is the body pushed out along its normals, and
+     an offset of a surface IS that surface: the shirt had a waist that
+     nipped in exactly where the body's did and a bust it was moulded
+     round. Smoothing the base (drape:true) takes out the nipple and the
+     navel, but it cannot do this, because this is not detail -- it is
+     that cloth does not go where the body goes. Cloth hangs. It leaves
+     the widest thing above it and falls, and it does not tuck back under
+     a bust or into a waist on the way down.
+
+     So, over the part of the garment that hangs: take the silhouette of
+     the cloth in horizontal slices, and forbid a slice from being
+     narrower than the one above it in any direction. Every vertex inside
+     that envelope is pushed out to it. Nothing is ever pulled in, so the
+     shoulders and the bust -- where the cloth really is supported and
+     really does follow the body -- are left exactly as they were.
+
+     Limb vertices are excluded. A horizontal slice through a figure with
+     its arms down is a torso and two arms, and one envelope round all
+     three would be a poncho. */
+  if(o.slack > 0){
+    const nV = P.length / 3;
+    const torso = [];
+    for(let i = 0; i < nV; i++) if(!LIMB[i]) torso.push(i);
+    if(torso.length > 40){
+      let yLo = Infinity, yHi = -Infinity;
+      for(const i of torso){ const y = P[i*3+1]; if(y < yLo) yLo = y; if(y > yHi) yHi = y; }
+      const H = (yHi - yLo) || 1;
+      const NB = 44, NS = 28;
+      const binOf = y => Math.min(NB - 1, Math.max(0, Math.floor((yHi - y) / H * NB)));
+      const cxb = new Float64Array(NB), czb = new Float64Array(NB), cnt = new Float64Array(NB);
+      for(const i of torso){
+        const b = binOf(P[i*3+1]);
+        cxb[b] += P[i*3]; czb[b] += P[i*3+2]; cnt[b]++;
+      }
+      // a bin with nothing in it borrows the nearest centre above it
+      for(let b = 0; b < NB; b++){
+        if(cnt[b] > 0){ cxb[b] /= cnt[b]; czb[b] /= cnt[b]; }
+        else if(b > 0){ cxb[b] = cxb[b-1]; czb[b] = czb[b-1]; }
+      }
+      const rad = new Float64Array(NB * NS).fill(-1);
+      const sect = (dx, dz) => {
+        let a = Math.atan2(dz, dx) / (Math.PI * 2) + .5;
+        a -= Math.floor(a);
+        return Math.min(NS - 1, Math.floor(a * NS));
+      };
+      for(const i of torso){
+        const b = binOf(P[i*3+1]);
+        const dx = P[i*3] - cxb[b], dz = P[i*3+2] - czb[b];
+        const r = Math.hypot(dx, dz);
+        const sIdx = b * NS + sect(dx, dz);
+        if(r > rad[sIdx]) rad[sIdx] = r;
+      }
+      // fill gaps round each ring, so a missing sector does not read as zero
+      for(let b = 0; b < NB; b++){
+        for(let pass = 0; pass < 3; pass++){
+          for(let k = 0; k < NS; k++){
+            const o0 = b*NS + k;
+            if(rad[o0] >= 0) continue;
+            const a2 = rad[b*NS + (k + NS - 1) % NS], b2 = rad[b*NS + (k + 1) % NS];
+            if(a2 >= 0 && b2 >= 0) rad[o0] = (a2 + b2) * .5;
+            else if(a2 >= 0) rad[o0] = a2;
+            else if(b2 >= 0) rad[o0] = b2;
+          }
+        }
+      }
+      /* The rule that makes it cloth: going down, a sector cannot get
+         narrower. The carry is a hair under one so a flared hem does not
+         keep flaring all the way to the floor. */
+      const carry = o.carry == null ? .986 : o.carry;
+      for(let b = 1; b < NB; b++){
+        for(let k = 0; k < NS; k++){
+          const up = rad[(b-1)*NS + k] * carry;
+          if(up > rad[b*NS + k]) rad[b*NS + k] = up;
+        }
+      }
+      // round the envelope off, or the slices show as terracing
+      const tmp = Float64Array.from(rad);
+      for(let b = 0; b < NB; b++) for(let k = 0; k < NS; k++){
+        let acc = 0, w = 0;
+        for(let db = -1; db <= 1; db++) for(let dk = -1; dk <= 1; dk++){
+          const bb = b + db; if(bb < 0 || bb >= NB) continue;
+          const kk = (k + dk + NS) % NS;
+          const ww = (db === 0 ? 2 : 1) * (dk === 0 ? 2 : 1);
+          acc += tmp[bb*NS + kk] * ww; w += ww;
+        }
+        rad[b*NS + k] = acc / w;
+      }
+      /* How much of the envelope to take, down the garment: nothing at
+         the top, where the cloth sits on the shoulders, everything by
+         about two thirds of the way down. */
+      const sm = t => { t = t < 0 ? 0 : t > 1 ? 1 : t; return t*t*(3-2*t); };
+      for(const i of torso){
+        const y = P[i*3+1];
+        const f = sm(((yHi - y) / H - .34) / .40) * o.slack;
+        if(f <= 0) continue;
+        const b = binOf(y);
+        const dx = P[i*3] - cxb[b], dz = P[i*3+2] - czb[b];
+        const r = Math.hypot(dx, dz);
+        if(r < 1e-6) continue;
+        const tgt = rad[b*NS + sect(dx, dz)];
+        if(tgt <= r) continue;
+        const k = (r + (tgt - r) * f) / r;
+        P[i*3]   = cxb[b] + dx * k;
+        P[i*3+2] = czb[b] + dz * k;
+      }
+    }
   }
 
   /* Smooth the hem ALONG ITSELF.
@@ -455,6 +575,69 @@ export function shell(B, index, nrm, field, thick, opt){
      normal at the same point is smooth, and a garment lying on a body
      should catch the light the way the body does. The boundary takes it
      almost entirely; the middle of the cloth keeps most of its own. */
+  /* ------------------------------------------------------------ collar
+     A band round the neckline, lofted off the boundary loop.
+
+     Two reasons. A tee has one, and a finished edge is the thing that
+     most says "garment" rather than "painted on". And the neckline is
+     where you could previously see past the cloth to the unlit inside of
+     its own back -- the pair of dark wedges either side of the collar
+     that looked exactly like holes in the mesh. A band closes that line
+     of sight with cloth, which is what a real collar does too.
+
+     Built before the normals are, so the band gets shaded with
+     everything else rather than needing its own pass. */
+  if(o.collar > 0){
+    const nV = P.length / 3;
+    const nb0 = new Int32Array(nV).fill(-1), nb1 = new Int32Array(nV).fill(-1);
+    for(const [k, cnt] of edge){
+      if(cnt !== 1) continue;
+      const q = k.indexOf(':');
+      const i = +k.slice(0, q), j = +k.slice(q + 1);
+      if(nb0[i] < 0) nb0[i] = j; else nb1[i] = j;
+      if(nb0[j] < 0) nb0[j] = i; else nb1[j] = i;
+    }
+    // the highest boundary loop is the neckline; the others are hems
+    const seen = new Uint8Array(nV);
+    let best = null;
+    for(let i = 0; i < nV; i++){
+      if(seen[i] || nb0[i] < 0 || nb1[i] < 0) continue;
+      const loop = []; let cur = i, prev = -1, closed = false;
+      for(let guard = 0; guard < nV; guard++){
+        loop.push(cur); seen[cur] = 1;
+        const a2 = nb0[cur], b2 = nb1[cur];
+        const nxt = (a2 !== prev && a2 >= 0) ? a2 : b2;
+        if(nxt < 0) break;
+        if(nxt === i){ closed = true; break; }
+        if(seen[nxt]) break;
+        prev = cur; cur = nxt;
+      }
+      if(!closed || loop.length < 8) continue;
+      let sy = 0; for(const v3 of loop) sy += P[v3*3+1];
+      sy /= loop.length;
+      if(!best || sy > best.y) best = { y: sy, loop };
+    }
+    if(best){
+      const w = o.collar, L = best.loop;
+      const ring = [];
+      for(const i of L){
+        const a2 = i*3;
+        ring.push(P.length/3);
+        P.push(P[a2]   + N[a2]   * w * .95,
+               P[a2+1] + N[a2+1] * w * .95 + w * .45,
+               P[a2+2] + N[a2+2] * w * .95);
+        N.push(N[a2], N[a2+1], N[a2+2]);
+        if(bodyUV) UV.push(UV[i*2], UV[i*2+1] + w * .30);
+        LIMB.push(LIMB[i]);
+      }
+      for(let k = 0; k < L.length; k++){
+        const a2 = L[k], b2 = L[(k+1) % L.length];
+        const c2 = ring[k], d2 = ring[(k+1) % ring.length];
+        T.push(a2, c2, b2, b2, c2, d2);
+      }
+    }
+  }
+
   /* Face normals, each one turned to agree with the body's normal before
      it is accumulated.
 

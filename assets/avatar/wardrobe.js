@@ -17,9 +17,9 @@ const limbY = (B, fracOfArm) => {
 export const TOPS = {
   'tee':          {hem:.515, neck:.76, sleeve:.30},
   'long-sleeve':  {hem:.510, neck:.76, sleeve:.78},
-  'tank':         {hem:.515, neck:.80, sleeve:.02, strap:true},
+  'tank':         {hem:.515, neck:.80, sleeve:.02, strap:true, slack:.55},
   'vneck':        {hem:.515, neck:1.30, sleeve:.30, vee:true},
-  'crop':         {hem:.60, neck:.95, sleeve:.22},
+  'crop':         {hem:.60, neck:.95, sleeve:.22, slack:.35},
 };
 export const BOTTOMS = {
   'leggings': {waist:.56, hem:.075},
@@ -86,9 +86,14 @@ export function top(B, index, nrm, style, thick){
      the picture supersampled the two colours average into what looks
      like a transparent shirt. Layering the offsets is the whole fix --
      the top is simply further out than what it is worn over. */
-  return shell(B, index, nrm, field, thick == null ? .085 : thick,
+  /* slack: how much of the hanging envelope the cloth takes below the
+     chest. A tank is cut closer than a tee and a crop ends before there
+     is anything to hang, so they get less of it. */
+  return shell(B, index, nrm, field, thick == null ? .115 : thick,
                { relax: (window.__RELAX == null ? .22 : window.__RELAX),
-                 smooth: 2, drape: true, edgeLift: 1.0 });
+                 smooth: 2, drape: true, edgeLift: 1.0,
+                 slack: o.slack == null ? .50 : o.slack,
+                 collar: o.collar == null ? .085 : o.collar });
 }
 
 export function bottoms(B, index, nrm, style){
