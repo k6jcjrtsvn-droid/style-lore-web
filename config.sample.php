@@ -211,3 +211,20 @@ define('ASC_KEY_ID', '');
 define('ASC_ISSUER_ID', '');
 define('ASC_PRIVATE_KEY_PATH', '');   // e.g. '/home/yourcpaneluser/AuthKey_XXXXXXXXXX.p8'
 define('ASC_APP_ID', '6813713328');
+
+// 4. Downloads (api/asc_downloads.php) need one thing more. Sales reports
+//    are fetched per VENDOR, not per app, so Apple wants the vendor number:
+//    App Store Connect > Payments and Financial Reports, the "Vendor #"
+//    shown at the top. Digits only, no name and no team ID.
+//
+//    Reading sales reports is a bigger permission than reading review
+//    state. If the downloads endpoint answers 403 FORBIDDEN with the key
+//    above, the key's role is too low for Sales and Trends — generate a
+//    second key with a role that includes it rather than raising this one.
+define('ASC_VENDOR_NUMBER', '');
+
+// Optional. The first day the app was on sale, so "since launch" means
+// something without having to pass ?from= every time. iOS 1.0 went live on
+// 20 November 2026. Apple keeps DAILY reports for one year; for anything
+// older than that the monthly reports are the only source.
+define('ASC_FIRST_SALES_DATE', '2026-11-20');

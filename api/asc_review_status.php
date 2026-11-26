@@ -32,6 +32,7 @@ require_once __DIR__ . '/../includes/helpers.php';
 // be added without opening config.php (which holds the database password, the
 // Stripe secret key and the Anthropic key). Either location works.
 @include_once dirname(__DIR__, 2) . '/asc_config.php';
+require_once __DIR__ . '/../includes/asc_api.php';
 
 $token = (string)($_GET['token'] ?? '');
 if (!defined('WATCHDOG_READ_TOKEN') || WATCHDOG_READ_TOKEN === '' || !hash_equals(WATCHDOG_READ_TOKEN, $token)) {
@@ -49,70 +50,9 @@ if ($pem === false || trim($pem) === '') {
     error_response('Could not read the App Store Connect private key.', 503);
 }
 
-/* openssl_sign on an EC key returns a DER SEQUENCE of two INTEGERs.
-   JWS ES256 wants the raw 64-byte r||s instead, each half left-padded. */
-function asc_der_to_jose(string $der): string {
-    $off = 0;
-    if (($der[$off++] ?? '') !== "\x30") throw new RuntimeException('signature is not a SEQUENCE');
-    $len = ord($der[$off++]);
-    if ($len & 0x80) $off += ($len & 0x7f);          // long-form length
-    $out = '';
-    for ($i = 0; $i < 2; $i++) {
-        if (($der[$off++] ?? '') !== "\x02") throw new RuntimeException('signature part is not an INTEGER');
-        $ilen = ord($der[$off++]);
-        $int  = substr($der, $off, $ilen);
-        $off += $ilen;
-        $int  = ltrim($int, "\x00");                  // drop DER sign padding
-        if (strlen($int) > 32) throw new RuntimeException('signature part too long');
-        $out .= str_pad($int, 32, "\x00", STR_PAD_LEFT);
-    }
-    return $out;
-}
-
-function asc_b64(string $raw): string {
-    return rtrim(strtr(base64_encode($raw), '+/', '-_'), '=');
-}
-
-function asc_token(string $pem): string {
-    $now    = time();
-    $header = asc_b64(json_encode(['alg' => 'ES256', 'kid' => ASC_KEY_ID, 'typ' => 'JWT']));
-    // 20 minutes is Apple's maximum; 15 leaves room for clock skew.
-    $claims = asc_b64(json_encode([
-        'iss' => ASC_ISSUER_ID,
-        'iat' => $now,
-        'exp' => $now + 900,
-        'aud' => 'appstoreconnect-v1',
-    ]));
-    $key = openssl_pkey_get_private($pem);
-    if ($key === false) throw new RuntimeException('private key did not parse');
-    $der = '';
-    if (!openssl_sign($header . '.' . $claims, $der, $key, OPENSSL_ALGO_SHA256)) {
-        throw new RuntimeException('could not sign the token');
-    }
-    return $header . '.' . $claims . '.' . asc_b64(asc_der_to_jose($der));
-}
-
-function asc_get(string $path, string $jwt): array {
-    $ch = curl_init('https://api.appstoreconnect.apple.com' . $path);
-    curl_setopt_array($ch, [
-        CURLOPT_RETURNTRANSFER => true,
-        CURLOPT_TIMEOUT        => 20,
-        CURLOPT_HTTPHEADER     => ['Authorization: Bearer ' . $jwt],
-    ]);
-    $body = curl_exec($ch);
-    $code = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
-    $err  = curl_error($ch);
-    curl_close($ch);
-    if ($body === false) return ['ok' => false, 'status' => 0, 'error' => $err];
-    $json = json_decode($body, true);
-    if ($code !== 200) {
-        // Apple returns {errors:[{title,detail}]} — pass the detail through,
-        // it is how a wrong role or a revoked key announces itself.
-        $detail = $json['errors'][0]['detail'] ?? $json['errors'][0]['title'] ?? substr((string)$body, 0, 200);
-        return ['ok' => false, 'status' => $code, 'error' => $detail];
-    }
-    return ['ok' => true, 'status' => 200, 'json' => is_array($json) ? $json : []];
-}
+/* The JWT signing and the GET live in includes/asc_api.php now, so that
+   more than one endpoint can use them. Nothing about them changed in
+   the move. */
 
 try {
     $jwt = asc_token($pem);
