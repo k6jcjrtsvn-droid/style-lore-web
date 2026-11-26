@@ -7,7 +7,7 @@
 import * as THREE from '../three.module.js';
 import { loadBase, applyMix, groupCentre, styliseHead, shapeFor, sliderMix, MACRO_NEUTRAL }
   from './avatar.js';
-import { makeBody, armsDown, bodyNormals } from './body.js';
+import { makeBody, armsDown, bodyNormals, refine } from './body.js';
 import { top as mkTop, bottoms as mkBottom, skirt as mkSkirt, shoes as mkShoes }
   from './wardrobe.js';
 import { scalp, buildHair, buildBrows, buildLashes } from './hairgen.js';
@@ -382,6 +382,13 @@ export async function mount(canvas, opts){
     styliseHead(body, eyeY, eyeZ, gap, 1.12);
     styliseHead(helper, eyeY, eyeZ, gap, 1.12);
 
+    /* The eye landmarks AFTER styliseHead: the head is scaled there, so
+       anything measured before it is measured on a different head. */
+    const eLs = groupCentre(B, helper, 'helper-l-eye');
+    const eRs = groupCentre(B, helper, 'helper-r-eye');
+    const gapS = Math.abs(eLs[0] - eRs[0]) || 1;
+    const headCut = (eLs[1] + eRs[1]) * .5 - 1.55 * gapS;
+
     const Bd = makeBody(B, body);
     armsDown(Bd, 34);
     const Bd2 = makeBody(B, body);
@@ -393,7 +400,11 @@ export async function mount(canvas, opts){
     const hairHex = HAIRC[fig.hairColor] || HAIRC.h2;
 
     if(!only || only === 'body'){
-      const bodyMesh = geom({ position:body, normal:nrm, uv:B.uv, index:B.index });
+      // One level of subdivision, head only -- see refine() for why the
+      // new vertices do not go at the midpoints of the edges.
+      const R = refine(body, B.index, nrm, B.uv, i => body[i*3+1] > headCut);
+      const bodyMesh = geom({ position:R.position, normal:R.normal,
+                              uv:R.uv, index:R.index });
       bodyMesh.material = skinMat(fig.skin, hairHex);
       group.add(bodyMesh);
     }
@@ -415,8 +426,6 @@ export async function mount(canvas, opts){
     /* The brows, as strands on the skin rather than as a smudge in the
        texture. They are built from the same positions and normals the
        body mesh uses, so they stay seated through every slider. */
-    const eLs = groupCentre(B, helper, 'helper-l-eye');   // after styliseHead:
-    const eRs = groupCentre(B, helper, 'helper-r-eye');   // the eyes have moved
     add(buildBrows(body, nrm, eLs, eRs, 11), browMat(hairHex), 'brows');
 
     // the eyes, from the morphed helper spheres

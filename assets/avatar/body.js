@@ -544,3 +544,104 @@ export function bodyNormals(B, index){
   }
   return N;
 }
+
+/* ------------------------------------------------------------------ refine
+
+   One level of subdivision, on the head only.
+
+   The whole body is 13,380 vertices, which spreads thin: the nose, the
+   lips and the rim of an ear each come down to a handful of polygons,
+   and at the size a figure is actually looked at that is exactly where
+   the eye goes. Subdividing everything would quadruple a mesh that is
+   mostly thigh.
+
+   The new vertices are placed on the PN-triangle surface -- the cubic
+   patch that interpolates the three corners AND their normals -- rather
+   than at the midpoints of the edges. A midpoint lands on the flat
+   facet, so plain splitting adds vertices and changes nothing: the
+   silhouette stays faceted and only the triangle count goes up. The PN
+   placement rounds the surface out to the shape the normals already
+   claim it has, which is the shape the shading has been pretending to
+   all along.
+
+   Interpolating, not approximating: every original vertex stays exactly
+   where it was. That matters because everything else -- the garments,
+   the brows, the lashes, the scalp -- is built against the original mesh
+   by vertex index, and a subdivision that moved the originals would move
+   the body out from under all of it.
+
+   This runs after the morphs, on the finished positions, so the bundle
+   does not grow by a byte. */
+export function refine(pos, index, nrm, uv, inRegion){
+  const n = pos.length / 3;
+  const P = Array.from(pos), N = Array.from(nrm), UV = uv ? Array.from(uv) : null;
+  const T = [];
+  const mid = new Map();
+  const dot = (ax,ay,az,bx,by,bz) => ax*bx + ay*by + az*bz;
+
+  const edge = (a, b) => {
+    const key = a < b ? a * n + b : b * n + a;
+    let m = mid.get(key);
+    if(m !== undefined) return m;
+    const a3 = a*3, b3 = b*3;
+    const dx = P[b3]-P[a3], dy = P[b3+1]-P[a3+1], dz = P[b3+2]-P[a3+2];
+    const wa =  dot(dx,dy,dz, N[a3],N[a3+1],N[a3+2]);
+    const wb = -dot(dx,dy,dz, N[b3],N[b3+1],N[b3+2]);
+    m = P.length / 3;
+    P.push((P[a3]  +P[b3]  )*.5 - (wa*N[a3]   + wb*N[b3]  )/8,
+           (P[a3+1]+P[b3+1])*.5 - (wa*N[a3+1] + wb*N[b3+1])/8,
+           (P[a3+2]+P[b3+2])*.5 - (wa*N[a3+2] + wb*N[b3+2])/8);
+    let nx = N[a3]+N[b3], ny = N[a3+1]+N[b3+1], nz = N[a3+2]+N[b3+2];
+    const L = Math.hypot(nx,ny,nz) || 1;
+    N.push(nx/L, ny/L, nz/L);
+    if(UV) UV.push((UV[a*2]+UV[b*2])*.5, (UV[a*2+1]+UV[b*2+1])*.5);
+    mid.set(key, m);
+    return m;
+  };
+
+  const keep = new Uint8Array(n);
+  for(let i = 0; i < n; i++) keep[i] = inRegion(i) ? 1 : 0;
+
+  /* Two passes. The first splits the triangles inside the region; the
+     second mends the ones beside it, because a neighbour that keeps its
+     long edge while the triangle across that edge has gained a vertex in
+     the middle of it leaves a T-junction, and a T-junction is a crack
+     you can see daylight through. */
+  const split = [];
+  for(let f = 0; f < index.length; f += 3){
+    const a = index[f], b = index[f+1], c = index[f+2];
+    if(keep[a] && keep[b] && keep[c]){
+      const ab = edge(a,b), bc = edge(b,c), ca = edge(c,a);
+      T.push(a,ab,ca,  ab,b,bc,  ca,bc,c,  ab,bc,ca);
+    } else {
+      split.push(f);
+    }
+  }
+  for(const f of split){
+    const t = [index[f], index[f+1], index[f+2]];
+    const has = [];
+    for(let e = 0; e < 3; e++){
+      const a = t[e], b = t[(e+1)%3];
+      const key = a < b ? a * n + b : b * n + a;
+      has.push(mid.has(key) ? mid.get(key) : -1);
+    }
+    const cnt = has.filter(x => x >= 0).length;
+    if(cnt === 0){ T.push(t[0], t[1], t[2]); continue; }
+    if(cnt === 3){
+      T.push(t[0],has[0],has[2],  has[0],t[1],has[1],  has[2],has[1],t[2],  has[0],has[1],has[2]);
+      continue;
+    }
+    if(cnt === 1){
+      const e = has.findIndex(x => x >= 0);
+      const m = has[e], p = t[e], q = t[(e+1)%3], r = t[(e+2)%3];
+      T.push(p, m, r,  m, q, r);
+      continue;
+    }
+    // two split edges: cut off the corner they share, then halve the rest
+    const e = has.findIndex(x => x < 0);               // the whole edge
+    const p = t[e], q = t[(e+1)%3], r = t[(e+2)%3];    // p-q is whole
+    const mq = has[(e+1)%3], mr = has[(e+2)%3];        // on q-r and r-p
+    T.push(r, mr, mq,  mr, p, q,  mr, q, mq);
+  }
+  return { position: P, normal: N, uv: UV, index: T, n: P.length/3 };
+}
