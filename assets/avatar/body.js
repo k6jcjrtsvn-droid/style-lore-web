@@ -223,33 +223,122 @@ export function drapeBase(B, index){
     const L = Math.hypot(N[i],N[i+1],N[i+2]) || 1;
     N[i]/=L; N[i+1]/=L; N[i+2]/=L;
   }
-  /* and then the whole smoothed surface is pushed back out, by the most
-     any point of it sank.
+  /* and then the smoothed surface is pushed back out, by how far it sank
+     -- but by a BLURRED version of how far, not the raw amount and not
+     one number for the whole body.
 
-     Smoothing a surface IS shrinking it -- that is how the nipple goes
-     away -- so the draped base ends up inside the skin, and a garment
-     offset from it by a normal cloth thickness has the body coming
-     through it at every place that sank more than that: the shoulders,
-     the nipples, the front of the thighs. Compensating per vertex only
-     moves the problem, because the shrink is largest exactly where the
-     feature was, so adding it back rebuilds the feature. One constant
-     for the whole surface puts the base outside the skin everywhere and
-     keeps it smooth, and the garment then stands off it by its own
-     thickness alone. The figure is about sixteen units tall, so this is
-     a couple of centimetres of ease -- which is what clothes have. */
-  let lift = 0;
+     Smoothing a surface is shrinking it; that is how the nipple goes
+     away. So the draped base ends up inside the skin and a garment
+     offset from it has the body coming through at every place that sank
+     more than the cloth is thick. Adding the raw sink back per vertex
+     just rebuilds the feature, because the sink is largest exactly where
+     the feature was. One constant for the whole body avoids that, and
+     was what this did -- but the constant is the largest sink anywhere,
+     which is a fingertip or the tip of the nose, and applying a
+     fingertip's worth of ease to an upper arm inflates it by half its
+     own radius. That is what turned every sleeve into a bat wing: not
+     the sleeve, the ease.
+
+     Blurring the sink over the surface keeps both properties. A nipple's
+     spike averages away to nothing over a dozen passes, so nothing
+     rebuilds it; the torso's broad, gentle sink survives, because it is
+     broad. Each part of the body then gets its own ease. */
+  const sink = new Float64Array(n);
   for(let i = 0; i < n; i++){
     const d = (v[i*3] - P[i*3]) * N[i*3]
             + (v[i*3+1] - P[i*3+1]) * N[i*3+1]
             + (v[i*3+2] - P[i*3+2]) * N[i*3+2];
-    if(d > lift) lift = d;
+    sink[i] = d > 0 ? d : 0;
   }
-  lift = Math.min(lift, 0.26);
+  {
+    const tmp = new Float64Array(n);
+    for(let pass = 0; pass < 14; pass++){
+      for(let i = 0; i < n; i++){
+        const a2 = adj.start[i], b2 = adj.start[i+1];
+        if(b2 <= a2){ tmp[i] = sink[i]; continue; }
+        let acc = 0;
+        for(let t = a2; t < b2; t++) acc += sink[adj.list[t]];
+        tmp[i] = sink[i] + (acc / (b2 - a2) - sink[i]) * .70;
+      }
+      sink.set(tmp);
+    }
+  }
+  const easeMin = 0.020, easeMax = 0.090;
   for(let i = 0; i < n; i++){
-    P[i*3]   += N[i*3]   * lift;
-    P[i*3+1] += N[i*3+1] * lift;
-    P[i*3+2] += N[i*3+2] * lift;
+    const e = Math.min(easeMax, Math.max(easeMin, sink[i]));
+    P[i*3]   += N[i*3]   * e;
+    P[i*3+1] += N[i*3+1] * e;
+    P[i*3+2] += N[i*3+2] * e;
   }
+  /* and then the one rule that cannot be broken: the base may not be
+     inside the skin.
+
+     A blurred ease is an average, so wherever the surface sank more than
+     the average it is still under the skin, and the garment built on it
+     has the body coming through -- a bare patch of shoulder in the
+     middle of the shirt, which is worse than any amount of cling. So:
+     push any vertex that is inside back out to the skin exactly, smooth,
+     and push out again. The clamp wins at the peaks, the smoothing
+     spreads what the clamp just rebuilt, and after a few rounds the
+     surface lies OVER a nipple the way cloth does rather than denting
+     into it or being pierced by it. */
+  /* The clamp has to be gentle, and it has to be wide.
+
+     Pushing every vertex that is inside the skin back out to it,
+     exactly, rebuilds every rim: the body's navel is a crater, its rim
+     protrudes, the rim gets clamped out while the middle stays smooth,
+     and the shirt ends up with a dimple in it where the navel is. Two
+     changes fix that. The base is allowed to sit a margin INSIDE the
+     skin -- it only has to stay within a garment's thickness, because
+     the cloth is offset from it -- so small protrusions never trigger
+     the clamp at all. And the push is dilated over the mesh before it is
+     applied, so where the clamp does fire it lifts a patch rather than a
+     point. The raw value is taken back afterwards wherever it was
+     larger, so nothing is ever left pierced. */
+  const push = new Float64Array(n), tmp2 = new Float64Array(n);
+  const clampOut = margin => {
+    for(let i = 0; i < n; i++){
+      const d = (v[i*3] - P[i*3]) * N[i*3]
+              + (v[i*3+1] - P[i*3+1]) * N[i*3+1]
+              + (v[i*3+2] - P[i*3+2]) * N[i*3+2] - margin;
+      push[i] = d > 0 ? d : 0;
+    }
+    const raw = Float64Array.from(push);
+    for(let pass = 0; pass < 2; pass++){          // dilate
+      for(let i = 0; i < n; i++){
+        let m = push[i];
+        for(let t = adj.start[i]; t < adj.start[i+1]; t++){
+          const q = push[adj.list[t]]; if(q > m) m = q;
+        }
+        tmp2[i] = m;
+      }
+      push.set(tmp2);
+    }
+    for(let pass = 0; pass < 2; pass++){          // and soften
+      for(let i = 0; i < n; i++){
+        const a2 = adj.start[i], b2 = adj.start[i+1];
+        if(b2 <= a2){ tmp2[i] = push[i]; continue; }
+        let acc = 0;
+        for(let t = a2; t < b2; t++) acc += push[adj.list[t]];
+        tmp2[i] = push[i] + (acc / (b2 - a2) - push[i]) * .5;
+      }
+      push.set(tmp2);
+    }
+    for(let i = 0; i < n; i++){
+      const e = Math.max(push[i], raw[i]);
+      if(e <= 0) continue;
+      P[i*3]   += N[i*3]   * e;
+      P[i*3+1] += N[i*3+1] * e;
+      P[i*3+2] += N[i*3+2] * e;
+    }
+  };
+  /* How far the base may sit inside the skin: comfortably less than the
+     THINNEST garment's offset, because one draped base serves them all.
+     At .050 against leggings offset .055 there were five thousandths of
+     clearance, and the legs came out in patches of bare skin. */
+  const MARGIN = 0.030;
+  for(let k = 0; k < 4; k++){ clampOut(MARGIN); step(.55); }
+  clampOut(MARGIN);
   /* Offsetting a surface outward folds it wherever the surface is
      concave and turns tighter than the offset -- under a breast, in an
      armpit, behind a knee. The fold is a pinch of back-facing cloth and
@@ -257,7 +346,7 @@ export function drapeBase(B, index){
      shirt. Three more smoothing passes AFTER the lift take the folds
      out: a fold is high frequency, and by this point nothing else of the
      body's detail is left for the smoothing to eat. */
-  for(let pass = 0; pass < 3; pass++) step(.55);
+  for(let pass = 0; pass < 3; pass++){ step(.55); clampOut(MARGIN); }
   B.drapeV = P; B.drapeN = N;
   return { v: P, n: N };
 }
@@ -623,9 +712,13 @@ export function shell(B, index, nrm, field, thick, opt){
       for(const i of L){
         const a2 = i*3;
         ring.push(P.length/3);
-        P.push(P[a2]   + N[a2]   * w * .95,
-               P[a2+1] + N[a2+1] * w * .95 + w * .45,
-               P[a2+2] + N[a2+2] * w * .95);
+        /* The band follows the surface it is lofted from. Lifting it in
+           Y as well put an upward-facing lip round a wide neckline, and
+           an upward-facing lip under a key light overhead is a white
+           ring -- it read as a necklace, not a collar. */
+        P.push(P[a2]   + N[a2]   * w,
+               P[a2+1] + N[a2+1] * w,
+               P[a2+2] + N[a2+2] * w);
         N.push(N[a2], N[a2+1], N[a2+2]);
         if(bodyUV) UV.push(UV[i*2], UV[i*2+1] + w * .30);
         LIMB.push(LIMB[i]);

@@ -98,7 +98,7 @@ export function top(B, index, nrm, style, thick){
 
 export function bottoms(B, index, nrm, style){
   const o = BOTTOMS[style] || BOTTOMS['leggings'];
-  const th = o.thick == null ? .055 : o.thick;
+  const th = o.thick == null ? .078 : o.thick;
   const v = B.v;
   const field = i => {
     if(B.limb(i)) return -1.0;
