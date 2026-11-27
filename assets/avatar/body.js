@@ -686,9 +686,36 @@ export function shell(B, index, nrm, field, thick, opt){
       if(nb0[i] < 0) nb0[i] = j; else nb1[i] = j;
       if(nb0[j] < 0) nb0[j] = i; else nb1[j] = i;
     }
-    // the highest boundary loop is the neckline; the others are hems
+    /* EVERY boundary loop gets a band, not just the neckline: the cuffs
+       and the hem are finished edges too, and on a sleeveless top so is
+       the armhole. The neckline -- the highest loop -- gets the wider
+       one, because a collar is wider than a hem. */
+    /* for every boundary vertex, a neighbour that is NOT on a boundary:
+       that is the direction the cloth lies in, so its opposite is the
+       direction the band has to go */
+    const onB = new Uint8Array(nV);
+    for(let i = 0; i < nV; i++) if(nb0[i] >= 0 && nb1[i] >= 0) onB[i] = 1;
+    const inner = new Int32Array(nV).fill(-1);
+    for(let f = 0; f < T.length; f += 3){
+      const tri = [T[f], T[f+1], T[f+2]];
+      for(let a3 = 0; a3 < 3; a3++){
+        const i = tri[a3];
+        if(!onB[i] || inner[i] >= 0) continue;
+        for(let b3 = 0; b3 < 3; b3++){
+          const j = tri[b3];
+          if(j !== i && !onB[j]){ inner[i] = j; break; }
+        }
+      }
+    }
     const seen = new Uint8Array(nV);
-    let best = null;
+    const loops = [];
+    const span = loop => {
+      let lo = [Infinity,Infinity,Infinity], hi = [-Infinity,-Infinity,-Infinity];
+      for(const v3 of loop) for(let c = 0; c < 3; c++){
+        const q = P[v3*3+c]; if(q < lo[c]) lo[c] = q; if(q > hi[c]) hi[c] = q;
+      }
+      return Math.hypot(hi[0]-lo[0], hi[1]-lo[1], hi[2]-lo[2]);
+    };
     for(let i = 0; i < nV; i++){
       if(seen[i] || nb0[i] < 0 || nb1[i] < 0) continue;
       const loop = []; let cur = i, prev = -1, closed = false;
@@ -703,30 +730,94 @@ export function shell(B, index, nrm, field, thick, opt){
       }
       if(!closed || loop.length < 8) continue;
       let sy = 0; for(const v3 of loop) sy += P[v3*3+1];
-      sy /= loop.length;
-      if(!best || sy > best.y) best = { y: sy, loop };
+      loops.push({ y: sy / loop.length, loop, d: span(loop) });
     }
-    if(best){
-      const w = o.collar, L = best.loop;
-      const ring = [];
-      for(const i of L){
-        const a2 = i*3;
-        ring.push(P.length/3);
-        /* The band follows the surface it is lofted from. Lifting it in
-           Y as well put an upward-facing lip round a wide neckline, and
-           an upward-facing lip under a key light overhead is a white
-           ring -- it read as a necklace, not a collar. */
-        P.push(P[a2]   + N[a2]   * w,
-               P[a2+1] + N[a2+1] * w,
-               P[a2+2] + N[a2+2] * w);
-        N.push(N[a2], N[a2+1], N[a2+2]);
-        if(bodyUV) UV.push(UV[i*2], UV[i*2+1] + w * .30);
-        LIMB.push(LIMB[i]);
+    /* Only loops that are actually EDGES get a band. Two boundaries that
+       touch at a vertex walk as one figure-of-eight, and lofting a band
+       along that draws a ribbon from the cuff all the way down past the
+       hip -- which is what it did. A real hem, cuff or neckline is small
+       next to the garment it is the edge of; a merged one is not. */
+    let gD = 0;
+    {
+      let lo = [Infinity,Infinity,Infinity], hi = [-Infinity,-Infinity,-Infinity];
+      for(let i = 0; i < nV; i++) for(let c = 0; c < 3; c++){
+        const q = P[i*3+c]; if(q < lo[c]) lo[c] = q; if(q > hi[c]) hi[c] = q;
       }
-      for(let k = 0; k < L.length; k++){
-        const a2 = L[k], b2 = L[(k+1) % L.length];
-        const c2 = ring[k], d2 = ring[(k+1) % ring.length];
-        T.push(a2, c2, b2, b2, c2, d2);
+      gD = Math.hypot(hi[0]-lo[0], hi[1]-lo[1], hi[2]-lo[2]) || 1;
+    }
+    for(let i = loops.length - 1; i >= 0; i--) if(loops[i].d > gD * .60) loops.splice(i, 1);
+    if(loops.length){
+      let top = loops[0];
+      for(const L of loops) if(L.y > top.y) top = L;
+      const bandW = o.band == null ? o.collar * .62 : o.band;
+      for(const entry of loops){
+        const w = entry === top ? o.collar : bandW;
+        if(!(w > 0)) continue;
+        const L = entry.loop, ring = [];
+        /* A band is extruded ALONG THE SURFACE, out through its own
+           opening -- up the neck for a collar, down the arm for a cuff,
+           down for a hem -- and only slightly proud of it.
+
+           Two wrong ways first. Lofting along the surface NORMAL sends
+           the band wherever the body happens to face: out from the chest
+           at the front of a neckline, straight up over the shoulder. And
+           taking the direction straight from "away from the neighbour
+           inside the garment" is right in principle but picks a
+           different neighbour at every vertex, so the band's outer edge
+           zigzags -- a collar like torn paper.
+
+           So the direction comes from the loop's own tangent, which is
+           smooth by construction: perpendicular to it, in the surface.
+           Only its SIGN comes from the interior neighbour, and a sign
+           cannot zigzag. */
+        const dir = new Float64Array(L.length * 3);
+        for(let k = 0; k < L.length; k++){
+          const i = L[k], a2 = i*3;
+          const pv = L[(k - 1 + L.length) % L.length] * 3, nx = L[(k + 1) % L.length] * 3;
+          let tx = P[nx] - P[pv], ty = P[nx+1] - P[pv+1], tz = P[nx+2] - P[pv+2];
+          const Lt = Math.hypot(tx,ty,tz) || 1; tx/=Lt; ty/=Lt; tz/=Lt;
+          let ux = N[a2+1]*tz - N[a2+2]*ty,
+              uy = N[a2+2]*tx - N[a2]  *tz,
+              uz = N[a2]  *ty - N[a2+1]*tx;
+          const Lu = Math.hypot(ux,uy,uz);
+          if(Lu > 1e-7){ ux/=Lu; uy/=Lu; uz/=Lu; }
+          else { ux = N[a2]; uy = N[a2+1]; uz = N[a2+2]; }
+          const inN = inner[i];
+          if(inN >= 0){
+            const ax = P[a2] - P[inN*3], ay = P[a2+1] - P[inN*3+1], az = P[a2+2] - P[inN*3+2];
+            if(ux*ax + uy*ay + uz*az < 0){ ux = -ux; uy = -uy; uz = -uz; }
+          }
+          dir[k*3] = ux; dir[k*3+1] = uy; dir[k*3+2] = uz;
+        }
+        // and a pass round the loop, because a sign that does flip once
+        // leaves one spike, and one spike on a collar is visible
+        {
+          const tmp3 = Float64Array.from(dir);
+          for(let k = 0; k < L.length; k++){
+            const pv = ((k - 1 + L.length) % L.length) * 3, nx3 = ((k + 1) % L.length) * 3;
+            for(let c = 0; c < 3; c++)
+              tmp3[k*3+c] = (dir[pv+c] + dir[k*3+c] * 2 + dir[nx3+c]) * .25;
+          }
+          for(let k = 0; k < L.length; k++){
+            const Lu = Math.hypot(tmp3[k*3], tmp3[k*3+1], tmp3[k*3+2]);
+            if(Lu > 1e-7) for(let c = 0; c < 3; c++) dir[k*3+c] = tmp3[k*3+c] / Lu;
+          }
+        }
+        for(let k = 0; k < L.length; k++){
+          const i = L[k], a2 = i*3;
+          ring.push(P.length/3);
+          P.push(P[a2]   + dir[k*3]   * w + N[a2]   * w * .30,
+                 P[a2+1] + dir[k*3+1] * w + N[a2+1] * w * .30,
+                 P[a2+2] + dir[k*3+2] * w + N[a2+2] * w * .30);
+          N.push(N[a2], N[a2+1], N[a2+2]);
+          if(bodyUV) UV.push(UV[i*2], UV[i*2+1] + w * .30);
+          LIMB.push(LIMB[i]);
+        }
+        for(let k = 0; k < L.length; k++){
+          const a2 = L[k], b2 = L[(k+1) % L.length];
+          const c2 = ring[k], d2 = ring[(k+1) % ring.length];
+          T.push(a2, c2, b2, b2, c2, d2);
+        }
       }
     }
   }

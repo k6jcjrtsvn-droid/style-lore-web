@@ -17,7 +17,7 @@ const limbY = (B, fracOfArm) => {
 export const TOPS = {
   'tee':          {hem:.515, neck:.76, sleeve:.30},
   'long-sleeve':  {hem:.510, neck:.76, sleeve:.78},
-  'tank':         {hem:.515, neck:.80, sleeve:.02, strap:true, slack:.55},
+  'tank':         {hem:.515, neck:.80, sleeve:.02, slack:.55},
   'vneck':        {hem:.515, neck:1.30, sleeve:.30, vee:true},
   'crop':         {hem:.60, neck:.95, sleeve:.22, slack:.35},
 };
@@ -75,8 +75,26 @@ export function top(B, index, nrm, style, thick){
        fix and a larger one. */
     const a = B.cls[i];
     if(a && a[1] <= 1.32 && a[0] >= 0.25){
-      d.push(cuffT - a[0]);
-      if(o.strap) d.push(-1.0);                   // no sleeve at all
+      /* The cuff cut has to let the CHEST go. The radius of 1.32 is wide
+         on purpose -- it has to hold the whole of a thick upper arm --
+         and it therefore also takes in the outer chest and the front of
+         the shoulder. For a tee that does no harm, because the cuff is
+         two units out and everything near the body is well inside it.
+         For a sleeveless top the cuff is a tenth of a unit out, so the
+         same plane slices across the chest, and everything it catches
+         goes: the whole shoulder with it. What was left was a panel up
+         the front and one up the back joined at the neck -- which is why
+         the tank has been rendering as a halter.
+
+         So: inside the cuff, OR not really an arm. Past a radius of
+         0.95 from the arm's own axis it is the body, and the sleeve has
+         no business cutting it -- but only NEAR the shoulder. The axis
+         is the straight line from shoulder to fingertip, and a real arm
+         leaves it: by the forearm the skin is more than 0.95 off that
+         line too, so an escape with no reach limit kept the sleeve all
+         the way down and hung two sheets of cloth beside the arms. */
+      d.push(Math.max(cuffT - a[0],
+                      Math.min(a[1] - 0.95, 1.60 - a[0]) * 2.0));
     }
     return Math.min.apply(null, d);
   };
@@ -106,6 +124,12 @@ export function bottoms(B, index, nrm, style){
     const f = B.fracP(p);
     return Math.min((f - o.hem) * B.h, (o.waist - f) * B.h);
   };
+  /* No bands on the bottoms. Lofting one onto every boundary loop here
+     produced two long ribbons down the outside of the legs: the cut
+     leaves boundaries that are not hems, and a band only belongs on a
+     loop that is one. Tops are cut at the neck, the cuffs and the hem
+     and have no such loops; the bottoms want the loops identified
+     properly first. */
   return shell(B, index, nrm, field, th, { relax: .22, smooth: 2, drape: true, edgeLift: 1.0 });
 }
 
