@@ -1150,3 +1150,137 @@ export function obscurance(P, N, index, opt){
     ao[i] = Math.max(floor, 1 - Math.min(1, ao[i] * 2.6) * strength);
   return ao;
 }
+
+/* ------------------------------------------------- occlusion, crossways
+
+   obscurance() above only knows about the surface it is handed, so it
+   can darken the crease under a chin but not the shadow a sleeve throws
+   on the arm inside it, or the one hair throws on a forehead. Those are
+   the contact shadows that place one thing ON another, and without them
+   a garment floats and hair sits on a head like a hat on a peg.
+
+   The usual answer is a screen-space pass, which means pulling in a
+   post-processing chain, a stack of full-resolution render targets and
+   a per-frame cost on a phone. This does it once, at build time, in the
+   one place where every part of the figure is already in memory
+   together: voxelise all of them into a coarse occupancy grid, then
+   from each vertex fire a handful of short rays into the hemisphere and
+   count how many run into something.
+
+   It is coarse on purpose. Contact shadows are a low-frequency effect
+   -- what matters is that the arm under a sleeve is darker than the arm
+   out of it, not the exact shape of the edge -- and the fine creases
+   are obscurance()'s job. */
+export function buildOcclusionGrid(occluders, opt){
+  const o = opt || {};
+  let lo = [Infinity,Infinity,Infinity], hi = [-Infinity,-Infinity,-Infinity];
+  for(const m of occluders){
+    const Q = m.position;
+    for(let i = 0; i < Q.length; i += 3) for(let c = 0; c < 3; c++){
+      const q = Q[i+c]; if(q < lo[c]) lo[c] = q; if(q > hi[c]) hi[c] = q;
+    }
+  }
+  if(!isFinite(lo[0])) return null;
+  const pad = 0.2;
+  for(let c = 0; c < 3; c++){ lo[c] -= pad; hi[c] += pad; }
+  const G = o.grid == null ? 64 : o.grid;
+  const sz = Math.max(hi[0]-lo[0], hi[1]-lo[1], hi[2]-lo[2]) / G;
+  const nx = Math.max(1, Math.ceil((hi[0]-lo[0]) / sz));
+  const ny = Math.max(1, Math.ceil((hi[1]-lo[1]) / sz));
+  const nz = Math.max(1, Math.ceil((hi[2]-lo[2]) / sz));
+  const occ = new Uint8Array(nx * ny * nz);
+  /* Marking vertices rather than rasterising triangles. Every mesh here
+     is dense next to the cell size, so a surface comes out solid; a
+     garment hem is the one thin thing and its own cut vertices sit
+     along it.
+
+     Density, not a flag. Hair is not a wall: a cell with hair cards in
+     it is mostly air, and treating it as solid put the whole head of
+     hair round the face as an occluder and turned the face murky. A
+     weight per occluder keeps a shirt solid and lets light through
+     hair. */
+  for(const m of occluders){
+    const Q = m.position;
+    const w = Math.round(255 * (m.weight == null ? 1 : m.weight));
+    for(let i = 0; i < Q.length; i += 3){
+      const x = (Q[i]   - lo[0]) / sz | 0;
+      const y = (Q[i+1] - lo[1]) / sz | 0;
+      const z = (Q[i+2] - lo[2]) / sz | 0;
+      if(x < 0 || y < 0 || z < 0 || x >= nx || y >= ny || z >= nz) continue;
+      const k = (z * ny + y) * nx + x;
+      if(w > occ[k]) occ[k] = w;
+    }
+  }
+  return { occ, lo, sz, nx, ny, nz };
+}
+
+/* Fire a handful of short rays from every vertex and count what they
+   run into. Built once for the whole figure and queried per part --
+   voxelising the figure again for each part was most of the cost. */
+export function sampleOcclusion(grid, P, N, opt){
+  if(!grid) return null;
+  const o = opt || {};
+  const { occ, lo, sz, nx, ny, nz } = grid;
+  const n = P.length / 3;
+  const ND = 8;
+  const D = new Float64Array(ND * 3);
+  for(let k = 0; k < ND; k++){
+    const a2 = k * 2.399963;                      // golden angle
+    const t = (k + .5) / ND;
+    const r = Math.sqrt(1 - t);
+    D[k*3] = Math.cos(a2) * r; D[k*3+1] = Math.sin(a2) * r; D[k*3+2] = Math.sqrt(t);
+  }
+  /* The rays start a cell and a bit off the surface, and their first
+     sample is well clear of it. A cell is a quarter of a unit here, so
+     a ray leaving at a shallow angle from a cheek lands straight back
+     in the voxel the cheek itself put there -- the surface occludes
+     itself and the whole face goes grey. That is what the first attempt
+     did. */
+  const STEPS = o.steps == null ? [1.7, 3.1, 5.2, 7.8] : o.steps;
+  const BIAS = o.bias == null ? 1.25 : o.bias;
+  const NS = STEPS.length;
+  const reach = o.reach == null ? 1.1 : o.reach;
+  const out = new Float32Array(n);
+  const lx = lo[0], ly = lo[1], lz = lo[2], inv = 1 / sz;
+  for(let i = 0; i < n; i++){
+    const nxv = N[i*3], nyv = N[i*3+1], nzv = N[i*3+2];
+    const px = P[i*3]   + nxv * BIAS * sz,
+          py = P[i*3+1] + nyv * BIAS * sz,
+          pz = P[i*3+2] + nzv * BIAS * sz;
+    const ax = Math.abs(nxv) < .9 ? 1 : 0, ay = Math.abs(nxv) < .9 ? 0 : 1;
+    let tx = -nzv*ay, ty = nzv*ax, tz = nxv*ay - nyv*ax;
+    const L = Math.hypot(tx,ty,tz) || 1; tx/=L; ty/=L; tz/=L;
+    const bx = nyv*tz - nzv*ty, by = nzv*tx - nxv*tz, bz = nxv*ty - nyv*tx;
+    let hits = 0;
+    for(let k = 0; k < ND; k++){
+      const d0 = D[k*3], d1 = D[k*3+1], d2 = D[k*3+2];
+      const dx = tx*d0 + bx*d1 + nxv*d2;
+      const dy = ty*d0 + by*d1 + nyv*d2;
+      const dz = tz*d0 + bz*d1 + nzv*d2;
+      let best = 0;
+      for(let s = 0; s < NS; s++){
+        const t2 = STEPS[s] * sz;
+        if(t2 > reach) break;
+        const x = (px + dx*t2 - lx) * inv | 0;
+        if(x < 0 || x >= nx) break;
+        const y = (py + dy*t2 - ly) * inv | 0;
+        if(y < 0 || y >= ny) break;
+        const z = (pz + dz*t2 - lz) * inv | 0;
+        if(z < 0 || z >= nz) break;
+        const dens = occ[(z * ny + y) * nx + x] * (1/255);
+        if(dens > 0){
+          const v2 = dens * (1 - s / NS);
+          if(v2 > best) best = v2;
+          if(dens > .9) break;              // solid; nothing behind matters
+        }
+      }
+      hits += best;
+    }
+    out[i] = hits / ND;
+  }
+  const strength = o.strength == null ? .75 : o.strength;
+  const floor = o.floor == null ? .40 : o.floor;
+  for(let i = 0; i < n; i++)
+    out[i] = Math.max(floor, 1 - Math.min(1, out[i] * 1.6) * strength);
+  return out;
+}

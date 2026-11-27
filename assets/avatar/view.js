@@ -7,7 +7,8 @@
 import * as THREE from '../three.module.js';
 import { loadBase, applyMix, groupCentre, styliseHead, shapeFor, sliderMix, MACRO_NEUTRAL }
   from './avatar.js';
-import { makeBody, armsDown, bodyNormals, refine, obscurance } from './body.js';
+import { makeBody, armsDown, bodyNormals, refine, obscurance,
+         buildOcclusionGrid, sampleOcclusion } from './body.js';
 import { top as mkTop, bottoms as mkBottom, skirt as mkSkirt, shoes as mkShoes }
   from './wardrobe.js';
 import { scalp, buildHair, buildBrows, buildLashes } from './hairgen.js';
@@ -632,7 +633,7 @@ export async function mount(canvas, opts){
     roughness:.34, metalness:0, clearcoat:.85,
     clearcoatRoughness:.22, envMapIntensity:1.2, side:THREE.DoubleSide });
 
-  function update(fig, kibbeTypeId){
+  function update(fig, kibbeTypeId, opt2){
     if(!alive) return 0;
     const t0 = performance.now();
     /* The Kibbe result is the starting shape; the member's own sliders
@@ -667,51 +668,46 @@ export async function mount(canvas, opts){
     group = new THREE.Group();
     const hairHex = HAIRC[fig.hairColor] || HAIRC.h2;
 
+    /* Every part is built first and drawn afterwards, because the
+       occlusion has to see all of them at once: the shadow a sleeve
+       throws on the arm inside it cannot be worked out from the sleeve
+       alone or from the arm alone. */
+    const parts = [];
+    const crease = (d, st, fl) => {
+      if(!d) return d;
+      const ao = obscurance(d.position, d.normal, d.index,
+                            { strength: st == null ? .55 : st, floor: fl == null ? .62 : fl });
+      d.__crease = ao;
+      return d;
+    };
+    const add = (d, mat, tag, shaded, soft) => {
+      if(!d) return; if(only && tag !== only) return;
+      parts.push({ d, mat, shaded: shaded !== false, soft: !!soft });
+    };
+
     if(!only || only === 'body'){
       // One level of subdivision, head only -- see refine() for why the
       // new vertices do not go at the midpoints of the edges.
       const R = refine(body, B.index, nrm, B.uv, i => body[i*3+1] > headCut);
-      /* Crease darkening, computed on the refined mesh and carried as a
-         vertex colour, which the skin shader multiplies into the diffuse
-         before anything else touches it. */
-      const ao = obscurance(R.position, R.normal, R.index, { strength:.85, floor:.42 });
-      const aoC = new Float32Array(ao.length * 3);
-      for(let i = 0; i < ao.length; i++) aoC[i*3] = aoC[i*3+1] = aoC[i*3+2] = ao[i];
-      const bodyMesh = geom({ position:R.position, normal:R.normal,
-                              uv:R.uv, index:R.index, color:aoC });
-      bodyMesh.material = skinMat(fig.skin, hairHex);
-      group.add(bodyMesh);
+      crease(R, .85, .42);
+      parts.push({ d: R, mat: skinMat(fig.skin, hairHex), shaded: true });
     }
-
-    /* Garments get the same crease darkening. Cloth is mostly where the
-       folds are, and a fold with no shadow in it is a painted line. */
-    const withAO = (d, st, fl) => {
-      if(!d) return d;
-      const ao = obscurance(d.position, d.normal, d.index,
-                            { strength: st == null ? .55 : st, floor: fl == null ? .62 : fl });
-      const c = new Float32Array(ao.length * 3);
-      for(let i = 0; i < ao.length; i++) c[i*3] = c[i*3+1] = c[i*3+2] = ao[i];
-      d.color = c;
-      return d;
-    };
-    const add = (d, mat, tag) => { if(!d) return; if(only && tag !== only) return;
-      const m = geom(d); m.material = mat; group.add(m); };
     const wear = fig.wear || {};
     const col = slot => GARMC[(wear[slot] || {}).color] == null ? 0x8a8f98 : GARMC[wear[slot].color];
     const sty = slot => (wear[slot] || {}).style;
 
     const bs = sty('bottom');
-    if(bs && SKIRT[bs]) add(withAO(mkSkirt(Bd2, B.index, nrm, SKIRT[bs])), clothMat(col('bottom')), 'bottom');
-    else if(bs && BOTTOM[bs]) add(withAO(mkBottom(Bd2, B.index, nrm, BOTTOM[bs])), clothMat(col('bottom'), .72), 'bottom');
+    if(bs && SKIRT[bs]) add(crease(mkSkirt(Bd2, B.index, nrm, SKIRT[bs])), clothMat(col('bottom')), 'bottom');
+    else if(bs && BOTTOM[bs]) add(crease(mkBottom(Bd2, B.index, nrm, BOTTOM[bs])), clothMat(col('bottom'), .72), 'bottom');
     const ts = sty('top');
-    if(ts && TOP[ts]) add(withAO(mkTop(Bd2, B.index, nrm, TOP[ts])), clothMat(col('top')), 'top');
+    if(ts && TOP[ts]) add(crease(mkTop(Bd2, B.index, nrm, TOP[ts])), clothMat(col('top')), 'top');
     const ss = sty('shoes');
-    add(withAO(mkShoes(Bd2, SHOE[ss] || 'flat'), .7, .5), leather(ss ? col('shoes') : 0x16161a), 'shoes');
+    add(crease(mkShoes(Bd2, SHOE[ss] || 'flat'), .7, .5), leather(ss ? col('shoes') : 0x16161a), 'shoes');
 
     /* The brows, as strands on the skin rather than as a smudge in the
        texture. They are built from the same positions and normals the
        body mesh uses, so they stay seated through every slider. */
-    add(buildBrows(body, nrm, eLs, eRs, 11), browMat(hairHex), 'brows');
+    add(buildBrows(body, nrm, eLs, eRs, 11), browMat(hairHex), 'brows', false);
 
     // the eyes, from the morphed helper spheres
     for(const g of ['helper-l-eye', 'helper-r-eye']){
@@ -731,7 +727,7 @@ export async function mount(canvas, opts){
         { ids: B.helpers['helper-' + sd + '-eyelashes-1'], upper:false,
           count:62, len:.15, wid:.020, up:.70, fwd:.70, sweep:.35, curl:.10 },
       ], c, rad, 17, c[0]);
-      add(lash, lashMat(), 'lashes');
+      add(lash, lashMat(), 'lashes', false);
     }
 
     const hs = HAIR[fig.hair];
@@ -741,8 +737,42 @@ export async function mount(canvas, opts){
       const cap = scalp(body, B.index, nrm, (eL2[1]+eR2[1])*.5, { front:.76, thick:.030 });
       if(cap){
         add({ position:cap.pos, normal:cap.nrm, index:cap.tris, n:cap.pos.length/3 },
-            capMat(hairHex));
-        add(buildHair(cap.pos, cap.nrm, cap.tris, hs, 7), cardMat(hairHex));
+            capMat(hairHex), null, false);
+        add(buildHair(cap.pos, cap.nrm, cap.tris, hs, 7), cardMat(hairHex), null, false, true);
+      }
+    }
+
+    /* Now that every part exists, the contact shadows. Everything is an
+       occluder -- hair occludes a forehead, a sleeve occludes the arm in
+       it, a shoe occludes an ankle -- but only the parts whose material
+       reads a vertex colour take the result. */
+    {
+      /* The contact shadows are the one part of a rebuild that is not
+         nearly free -- a couple of hundred milliseconds -- so a caller
+         dragging a slider can ask for them to be skipped and put them
+         back when the drag ends.
+           v.update(fig, type, { fast: true })
+         Hair is weighted down: a cell with hair cards in it is mostly
+         air, and at full weight the head of hair round a face occludes
+         the whole face rather than casting a fringe shadow on it. */
+      const fast = !!(opt2 && opt2.fast);
+      const grid = fast ? null : buildOcclusionGrid(parts.map(p2 => ({
+        position: p2.d.position, weight: p2.soft ? .40 : 1 })));
+      for(const p2 of parts){
+        if(!p2.shaded) continue;
+        const g2 = sampleOcclusion(grid, p2.d.position, p2.d.normal,
+                                   { strength:.70, floor:.44, reach:1.2 });
+        const cr = p2.d.__crease;
+        const n2 = p2.d.position.length / 3;
+        const c = new Float32Array(n2 * 3);
+        for(let i = 0; i < n2; i++){
+          const v2 = (g2 ? g2[i] : 1) * (cr ? cr[i] : 1);
+          c[i*3] = c[i*3+1] = c[i*3+2] = v2;
+        }
+        p2.d.color = c;
+      }
+      for(const p2 of parts){
+        const m = geom(p2.d); m.material = p2.mat; group.add(m);
       }
     }
 
