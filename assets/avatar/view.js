@@ -7,7 +7,7 @@
 import * as THREE from '../three.module.js';
 import { loadBase, applyMix, groupCentre, styliseHead, shapeFor, sliderMix, MACRO_NEUTRAL }
   from './avatar.js';
-import { makeBody, armsDown, bodyNormals, refine } from './body.js';
+import { makeBody, armsDown, bodyNormals, refine, obscurance } from './body.js';
 import { top as mkTop, bottoms as mkBottom, skirt as mkSkirt, shoes as mkShoes }
   from './wardrobe.js';
 import { scalp, buildHair, buildBrows, buildLashes } from './hairgen.js';
@@ -376,7 +376,44 @@ export function withSkinScatter(THREE, m, lut){
       .replace('#include <lights_physical_pars_fragment>', chunk);
   };
   const key = m.customProgramCacheKey;
-  m.customProgramCacheKey = () => 'sss|' + (key ? key() : '');
+  m.customProgramCacheKey = () => 'sss|' + (key ? key.call(m) : '');
+  return m;
+}
+
+/* ------------------------------------------------------- hair, backlit
+
+   Hair is not opaque. A strand is a translucent tube, and light coming
+   from behind a head goes THROUGH the hair and arrives at the eye as a
+   warm halo round the silhouette -- which is most of what makes hair in
+   a photograph look like hair and not like a dark shape. A surface
+   shader gives none of it: light from behind means the normal faces
+   away, which means nothing at all, so the rim light that is pointed at
+   the back of this head has been doing nothing but outline it.
+
+   The real thing is a three-lobe scattering model. This is the lobe
+   that matters: the light transmitted straight through, which peaks when
+   the viewer is looking back along the beam. It costs one dot product
+   and one power, and it is what the rim light was for. */
+export function withTransmit(THREE, m, tint, power, strength){
+  const prev = m.onBeforeCompile;
+  m.onBeforeCompile = sh => {
+    if(prev) prev(sh);
+    sh.uniforms.ttTint = { value: new THREE.Color(tint) };
+    sh.uniforms.ttPower = { value: power };
+    sh.uniforms.ttStrength = { value: strength };
+    sh.fragmentShader = sh.fragmentShader.replace('#include <common>',
+      '#include <common>\nuniform vec3 ttTint; uniform float ttPower; uniform float ttStrength;');
+    const chunk = THREE.ShaderChunk.lights_physical_pars_fragment.replace(
+      'reflectedLight.directDiffuse += irradiance * BRDF_Lambert( material.diffuseColor );',
+      'reflectedLight.directDiffuse += irradiance * BRDF_Lambert( material.diffuseColor );\n' +
+      '\t{ float tt = max( dot( geometryViewDir, -directLight.direction ), 0.0 );\n' +
+      '\t  reflectedLight.directDiffuse += directLight.color * ttTint * ttStrength\n' +
+      '\t                                * pow( tt, ttPower ) * material.diffuseColor; }');
+    sh.fragmentShader = sh.fragmentShader
+      .replace('#include <lights_physical_pars_fragment>', chunk);
+  };
+  const key = m.customProgramCacheKey;
+  m.customProgramCacheKey = () => 'tt' + power + '_' + strength + '|' + (key ? key.call(m) : '');
   return m;
 }
 
@@ -521,6 +558,7 @@ export async function mount(canvas, opts){
   const skinMat = (skinKey, browHex) => {
     const m = new THREE.MeshPhysicalMaterial({
       color:new THREE.Color().setRGB(...(SKIN[skinKey] || SKIN.s4)),
+      vertexColors:true,
       roughness:1, metalness:0, roughnessMap:SK.rough, normalMap:SK.normal,
       normalScale:new THREE.Vector2(.34,.34), clearcoat:.18, clearcoatRoughness:.52,
       sheen:.5, sheenRoughness:.9, sheenColor:new THREE.Color(0xff9a80),
@@ -548,14 +586,15 @@ export async function mount(canvas, opts){
     };
     return withSkinScatter(THREE, withDetail(THREE, m, PORE, 34, .95), SSS);
   };
-  const cardMat = hex => new THREE.MeshPhysicalMaterial({
+  const cardMat = hex => withTransmit(THREE, new THREE.MeshPhysicalMaterial({
     color:hex, map:STRAND, alphaTest:.40, transparent:false, vertexColors:true,
     roughness:.62, metalness:0, anisotropy:.45, anisotropyRotation:Math.PI/2,
     /* The hair's highlight is the one place it can go wrong in a hurry.
        Left at the default specular strength the anisotropic lobe under a
        strong rim light turns the crown white, and a white crown on brown
        hair reads as a bald patch. */
-    sheen:0, specularIntensity:.30, envMapIntensity:.10, side:THREE.DoubleSide });
+    sheen:0, specularIntensity:.30, envMapIntensity:.10, side:THREE.DoubleSide }),
+    0xffb070, 2.8, 2.00);
   /* The brow strands. Dark, slightly cooler than the hair, barely
      reflective -- a brow that catches the environment map reads as wet
      paint. Lit mostly by the key, which is what gives the strands their
@@ -583,12 +622,14 @@ export async function mount(canvas, opts){
      one texel for the whole shirt, which is what the roughness map had
      been doing. */
   const clothMat = (hex, rough) => new THREE.MeshPhysicalMaterial({
-    color:hex, roughness:rough == null ? .86 : rough, metalness:0,
+    color:hex, vertexColors:true,
+    roughness:rough == null ? .86 : rough, metalness:0,
     roughnessMap:SK.rough, normalMap:FABRIC,
     normalScale:new THREE.Vector2(.20,.20), sheen:.7, sheenRoughness:.75,
     sheenColor:new THREE.Color(0xffffff), envMapIntensity:.85, side:THREE.DoubleSide });
   const leather = hex => new THREE.MeshPhysicalMaterial({
-    color:hex == null ? 0x16161a : hex, roughness:.34, metalness:0, clearcoat:.85,
+    color:hex == null ? 0x16161a : hex, vertexColors:true,
+    roughness:.34, metalness:0, clearcoat:.85,
     clearcoatRoughness:.22, envMapIntensity:1.2, side:THREE.DoubleSide });
 
   function update(fig, kibbeTypeId){
@@ -630,12 +671,29 @@ export async function mount(canvas, opts){
       // One level of subdivision, head only -- see refine() for why the
       // new vertices do not go at the midpoints of the edges.
       const R = refine(body, B.index, nrm, B.uv, i => body[i*3+1] > headCut);
+      /* Crease darkening, computed on the refined mesh and carried as a
+         vertex colour, which the skin shader multiplies into the diffuse
+         before anything else touches it. */
+      const ao = obscurance(R.position, R.normal, R.index, { strength:.85, floor:.42 });
+      const aoC = new Float32Array(ao.length * 3);
+      for(let i = 0; i < ao.length; i++) aoC[i*3] = aoC[i*3+1] = aoC[i*3+2] = ao[i];
       const bodyMesh = geom({ position:R.position, normal:R.normal,
-                              uv:R.uv, index:R.index });
+                              uv:R.uv, index:R.index, color:aoC });
       bodyMesh.material = skinMat(fig.skin, hairHex);
       group.add(bodyMesh);
     }
 
+    /* Garments get the same crease darkening. Cloth is mostly where the
+       folds are, and a fold with no shadow in it is a painted line. */
+    const withAO = (d, st, fl) => {
+      if(!d) return d;
+      const ao = obscurance(d.position, d.normal, d.index,
+                            { strength: st == null ? .55 : st, floor: fl == null ? .62 : fl });
+      const c = new Float32Array(ao.length * 3);
+      for(let i = 0; i < ao.length; i++) c[i*3] = c[i*3+1] = c[i*3+2] = ao[i];
+      d.color = c;
+      return d;
+    };
     const add = (d, mat, tag) => { if(!d) return; if(only && tag !== only) return;
       const m = geom(d); m.material = mat; group.add(m); };
     const wear = fig.wear || {};
@@ -643,12 +701,12 @@ export async function mount(canvas, opts){
     const sty = slot => (wear[slot] || {}).style;
 
     const bs = sty('bottom');
-    if(bs && SKIRT[bs]) add(mkSkirt(Bd2, B.index, nrm, SKIRT[bs]), clothMat(col('bottom')), 'bottom');
-    else if(bs && BOTTOM[bs]) add(mkBottom(Bd2, B.index, nrm, BOTTOM[bs]), clothMat(col('bottom'), .72), 'bottom');
+    if(bs && SKIRT[bs]) add(withAO(mkSkirt(Bd2, B.index, nrm, SKIRT[bs])), clothMat(col('bottom')), 'bottom');
+    else if(bs && BOTTOM[bs]) add(withAO(mkBottom(Bd2, B.index, nrm, BOTTOM[bs])), clothMat(col('bottom'), .72), 'bottom');
     const ts = sty('top');
-    if(ts && TOP[ts]) add(mkTop(Bd2, B.index, nrm, TOP[ts]), clothMat(col('top')), 'top');
+    if(ts && TOP[ts]) add(withAO(mkTop(Bd2, B.index, nrm, TOP[ts])), clothMat(col('top')), 'top');
     const ss = sty('shoes');
-    add(mkShoes(Bd2, SHOE[ss] || 'flat'), leather(ss ? col('shoes') : 0x16161a), 'shoes');
+    add(withAO(mkShoes(Bd2, SHOE[ss] || 'flat'), .7, .5), leather(ss ? col('shoes') : 0x16161a), 'shoes');
 
     /* The brows, as strands on the skin rather than as a smudge in the
        texture. They are built from the same positions and normals the

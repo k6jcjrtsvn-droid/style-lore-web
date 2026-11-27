@@ -295,6 +295,19 @@ export function drapeBase(B, index){
      applied, so where the clamp does fire it lifts a patch rather than a
      point. The raw value is taken back afterwards wherever it was
      larger, so nothing is ever left pierced. */
+  /* The clamp measures against the RAW skin, not a smoothed copy of it.
+
+     Smoothing the reference is the obvious way to stop a nipple
+     printing through a fitted tee -- take it out of what the clamp
+     protects and the cloth closes over it. It was tried at two passes
+     and at six, and both let the body through somewhere else: at six
+     the shoulder (which at this mesh density is a sharply curved cap,
+     not the broad thing it looks) sank under its own smoothing and the
+     arm came through the sleeve; at two the knees came through the
+     leggings, which are the thinnest garment and have the least to
+     spare. One reference serves every garment, so it has to be safe for
+     the thinnest. The nipple stays, and the crease darkening under it
+     is turned down instead. */
   const push = new Float64Array(n), tmp2 = new Float64Array(n);
   const clampOut = margin => {
     for(let i = 0; i < n; i++){
@@ -478,11 +491,49 @@ export function shell(B, index, nrm, field, thick, opt){
     const [i, j] = k.split(':');
     onEdgeV[+i] = 1; onEdgeV[+j] = 1;
   }
-  for(let i = 0; i < P.length; i += 3){
-    const v3 = i/3;
-    let t = typeof thick === 'function' ? thick([P[i], P[i+1], P[i+2]]) : thick;
-    if(onEdgeV[v3]) t *= (o.edgeLift == null ? 1.75 : o.edgeLift);
-    P[i] += N[i]*t; P[i+1] += N[i+1]*t; P[i+2] += N[i+2]*t;
+  /* Offsetting a surface outward folds it wherever the surface is
+     concave and turns tighter than the offset. Under a breast, in an
+     armpit, behind a knee, the cloth passes through itself and comes
+     back out, and the pinch of back-facing surface renders as a hard
+     black crescent -- which the crease darkening then obligingly makes
+     darker still, because as far as it can tell that really is a very
+     deep fold.
+
+     So the offset is capped by the radius the surface actually turns
+     at. The Laplacian gives it: if the neighbours sit a distance d
+     above the tangent plane at a mean spacing h, the surface is turning
+     at about h squared over 2d, and an offset past half of that is a
+     fold. Convex vertices are not capped -- offsetting outward from a
+     convex surface never self-intersects. */
+  {
+    const nV = P.length / 3;
+    const cnt = new Uint16Array(nV);
+    const sx = new Float64Array(nV), sy = new Float64Array(nV), sz = new Float64Array(nV);
+    const sl = new Float64Array(nV);
+    const bump = (a, b) => {
+      const dx = P[b*3] - P[a*3], dy = P[b*3+1] - P[a*3+1], dz = P[b*3+2] - P[a*3+2];
+      sx[a] += dx; sy[a] += dy; sz[a] += dz;
+      sl[a] += Math.hypot(dx, dy, dz); cnt[a]++;
+    };
+    for(let f = 0; f < T.length; f += 3){
+      const a = T[f], b = T[f+1], c = T[f+2];
+      bump(a,b); bump(b,a); bump(b,c); bump(c,b); bump(c,a); bump(a,c);
+    }
+    for(let i = 0; i < P.length; i += 3){
+      const v3 = i/3;
+      let t = typeof thick === 'function' ? thick([P[i], P[i+1], P[i+2]]) : thick;
+      if(onEdgeV[v3]) t *= (o.edgeLift == null ? 1.75 : o.edgeLift);
+      const c = cnt[v3];
+      if(c){
+        const d = (sx[v3]*N[i] + sy[v3]*N[i+1] + sz[v3]*N[i+2]) / c;
+        if(d > 1e-9){                                   // concave here
+          const h = sl[v3] / c;
+          const lim = 0.5 * (h * h) / (2 * d);
+          if(lim < t) t = lim;
+        }
+      }
+      P[i] += N[i]*t; P[i+1] += N[i+1]*t; P[i+2] += N[i+2]*t;
+    }
   }
 
   /* --------------------------------------------------------- the drape
@@ -1011,4 +1062,91 @@ export function refine(pos, index, nrm, uv, inRegion){
     T.push(r, mr, mq,  mr, p, q,  mr, q, mq);
   }
   return { position: P, normal: N, uv: UV, index: T, n: P.length/3 };
+}
+
+/* ---------------------------------------------------------- obscurance
+
+   Where a surface folds into itself, less of the sky reaches it. That
+   darkening is most of what tells an eye how deep a crease is, and
+   without it every fold -- the one under a chin, the one at an armpit,
+   the one where a sleeve ends -- is drawn entirely by a light that
+   happens to be pointing at it, and reads as paint rather than as depth.
+
+   True ambient occlusion means tracing rays, which is not happening in
+   a figure that rebuilds in a second. This is the cheap relative: for
+   each vertex, look at the surface a short way around it and ask how
+   much of it sits ABOVE the tangent plane. On a convex surface the
+   answer is none and the vertex is open to the sky; in a crease the
+   answer is most of it. It catches every fold the mesh actually has,
+   which is what matters, and it costs one pass over the adjacency.
+
+   Not a substitute for the real thing: it cannot know about the hair
+   above the forehead or the sleeve over the arm, because those are
+   other meshes. It only knows about the surface it is given. */
+export function obscurance(P, N, index, opt){
+  const o = opt || {};
+  const n = P.length / 3;
+  const adj = buildAdjacency(index, n);
+  // the scale the effect works at: creases smaller than this are
+  // cavities, anything larger is just shape
+  let span = 0;
+  {
+    let lo = [Infinity,Infinity,Infinity], hi = [-Infinity,-Infinity,-Infinity];
+    for(let i = 0; i < n; i++) for(let c = 0; c < 3; c++){
+      const q = P[i*3+c]; if(q < lo[c]) lo[c] = q; if(q > hi[c]) hi[c] = q;
+    }
+    span = Math.max(hi[0]-lo[0], hi[1]-lo[1], hi[2]-lo[2]) || 1;
+  }
+  const R = (o.radius == null ? .035 : o.radius) * span;
+  const RINGS = o.rings == null ? 3 : o.rings;
+  const ao = new Float32Array(n);
+  const mark = new Int32Array(n).fill(-1);
+  const queue = new Int32Array(1024);
+  const depth = new Int32Array(1024);
+  for(let i = 0; i < n; i++){
+    let head = 0, tail = 0;
+    queue[tail] = i; depth[tail] = 0; tail++;
+    mark[i] = i;
+    let acc = 0, w = 0;
+    while(head < tail){
+      const j = queue[head], d = depth[head]; head++;
+      if(j !== i){
+        const dx = P[j*3] - P[i*3], dy = P[j*3+1] - P[i*3+1], dz = P[j*3+2] - P[i*3+2];
+        const L = Math.hypot(dx, dy, dz);
+        if(L > 1e-9){
+          const up = (dx*N[i*3] + dy*N[i*3+1] + dz*N[i*3+2]) / L;
+          // near things matter more, and only what is ABOVE the plane
+          const fall = 1 / (1 + (L / R) * (L / R));
+          acc += Math.max(0, up) * fall;
+          w += fall;
+        }
+      }
+      if(d >= RINGS) continue;
+      for(let t = adj.start[j]; t < adj.start[j+1]; t++){
+        const k = adj.list[t];
+        if(mark[k] === i) continue;
+        mark[k] = i;
+        if(tail >= queue.length) break;
+        queue[tail] = k; depth[tail] = d + 1; tail++;
+      }
+    }
+    ao[i] = w > 0 ? acc / w : 0;
+  }
+  // and smooth it, because a cavity term read off a coarse mesh is noisy
+  const tmp = new Float32Array(n);
+  for(let pass = 0; pass < 2; pass++){
+    for(let i = 0; i < n; i++){
+      const a = adj.start[i], b = adj.start[i+1];
+      if(b <= a){ tmp[i] = ao[i]; continue; }
+      let acc = 0;
+      for(let t = a; t < b; t++) acc += ao[adj.list[t]];
+      tmp[i] = ao[i] * .4 + (acc / (b - a)) * .6;
+    }
+    ao.set(tmp);
+  }
+  const strength = o.strength == null ? 1.0 : o.strength;
+  const floor = o.floor == null ? .35 : o.floor;
+  for(let i = 0; i < n; i++)
+    ao[i] = Math.max(floor, 1 - Math.min(1, ao[i] * 2.6) * strength);
+  return ao;
 }
