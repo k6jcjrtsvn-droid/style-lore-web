@@ -40,39 +40,131 @@ const GARMC = { c1:0x2A2622, c2:0x4A4F5C, c3:0x3E5C76, c4:0x6E8CA0, c5:0x7D9D7A,
    catch the highlight. A catchlight is most of what makes a face look
    alive, and a face with none looks dead at any resolution. */
 function eyeTex(THREE, hex){
-  const N = 256, c = document.createElement('canvas'); c.width = c.height = N;
+  const N = 512, c = document.createElement('canvas'); c.width = c.height = N;
   const g = c.getContext('2d');
   const col = new THREE.Color(hex);
   const hx = '#' + col.getHexString();
-  const dark = '#' + col.clone().multiplyScalar(.34).getHexString();
-  const lit  = '#' + col.clone().lerp(new THREE.Color(0xffffff), .42).getHexString();
-  g.fillStyle = '#d8d0c8'; g.fillRect(0, 0, N, N);
+  const dark = '#' + col.clone().multiplyScalar(.30).getHexString();
+  const lit  = '#' + col.clone().lerp(new THREE.Color(0xffffff), .50).getHexString();
+
+  /* The sclera is not white. It is a warm grey that goes pink into the
+     corners, and it has vessels in it. A pure white eyeball is the
+     single loudest tell in a rendered face -- it reads as a bead. */
+  g.fillStyle = '#ded6cd'; g.fillRect(0, 0, N, N);
   const warm = g.createLinearGradient(0, 0, N, 0);
-  warm.addColorStop(0, 'rgba(198,142,128,.55)');
+  warm.addColorStop(0,  'rgba(188,126,116,.62)');
   warm.addColorStop(.5, 'rgba(255,255,255,0)');
-  warm.addColorStop(1, 'rgba(198,142,128,.55)');
+  warm.addColorStop(1,  'rgba(188,126,116,.62)');
   g.fillStyle = warm; g.fillRect(0, 0, N, N);
   const cx = N/2, cy = N/2, IR = N*0.175;
-  const rg = g.createRadialGradient(cx, cy, IR*.22, cx, cy, IR);
-  rg.addColorStop(0, dark); rg.addColorStop(.40, hx);
-  rg.addColorStop(.84, lit); rg.addColorStop(1, dark);
-  g.fillStyle = rg; g.beginPath(); g.arc(cx, cy, IR, 0, 7); g.fill();
-  g.strokeStyle = 'rgba(0,0,0,.28)'; g.lineWidth = 1.0;
-  for(let i = 0; i < 120; i++){
-    const a = i / 120 * Math.PI * 2 + (i * 2654435761 % 97) / 97 * .06;
-    const r0 = IR * .32, r1 = IR * (.74 + (i % 7) * .03);
-    g.beginPath();
-    g.moveTo(cx + Math.cos(a)*r0, cy + Math.sin(a)*r0);
-    g.lineTo(cx + Math.cos(a)*r1, cy + Math.sin(a)*r1);
+  let seed = 0x9e3779b9;
+  const rnd = () => {
+    seed = (Math.imul(seed ^ (seed >>> 15), 2246822507) ^ 0x165667b1) >>> 0;
+    return seed / 4294967296;
+  };
+  g.lineCap = 'round';
+  for(let i = 0; i < 46; i++){                       // vessels
+    const side = i % 2 ? 1 : -1;
+    let a2 = cx + side * (IR * (1.5 + rnd() * 2.4));
+    let b2 = cy + (rnd() - .5) * N * .22;
+    g.strokeStyle = 'rgba(176,70,62,' + (.10 + rnd() * .20).toFixed(3) + ')';
+    g.lineWidth = .6 + rnd() * 1.1;
+    g.beginPath(); g.moveTo(a2, b2);
+    let ang = side > 0 ? Math.PI : 0;
+    for(let k = 0; k < 7; k++){
+      ang += (rnd() - .5) * .9;
+      a2 += Math.cos(ang) * (5 + rnd() * 11);
+      b2 += Math.sin(ang) * (5 + rnd() * 11);
+      g.lineTo(a2, b2);
+    }
     g.stroke();
   }
-  g.lineWidth = IR*.13; g.strokeStyle = 'rgba(8,4,12,.80)';
-  g.beginPath(); g.arc(cx, cy, IR*.95, 0, 7); g.stroke();
+
+  /* The iris, built from the back forwards: the dark pigment ring at the
+     rim, the stroma, the collarette, then the fibres over all of it. */
+  const rg = g.createRadialGradient(cx, cy, IR*.20, cx, cy, IR);
+  rg.addColorStop(0,   dark);
+  rg.addColorStop(.34, hx);
+  rg.addColorStop(.62, lit);
+  rg.addColorStop(.88, hx);
+  rg.addColorStop(1,   dark);
+  g.fillStyle = rg; g.beginPath(); g.arc(cx, cy, IR, 0, 7); g.fill();
+
+  for(let i = 0; i < 340; i++){                      // fibres
+    const a2 = i / 340 * Math.PI * 2 + rnd() * .05;
+    const r0 = IR * (.30 + rnd() * .10), r1 = IR * (.62 + rnd() * .34);
+    g.strokeStyle = rnd() < .5
+      ? 'rgba(0,0,0,' + (.10 + rnd() * .26).toFixed(3) + ')'
+      : 'rgba(255,255,255,' + (.05 + rnd() * .16).toFixed(3) + ')';
+    g.lineWidth = .5 + rnd() * 1.0;
+    g.beginPath();
+    g.moveTo(cx + Math.cos(a2)*r0, cy + Math.sin(a2)*r0);
+    const mid = (r0 + r1) * .5, wob = (rnd() - .5) * .10;
+    g.quadraticCurveTo(cx + Math.cos(a2 + wob)*mid, cy + Math.sin(a2 + wob)*mid,
+                       cx + Math.cos(a2)*r1,        cy + Math.sin(a2)*r1);
+    g.stroke();
+  }
+  // the collarette: the ruff where the pupil's muscle meets the stroma
+  g.strokeStyle = 'rgba(255,255,255,.13)'; g.lineWidth = IR*.055;
+  g.beginPath(); g.arc(cx, cy, IR*.42, 0, 7); g.stroke();
+  // and the limbal ring, which is what makes an iris sit IN an eye
+  g.lineWidth = IR*.16; g.strokeStyle = 'rgba(6,4,10,.85)';
+  g.beginPath(); g.arc(cx, cy, IR*.945, 0, 7); g.stroke();
   g.fillStyle = '#05030a';
-  g.beginPath(); g.arc(cx, cy, IR*.36, 0, 7); g.fill();
+  g.beginPath(); g.arc(cx, cy, IR*.27, 0, 7); g.fill();
+
+  /* The shadow the upper lid throws on the ball. The eye never rotates,
+     so this can be baked: without it the sclera is as bright at the top,
+     under the lid, as it is in the open, and the ball reads as sitting
+     on the face rather than in it. */
+  const lid = g.createLinearGradient(0, 0, 0, N*0.52);
+  lid.addColorStop(0,   'rgba(28,20,24,.80)');
+  lid.addColorStop(.55, 'rgba(32,24,28,.42)');
+  lid.addColorStop(1,   'rgba(40,30,34,0)');
+  g.fillStyle = lid; g.fillRect(0, 0, N, N*0.52);
   const t = new THREE.CanvasTexture(c);
   t.colorSpace = THREE.SRGBColorSpace;
+  t.anisotropy = 8;
   return t;
+}
+
+/* The cornea is a lens, and that is most of what an eye looks like.
+
+   The iris sits about three millimetres behind it in fluid that bends
+   light, so it is magnified, and it SHIFTS as the head turns -- when you
+   look at someone from the side you are not looking at their iris
+   straight on, you are looking at it through a prism. A flat painted
+   iris on a sphere has none of that: it turns rigidly with the ball and
+   reads as a printed decal, which is exactly what the eyes looked like.
+
+   The offset is done in the surface's own tangent frame, derived from
+   the screen derivatives, and it is faded out away from the iris so the
+   sclera and its vessels do not slide about with it. */
+function withIrisParallax(THREE, m, depth){
+  m.onBeforeCompile = sh => {
+    sh.uniforms.irisDepth = { value: depth };
+    sh.fragmentShader = sh.fragmentShader
+      .replace('#include <common>', '#include <common>\nuniform float irisDepth;')
+      .replace('#include <map_fragment>', [
+        '{',
+        '  vec3 V = normalize( vViewPosition );',
+        '  vec3 Nn = normalize( vNormal );',
+        '  vec3 dpx = dFdx( -vViewPosition ), dpy = dFdy( -vViewPosition );',
+        '  vec2 dux = dFdx( vMapUv ),        duy = dFdy( vMapUv );',
+        '  vec3 Tn = normalize( dpx * duy.y - dpy * dux.y );',
+        '  vec3 Bn = normalize( -dpx * duy.x + dpy * dux.x );',
+        '  vec2 vt = vec2( dot( V, Tn ), dot( V, Bn ) );',
+        // how far into the iris we are: 0 at the limbus, 1 at the pupil
+        '  float rr = length( vMapUv - vec2( 0.5 ) );',
+        '  float inIris = 1.0 - smoothstep( 0.14, 0.20, rr );',
+        '  vec2 uvp = vMapUv - vt * irisDepth * inIris;',
+        '  vec4 sampledDiffuseColor = texture2D( map, uvp );',
+        '  diffuseColor *= sampledDiffuseColor;',
+        '}',
+      ].join('\n'));
+  };
+  m.customProgramCacheKey = () => 'iris' + depth;
+  return m;
 }
 
 /* Fine detail, generated rather than downloaded.
@@ -184,6 +276,160 @@ export function withDetail(THREE, m, map, repeat, scale){
   return m;
 }
 
+/* ------------------------------------------------- pre-integrated skin
+
+   Skin is not opaque. Light goes into it, bounces around inside and
+   comes back out somewhere else, redder than it went in, because the
+   blood and the dermis eat the blue first. Every surface shader without
+   that reads as painted clay no matter how good its texture is, and that
+   -- not the resolution of anything -- is what has been making this face
+   look like a model of a face.
+
+   Doing it properly means blurring irradiance across the surface, which
+   on a phone is out of the question. Penner's pre-integrated skin gets
+   most of it for the price of one texture lookup: the scattering over a
+   sphere depends only on how the surface is lit and how sharply it is
+   curved, so both can be integrated ahead of time into a small table.
+   Flat skin lit head-on looks ordinary; skin that curves away from the
+   light -- the edge of a nostril, the rim of an ear, the top of a lip --
+   glows red into its own shadow, which is exactly where a person can
+   tell flesh from plastic.
+
+   The table is computed here rather than downloaded, from the six-
+   Gaussian diffusion profile that is the standard fit to measured
+   Caucasian dermis. It is 128x64 and costs nothing. */
+const SKIN_PROFILE = [
+  [0.0064, 0.233, 0.455, 0.649], [0.0484, 0.100, 0.336, 0.344],
+  [0.1870, 0.118, 0.198, 0.000], [0.5670, 0.113, 0.007, 0.007],
+  [1.9900, 0.358, 0.004, 0.000], [7.4100, 0.078, 0.000, 0.000],
+];
+const MM_PER_UNIT = 106;          // the figure is ~16 units for ~1.7 m
+const MAX_CURV = 0.25;            // 1/mm, i.e. a radius of 4 mm
+
+export function skinLUT(THREE){
+  const W = 128, H = 64;
+  const c = document.createElement('canvas'); c.width = W; c.height = H;
+  const g = c.getContext('2d');
+  const img = g.createImageData(W, H);
+  const prof = (d, out) => {
+    out[0] = out[1] = out[2] = 0;
+    for(const [v, r, gg, b] of SKIN_PROFILE){
+      const e = Math.exp(-(d*d) / (2*v)) / (2*Math.PI*v);
+      out[0] += r*e; out[1] += gg*e; out[2] += b*e;
+    }
+  };
+  const w = [0,0,0], lightAcc = [0,0,0], wAcc = [0,0,0];
+  for(let y = 0; y < H; y++){
+    const curv = (y + .5) / H * MAX_CURV;
+    const R = curv > 1e-5 ? 1 / curv : 1e5;         // mm
+    for(let x = 0; x < W; x++){
+      const cosT = (x + .5) / W * 2 - 1;
+      const theta = Math.acos(Math.max(-1, Math.min(1, cosT)));
+      lightAcc[0] = lightAcc[1] = lightAcc[2] = 0;
+      wAcc[0] = wAcc[1] = wAcc[2] = 0;
+      for(let a = -Math.PI/2; a <= Math.PI/2; a += 0.0314){
+        const diffuse = Math.max(0, Math.cos(theta + a));
+        prof(Math.abs(2 * R * Math.sin(a * .5)), w);
+        for(let k = 0; k < 3; k++){ wAcc[k] += w[k]; lightAcc[k] += diffuse * w[k]; }
+      }
+      const o = (y*W + x) * 4;
+      for(let k = 0; k < 3; k++)
+        img.data[o+k] = Math.round(255 * Math.min(1, wAcc[k] > 0 ? lightAcc[k]/wAcc[k] : 0));
+      img.data[o+3] = 255;
+    }
+  }
+  g.putImageData(img, 0, 0);
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.NoColorSpace;
+  t.wrapS = t.wrapT = THREE.ClampToEdgeWrapping;
+  t.minFilter = t.magFilter = THREE.LinearFilter;
+  t.generateMipmaps = false;
+  return t;
+}
+
+/* Rewire a material's DIRECT diffuse to read the table instead of
+   Lambert. The light loop lives in a chunk that has not been included
+   yet when onBeforeCompile runs, so the chunk is expanded here, edited,
+   and substituted for its own include -- which keeps the change on this
+   material instead of on every physical material in the scene. */
+export function withSkinScatter(THREE, m, lut){
+  const prev = m.onBeforeCompile;
+  m.onBeforeCompile = sh => {
+    if(prev) prev(sh);
+    sh.uniforms.skinLUT = { value: lut };
+    sh.uniforms.skinScatter = { value: 1.0 };
+    sh.fragmentShader = sh.fragmentShader
+      .replace('#include <common>', '#include <common>\n' +
+        'uniform sampler2D skinLUT; uniform float skinScatter; float skinCurv;')
+      /* Curvature from the GEOMETRIC normal, before the normal maps are
+         applied. Taken after them, every pore counts as a fold and the
+         whole face sits at maximum curvature. */
+      .replace('#include <normal_fragment_begin>', '#include <normal_fragment_begin>\n' +
+        '{ vec3 gn = normal;\n' +
+        '  float k = length(fwidth(gn)) / max(length(fwidth(vViewPosition)), 1e-5);\n' +
+        '  skinCurv = clamp(k / ' + MM_PER_UNIT.toFixed(1) + ' / ' + MAX_CURV.toFixed(3) + ', 0.0, 1.0); }');
+    const chunk = THREE.ShaderChunk.lights_physical_pars_fragment.replace(
+      'reflectedLight.directDiffuse += irradiance * BRDF_Lambert( material.diffuseColor );',
+      'vec3 sss = texture2D( skinLUT, vec2( dot( geometryNormal, directLight.direction ) * 0.5 + 0.5, skinCurv ) ).rgb;\n' +
+      '\treflectedLight.directDiffuse += directLight.color * mix( vec3( dotNL ), sss, skinScatter ) * BRDF_Lambert( material.diffuseColor );');
+    sh.fragmentShader = sh.fragmentShader
+      .replace('#include <lights_physical_pars_fragment>', chunk);
+  };
+  const key = m.customProgramCacheKey;
+  m.customProgramCacheKey = () => 'sss|' + (key ? key() : '');
+  return m;
+}
+
+/* The eye, built once and shared by the view and by anything that
+   needs to render the same eye -- a harness included, so what gets
+   looked at is what ships. */
+export function makeEye(THREE){
+  const EYE = { tex: null, hex: null };
+  return function eyeball(centre, radius, hex){
+    if(EYE.hex !== hex){
+      if(EYE.tex) EYE.tex.dispose();
+      EYE.tex = eyeTex(THREE, hex); EYE.hex = hex;
+    }
+    const grp = new THREE.Group();
+    const R = radius * 0.96;
+    const ball = new THREE.Mesh(new THREE.SphereGeometry(R, 64, 44),
+      withIrisParallax(THREE, new THREE.MeshPhysicalMaterial({
+        map:EYE.tex, roughness:.26, clearcoat:.9, clearcoatRoughness:.08,
+        envMapIntensity:.55 }), .030));
+    ball.rotation.y = -Math.PI / 2;   // (u .5, v .5) sits on +x
+    /* An eyeball that takes no shadow sits in its socket like a bead
+       glued on: the lid above it is the one thing that should be
+       darkening it, and the lashes with it. */
+    ball.receiveShadow = true;
+    grp.add(ball);
+    /* A full shell, front faces only: the near hemisphere is all that
+       draws, so there is no second highlight on the far side to worry
+       about -- and a cap cut with phiStart lands on whichever side of
+       the ball the sphere's seam happens to be, which on this one was
+       the back, and the eyes had no catchlight at all. */
+    const cornea = new THREE.Mesh(
+      new THREE.SphereGeometry(R*1.035, 40, 28),
+      /* The tear film, added rather than blended.
+         Two things were wrong. Roughness .012 puts the catchlight in a
+         spot smaller than a pixel, so at any sane resolution the eye has
+         no highlight at all -- and an eye with no catchlight is a dead
+         eye. And an alpha-blended shell at opacity .16 scales its OWN
+         highlight to sixteen percent along with everything else, so even
+         when the highlight was wide enough to see it was not bright
+         enough. Black and additive instead: the diffuse contributes
+         nothing, the specular and the environment add at full strength,
+         which is what a film of water on an eye actually does. */
+      new THREE.MeshPhysicalMaterial({ color:0x000000, roughness:.035, metalness:0,
+        reflectivity:1, clearcoat:1, clearcoatRoughness:.02,
+        transparent:true, opacity:1, blending:THREE.AdditiveBlending,
+        envMapIntensity:1.2,
+        depthWrite:false, side:THREE.FrontSide }));
+    grp.add(cornea);
+    grp.position.set(centre[0], centre[1], centre[2] - radius*0.26);
+    return grp;
+  };
+}
+
 export async function mount(canvas, opts){
   const o = opts || {};
   const W = o.width || 360, H = o.height || 560;
@@ -196,7 +442,7 @@ export async function mount(canvas, opts){
   r.setSize(W, H, false);
   r.outputColorSpace = THREE.SRGBColorSpace;
   r.toneMapping = THREE.ACESFilmicToneMapping;
-  r.toneMappingExposure = .95;
+  r.toneMappingExposure = .66;
   r.shadowMap.enabled = true;
   r.shadowMap.type = THREE.PCFSoftShadowMap;
 
@@ -240,33 +486,14 @@ export async function mount(canvas, opts){
   ]);
   const SK = { mask, warm, normal, rough };
   const PORE = detailNormal(THREE, 'skin', 5);
+  const SSS  = skinLUT(THREE);
   const FABRIC = detailNormal(THREE, 'cloth', 9);
   FABRIC.repeat.set(115, 115);
 
   let group = null, yaw = .30, pitch = 0, raf = 0, alive = true;
   let refSpan = 0;
   let only = null;   // isolation: draw one part on its own
-  const EYE = { tex: null, hex: null };
-  function eyeball(centre, radius, hex){
-    if(EYE.hex !== hex){
-      if(EYE.tex) EYE.tex.dispose();
-      EYE.tex = eyeTex(THREE, hex); EYE.hex = hex;
-    }
-    const grp = new THREE.Group();
-    const R = radius * 0.96;
-    const ball = new THREE.Mesh(new THREE.SphereGeometry(R, 40, 28),
-      new THREE.MeshPhysicalMaterial({ map:EYE.tex, roughness:.30, clearcoat:.85,
-        clearcoatRoughness:.10, envMapIntensity:.55 }));
-    ball.rotation.y = -Math.PI / 2;   // (u .5, v .5) sits on +x
-    grp.add(ball);
-    const cornea = new THREE.Mesh(new THREE.SphereGeometry(R*1.035, 32, 24),
-      new THREE.MeshPhysicalMaterial({ color:0xffffff, roughness:.015, metalness:0,
-        clearcoat:1, clearcoatRoughness:.01, transparent:true, opacity:.08,
-        envMapIntensity:1.4, depthWrite:false }));
-    grp.add(cornea);
-    grp.position.set(centre[0], centre[1], centre[2] - radius*0.26);
-    return grp;
-  }
+  const eyeball = makeEye(THREE);
 
   const geom = d => {
     const g = new THREE.BufferGeometry();
@@ -319,7 +546,7 @@ export async function mount(canvas, opts){
           '  b = mix(b, vec3(0.10,0.07,0.07), mk.g * 0.70);\n' +
           '  diffuseColor.rgb = b; }');
     };
-    return withDetail(THREE, m, PORE, 34, .95);
+    return withSkinScatter(THREE, withDetail(THREE, m, PORE, 34, .95), SSS);
   };
   const cardMat = hex => new THREE.MeshPhysicalMaterial({
     color:hex, map:STRAND, alphaTest:.40, transparent:false, vertexColors:true,
@@ -485,7 +712,7 @@ export async function mount(canvas, opts){
   function rig(span){
     if(rigged) return;
     rigged = 1;
-    const key = new THREE.DirectionalLight(0xfff1e2, 2.1);
+    const key = new THREE.DirectionalLight(0xfff1e2, 1.45);
     key.position.set(-span*.7, span*1.05, span*.85);
     key.castShadow = true; key.shadow.mapSize.set(2048, 2048);
     key.shadow.camera.left = -span*.45; key.shadow.camera.right = span*.45;
@@ -493,9 +720,9 @@ export async function mount(canvas, opts){
     key.shadow.camera.far = span*4; key.shadow.bias = -.0012;
     key.shadow.normalBias = span*.013; key.shadow.radius = 6;
     scene.add(key);
-    const fill = new THREE.DirectionalLight(0xa8c4ec, .85);
+    const fill = new THREE.DirectionalLight(0xa8c4ec, .50);
     fill.position.set(span*.9, span*.45, span*.7); scene.add(fill);
-    const rimL = new THREE.DirectionalLight(0xffeedc, 2.4);
+    const rimL = new THREE.DirectionalLight(0xffeedc, 1.65);
     rimL.position.set(span*.35, span*.9, -span*1.0); scene.add(rimL);
     const floor = new THREE.Mesh(new THREE.PlaneGeometry(span*6, span*6),
       new THREE.ShadowMaterial({ opacity:.46 }));
@@ -526,7 +753,7 @@ export async function mount(canvas, opts){
     alive = false; cancelAnimationFrame(raf);
     if(group) disposeTree(group);
     for(const k in SK) SK[k].dispose();
-    STRAND.dispose(); PORE.dispose(); FABRIC.dispose();
+    STRAND.dispose(); PORE.dispose(); FABRIC.dispose(); SSS.dispose();
     if(scene.environment) scene.environment.dispose();
     r.dispose();
   }

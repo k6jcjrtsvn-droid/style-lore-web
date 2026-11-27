@@ -5,31 +5,104 @@
 export function studioEnv(THREE, renderer, opts){
   const o = opts || {};
   const W = 512, H = 256;
-  const c = document.createElement('canvas'); c.width = W; c.height = H;
-  const g = c.getContext('2d');
-  // sky -> floor gradient
-  const grd = g.createLinearGradient(0, 0, 0, H);
-  grd.addColorStop(0.00, o.top    || '#8fa6c8');
-  grd.addColorStop(0.46, o.mid    || '#53606f');
-  grd.addColorStop(0.52, o.horizon|| '#2b2f36');
-  grd.addColorStop(1.00, o.floor  || '#15171b');
-  g.fillStyle = grd; g.fillRect(0, 0, W, H);
-  // soft panels. u is azimuth: 0 behind, .25 right, .5 front, .75 left
-  const panel = (u, v, rw, rh, col, a) => {
-    const x = u * W, y = v * H;
-    const rg = g.createRadialGradient(x, y, 0, x, y, Math.max(rw, rh));
-    rg.addColorStop(0, col); rg.addColorStop(1, 'rgba(0,0,0,0)');
-    g.globalAlpha = a == null ? 1 : a;
-    g.save(); g.translate(x, y); g.scale(1, rh / rw); g.translate(-x, -y);
-    g.fillStyle = rg; g.beginPath(); g.arc(x, y, rw, 0, 7); g.fill();
-    g.restore(); g.globalAlpha = 1;
+  /* A FLOAT environment, not a canvas one.
+
+     A canvas is eight bits a channel, so the brightest thing that can
+     possibly be in it is white -- the same value as a sheet of paper.
+     A real softbox is twenty to fifty times brighter than the wall
+     behind it, and that ratio is the whole of what a specular highlight
+     is: it is a picture of the light source. Clamped to 1.0 there is
+     nothing for a shiny surface to reflect that is any brighter than
+     the room, so skin got no highlight worth the name, hair had no
+     sheen, and an eye -- which is a mirrored ball and should show the
+     lights as crisp little suns -- had no catchlight at all. Every
+     attempt to fix the eye at the eye failed for this reason: there was
+     nothing in the world for it to reflect.
+
+     So the panels are written at their real intensities into a float
+     buffer and PMREM takes it from there. */
+  const data = new Float32Array(W * H * 4);
+  /* The room itself is nearly black. It used to be a bright blue-grey
+     sky, which lit the whole figure from above with cool light and took
+     the colour out of the skin -- a tanned face came out porcelain. In
+     a studio the walls are black on purpose; all the light comes from
+     the panels, and that is what keeps skin looking like skin. */
+  const SKY   = o.top     || [0.038, 0.044, 0.060];
+  const MID   = o.mid     || [0.018, 0.020, 0.025];
+  const HORIZ = o.horizon || [0.009, 0.009, 0.011];
+  const FLOOR = o.floor   || [0.005, 0.005, 0.006];
+  const ramp = (v) => {
+    if(v < 0.46) return mix3(SKY, MID, v / 0.46);
+    if(v < 0.52) return mix3(MID, HORIZ, (v - 0.46) / 0.06);
+    return mix3(HORIZ, FLOOR, (v - 0.52) / 0.48);
   };
-  panel(0.62, 0.30, 150, 110, o.key  || '#fff4e2', 1);    // key, front-left high
-  panel(0.30, 0.44, 120,  90, o.fill || '#9fc0ff', .55);  // fill, front-right
-  panel(0.95, 0.26,  95,  70, o.rim  || '#ffffff', .85);  // rim, behind
-  const tex = new THREE.CanvasTexture(c);
+  function mix3(a, b, t){
+    t = t < 0 ? 0 : t > 1 ? 1 : t;
+    return [a[0]+(b[0]-a[0])*t, a[1]+(b[1]-a[1])*t, a[2]+(b[2]-a[2])*t];
+  }
+  /* Everything below is authored with v = 0 at the ZENITH, the way the
+     canvas version was, and written into the buffer upside down.
+
+     A DataTexture ignores flipY -- WebGL's unpack flip does not apply to
+     one -- so row 0 of the array is v = 0, and three.js's equirect
+     lookup puts v = 0 at straight DOWN. Writing the sky into row 0 puts
+     the sky under the figure's feet and the key light below the
+     horizon, which is exactly what happened: the whole scene went pale
+     and flat and lit from nowhere. */
+  const row = y => H - 1 - y;
+  for(let y = 0; y < H; y++){
+    const col = ramp((y + .5) / H);
+    for(let x = 0; x < W; x++){
+      const i = (row(y)*W + x) * 4;
+      data[i] = col[0]; data[i+1] = col[1]; data[i+2] = col[2]; data[i+3] = 1;
+    }
+  }
+  /* u is azimuth: 0 behind, .25 right, .5 front, .75 left. A panel has a
+     flat core and a short shoulder -- a softbox has an edge, and it is
+     the edge that makes a highlight look like a shape rather than a
+     smudge. */
+  const panel = (u, v, rw, rh, col, I) => {
+    const cxp = u * W, cyp = v * H;
+    const x0 = Math.floor(cxp - rw), x1 = Math.ceil(cxp + rw);
+    for(let y = Math.max(0, Math.floor(cyp - rh)); y < Math.min(H, Math.ceil(cyp + rh)); y++){
+      for(let xx = x0; xx < x1; xx++){
+        const x = ((xx % W) + W) % W;               // wrap in azimuth
+        const dx = (xx - cxp) / rw, dy = (y - cyp) / rh;
+        const d = Math.sqrt(dx*dx + dy*dy);
+        if(d >= 1) continue;
+        const t = 1 - smoothstep(0.62, 1.0, d);     // flat core, short shoulder
+        const i = (row(y)*W + x) * 4;
+        data[i]   += col[0] * I * t;
+        data[i+1] += col[1] * I * t;
+        data[i+2] += col[2] * I * t;
+      }
+    }
+  };
+  function smoothstep(e0, e1, x){
+    const t = Math.max(0, Math.min(1, (x - e0) / (e1 - e0)));
+    return t * t * (3 - 2 * t);
+  }
+  /* Small and bright, not big and bright. A panel's contribution to the
+     DIFFUSE light in the room goes as its intensity times the solid
+     angle it covers, but its contribution to a highlight goes as its
+     intensity alone. The first attempt kept the old panels' size and
+     merely raised their intensity, which blew the whole scene out: the
+     sclera went to paper white and the skin with it. Shrunk to about
+     fifteen degrees across -- the size of a real softbox at arm's
+     length -- they put the same amount of light into the room as the
+     old clamped ones and a highlight thirty times brighter. */
+  /* And each panel sits where its directional light already is, worked
+     back from the rig's own positions. A highlight that comes from one
+     direction while the shading comes from another is the thing that
+     makes a render look composited: the eye catches it instantly even
+     when it cannot say what is wrong. */
+  panel(0.860, 0.258, 26, 19, o.key  || [1.00, 0.95, 0.88], o.keyI  == null ? 30 : o.keyI);
+  panel(0.605, 0.381, 22, 16, o.fill || [0.62, 0.76, 1.00], o.fillI == null ?  9 : o.fillI);
+  panel(0.304, 0.278, 18, 13, o.rim  || [1.00, 0.98, 0.95], o.rimI  == null ? 22 : o.rimI);
+  const tex = new THREE.DataTexture(data, W, H, THREE.RGBAFormat, THREE.FloatType);
   tex.mapping = THREE.EquirectangularReflectionMapping;
-  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.colorSpace = THREE.NoColorSpace;          // the data is already linear
+  tex.needsUpdate = true;
   const pmrem = new THREE.PMREMGenerator(renderer);
   pmrem.compileEquirectangularShader();
   const env = pmrem.fromEquirectangular(tex).texture;
